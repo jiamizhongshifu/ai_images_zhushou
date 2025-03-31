@@ -1,6 +1,5 @@
 import DeployButton from "@/components/deploy-button";
 import { EnvVarWarning } from "@/components/env-var-warning";
-import { PersistentNav } from "@/components/persistent-nav";
 import { ThemeSwitcher } from "@/components/theme-switcher";
 import { hasEnvVars } from "@/utils/supabase/check-env-vars";
 import { Geist } from "next/font/google";
@@ -38,7 +37,6 @@ export default function RootLayout({
           disableTransitionOnChange
         >
           <main className="min-h-screen flex flex-col items-center">
-            <PersistentNav />
             <div className="flex-1 w-full flex flex-col gap-20 items-center">
               <div className="flex flex-col gap-20 max-w-5xl p-5 mt-16">
                 {children}

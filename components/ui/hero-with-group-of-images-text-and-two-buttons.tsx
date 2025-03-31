@@ -1,9 +1,35 @@
-import { MoveRight, PhoneCall } from "lucide-react";
+"use client";
+
+import { MoveRight, PhoneCall, ImageIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import Image from "next/image";
+import Link from "next/link";
+import { useState } from "react";
 
 function Hero() {
+  // 使用更简单的状态管理
+  const [imageStates, setImageStates] = useState({
+    image1: { loaded: false, error: false },
+    image2: { loaded: false, error: false },
+    image3: { loaded: false, error: false }
+  });
+
+  // 简化的图片加载处理
+  const handleImageLoad = (key: keyof typeof imageStates) => {
+    setImageStates(prev => ({
+      ...prev,
+      [key]: { loaded: true, error: false }
+    }));
+  };
+
+  const handleImageError = (key: keyof typeof imageStates) => {
+    setImageStates(prev => ({
+      ...prev,
+      [key]: { loaded: false, error: true }
+    }));
+  };
+
   return (
     <div className="w-full py-20 lg:py-40">
       <div className="container mx-auto">
@@ -23,38 +49,77 @@ function Hero() {
               </p>
             </div>
             <div className="flex flex-row gap-4">
-              <Button size="lg" className="gap-4" variant="outline">
-                联系我们 <PhoneCall className="w-4 h-4" />
-              </Button>
-              <Button size="lg" className="gap-4">
-                立即体验 <MoveRight className="w-4 h-4" />
-              </Button>
+              <Link href="/support">
+                <Button size="lg" className="gap-4" variant="outline">
+                  联系我们 <PhoneCall className="w-4 h-4" />
+                </Button>
+              </Link>
+              <Link href="/sign-in">
+                <Button size="lg" className="gap-4">
+                  立即体验 <MoveRight className="w-4 h-4" />
+                </Button>
+              </Link>
             </div>
           </div>
           <div className="grid grid-cols-2 gap-8">
-            <div className="bg-muted rounded-md aspect-square relative overflow-hidden">
-              <Image 
-                src="/images/feat_03.jpeg" 
-                alt="AI生成的示例图片1" 
-                fill 
-                style={{ objectFit: "cover" }}
-              />
+            {/* 第一个图片 */}
+            <div className="bg-gradient-to-br from-primary/20 to-primary/5 rounded-md aspect-square relative overflow-hidden">
+              <div className="absolute inset-0 flex items-center justify-center">
+                <ImageIcon className="h-10 w-10 text-primary/60" />
+              </div>
+
+              <div className="w-full h-full">
+                <div className="relative w-full h-full">
+                  <Image 
+                    src="/images/feat_03.jpeg" 
+                    alt="AI生成的风景写实画作"
+                    fill
+                    className="object-cover w-full h-full"
+                    onLoad={() => handleImageLoad('image1')}
+                    onError={() => handleImageError('image1')}
+                  />
+                </div>
+              </div>
             </div>
-            <div className="bg-muted rounded-md row-span-2 relative overflow-hidden">
-              <Image 
-                src="/images/feat_04.jpeg" 
-                alt="AI生成的示例图片2" 
-                fill 
-                style={{ objectFit: "cover" }}
-              />
+
+            {/* 第二个图片 */}
+            <div className="bg-gradient-to-br from-blue-500/20 to-violet-500/20 rounded-md row-span-2 relative overflow-hidden">
+              <div className="absolute inset-0 flex items-center justify-center">
+                <ImageIcon className="h-10 w-10 text-blue-500/60" />
+              </div>
+
+              <div className="w-full h-full">
+                <div className="relative w-full h-full">
+                  <Image 
+                    src="/images/feat_02.jpeg" 
+                    alt="AI生成的人物肖像"
+                    fill
+                    className="object-cover w-full h-full"
+                    onLoad={() => handleImageLoad('image2')}
+                    onError={() => handleImageError('image2')}
+                  />
+                </div>
+              </div>
             </div>
-            <div className="bg-muted rounded-md aspect-square relative overflow-hidden">
-              <Image 
-                src="/images/feat_05.jpeg" 
-                alt="AI生成的示例图片3" 
-                fill 
-                style={{ objectFit: "cover" }}
-              />
+
+            {/* 第三个图片 */}
+            <div className="bg-gradient-to-br from-amber-500/20 to-orange-500/20 rounded-md aspect-square relative overflow-hidden">
+              <div className="absolute inset-0 flex items-center justify-center">
+                <ImageIcon className="h-10 w-10 text-amber-500/60" />
+              </div>
+
+              <div className="w-full h-full">
+                <div className="relative w-full h-full">
+                  <Image 
+                    src="/images/feat_04.jpeg" 
+                    alt="AI生成的抽象艺术"
+                    fill
+                    className="object-cover w-full h-full"
+                    onLoad={() => handleImageLoad('image3')}
+                    onError={() => handleImageError('image3')}
+                  />
+                </div>
+              </div>
             </div>
           </div>
         </div>

@@ -8,6 +8,7 @@ import {
 } from "framer-motion";
 import { cn } from "@/lib/utils";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 
 export const FloatingNav = ({
   navItems,
@@ -23,8 +24,8 @@ export const FloatingNav = ({
   persistent?: boolean;
 }) => {
   const { scrollYProgress } = useScroll();
-
   const [visible, setVisible] = useState(persistent);
+  const pathname = usePathname();
 
   useMotionValueEvent(scrollYProgress, "change", (current) => {
     // 如果设置为常驻显示，则不执行隐藏逻辑
@@ -61,25 +62,47 @@ export const FloatingNav = ({
           opacity: visible ? 1 : 0,
         }}
         transition={{
-          duration: 0.2,
+          duration: 0.3,
+          ease: "easeInOut",
         }}
         className={cn(
-          "flex max-w-fit  fixed top-10 inset-x-0 mx-auto border border-transparent dark:border-white/[0.2] rounded-full dark:bg-black bg-white shadow-[0px_2px_3px_-1px_rgba(0,0,0,0.1),0px_1px_0px_0px_rgba(25,28,33,0.02),0px_0px_0px_1px_rgba(25,28,33,0.08)] z-[5000] pr-2 pl-8 py-2  items-center justify-center space-x-4",
+          "flex max-w-fit fixed top-6 inset-x-0 mx-auto backdrop-blur-md bg-white/80 dark:bg-black/80 border border-gray-200 dark:border-gray-800 rounded-full shadow-lg z-[5000] px-1 py-1.5 items-center justify-center",
           className
         )}
       >
-        {navItems.map((navItem: any, idx: number) => (
-          <Link
-            key={`link=${idx}`}
-            href={navItem.link}
-            className={cn(
-              "relative dark:text-neutral-50 items-center flex space-x-1 text-neutral-600 dark:hover:text-neutral-300 hover:text-neutral-500"
-            )}
-          >
-            <span className="block sm:hidden">{navItem.icon}</span>
-            <span className="hidden sm:block text-sm">{navItem.name}</span>
-          </Link>
-        ))}
+        <div className="flex items-center space-x-1 px-2">
+          {navItems.map((navItem: any, idx: number) => {
+            const isActive = pathname === navItem.link;
+            return (
+              <Link
+                key={`link-${idx}`}
+                href={navItem.link}
+                className={cn(
+                  "relative px-3 py-2 rounded-full transition-all duration-200 ease-in-out flex items-center space-x-1",
+                  isActive 
+                    ? "text-white bg-primary dark:bg-primary" 
+                    : "text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800"
+                )}
+              >
+                {navItem.icon && (
+                  <span className={cn(
+                    "flex-shrink-0",
+                    isActive ? "text-white" : ""
+                  )}>
+                    {navItem.icon}
+                  </span>
+                )}
+                <span className={cn(
+                  "text-sm font-medium",
+                  isActive ? "text-white" : "",
+                  {"ml-1": navItem.icon}
+                )}>
+                  {navItem.name}
+                </span>
+              </Link>
+            );
+          })}
+        </div>
       </motion.div>
     </AnimatePresence>
   );

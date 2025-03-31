@@ -12,22 +12,22 @@ export function PersistentNav() {
     {
       name: "首页",
       link: "/",
-      icon: <Home className="h-4 w-4 text-neutral-500 dark:text-white" />,
+      icon: <Home className="h-4 w-4" />,
     },
     {
       name: "关于",
       link: "/about",
-      icon: <User className="h-4 w-4 text-neutral-500 dark:text-white" />,
+      icon: <User className="h-4 w-4" />,
     },
     {
       name: "支持",
       link: "/support",
-      icon: <HelpCircle className="h-4 w-4 text-neutral-500 dark:text-white" />,
+      icon: <HelpCircle className="h-4 w-4" />,
     },
     {
       name: "登录",
       link: "/sign-in",
-      icon: <User className="h-4 w-4 text-neutral-500 dark:text-white" />,
+      icon: <User className="h-4 w-4" />,
     },
   ]
 
