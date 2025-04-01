@@ -4,3 +4,12 @@ module.exports = {
     autoprefixer: {},
   },
 };
+
+// 修改为
+
+module.exports = {
+  plugins: {
+    tailwindcss: {},
+    autoprefixer: {},
+  },
+};
