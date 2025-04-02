@@ -1,9 +1,62 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/utils/supabase/server';
+import { createAdminClient } from '@/utils/supabase/admin';
 
 // @ts-nocheck - 暂时忽略类型检查以快速修复功能
 export async function GET(req: Request) {
   try {
+    // 检查认证头部，支持系统任务处理器直接访问
+    const authHeader = req.headers.get('authorization');
+    let isSystemAccess = false;
+    
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.substring(7);
+      const validSecretKey = process.env.TASK_PROCESS_SECRET_KEY || 'your-secret-key-here';
+      
+      // 如果是系统秘钥，直接使用admin客户端查询所有任务
+      if (token === validSecretKey) {
+        isSystemAccess = true;
+        console.log('系统任务处理器访问已授权');
+        
+        // 使用管理员客户端查询所有待处理任务
+        const supabase = createAdminClient();
+        const { data: pendingTasks, error } = await supabase
+          .from('ai_images_creator_tasks')
+          .select('*')
+          .in('status', ['pending', 'processing'])
+          .order('created_at', { ascending: true })
+          .limit(10); // 限制查询结果数量
+        
+        if (error) {
+          console.error('查询所有待处理任务失败:', error);
+          return NextResponse.json({ 
+            success: false,
+            error: "查询失败", 
+            message: error.message 
+          }, { status: 500 });
+        }
+        
+        // 确保任务对象包含处理器所需的字段
+        const formattedTasks = pendingTasks.map(task => ({
+          taskId: task.task_id,
+          status: task.status,
+          created_at: task.created_at,
+          result_url: task.result_url,
+          error_message: task.error_message,
+          prompt: task.prompt,
+          processing_started_at: task.processing_started_at,
+          completed_at: task.completed_at,
+          image_base64: task.image_base64 // 包含图片数据
+        }));
+        
+        return NextResponse.json({
+          success: true,
+          tasks: formattedTasks
+        });
+      }
+    }
+    
+    // 如果不是系统访问，则检查用户认证
     // 创建Supabase客户端 - 需要await
     const supabase = await createClient();
     

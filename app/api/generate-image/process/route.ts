@@ -156,57 +156,62 @@ async function processTask(taskId: string, preserveAspectRatio: boolean = false)
       return;
     }
     
-    // 扣除用户点数 - 使用安全的方式
-    let deductError: any = null;
-    let deductedData = null;
-    
-    try {
-      // 方法1: 先获取当前点数，然后更新
-      const { data: currentData, error: fetchError } = await supabase
-        .from('ai_images_creator_credits')
-        .select('credits')
-        .eq('user_id', task.user_id)
-        .single();
+    // 检查是否已经扣除过点数，避免重复扣除
+    if (task.credits_deducted) {
+      console.log(`任务 ${taskId} 已扣除过点数，跳过扣点环节`);
+    } else {
+      // 扣除用户点数 - 使用安全的方式
+      let deductError: any = null;
+      let deductedData = null;
       
-      if (fetchError) {
-        console.error('获取用户点数失败:', fetchError);
-        deductError = fetchError;
-      } else if (currentData) {
-        // 确保点数不会低于0
-        const newCredits = Math.max(0, (currentData.credits || 0) - 1);
-        
-        const { data: updateData, error: updateError } = await supabase
+      try {
+        // 方法1: 先获取当前点数，然后更新
+        const { data: currentData, error: fetchError } = await supabase
           .from('ai_images_creator_credits')
-          .update({ credits: newCredits })
-          .eq('user_id', task.user_id)
           .select('credits')
+          .eq('user_id', task.user_id)
           .single();
+        
+        if (fetchError) {
+          console.error('获取用户点数失败:', fetchError);
+          deductError = fetchError;
+        } else if (currentData) {
+          // 确保点数不会低于0
+          const newCredits = Math.max(0, (currentData.credits || 0) - 1);
           
-        if (updateError) {
-          console.error('更新用户点数失败:', updateError);
-          deductError = updateError;
-        } else {
-          deductedData = updateData;
+          const { data: updateData, error: updateError } = await supabase
+            .from('ai_images_creator_credits')
+            .update({ credits: newCredits })
+            .eq('user_id', task.user_id)
+            .select('credits')
+            .single();
+            
+          if (updateError) {
+            console.error('更新用户点数失败:', updateError);
+            deductError = updateError;
+          } else {
+            deductedData = updateData;
+          }
         }
+      } catch (err) {
+        console.error('扣除点数过程中出错:', err);
+        deductError = err;
       }
-    } catch (err) {
-      console.error('扣除点数过程中出错:', err);
-      deductError = err;
+      
+      if (deductError) {
+        console.error(`扣除用户点数失败:`, deductError);
+        await updateTaskStatus(taskId, 'failed', null, '扣除点数失败');
+        return;
+      }
+      
+      // 更新任务状态，标记已扣除点数
+      await supabase
+        .from('ai_images_creator_tasks')
+        .update({
+          credits_deducted: true
+        })
+        .eq('task_id', taskId);
     }
-    
-    if (deductError) {
-      console.error(`扣除用户点数失败:`, deductError);
-      await updateTaskStatus(taskId, 'failed', null, '扣除点数失败');
-      return;
-    }
-    
-    // 更新任务状态，标记已扣除点数
-    await supabase
-      .from('ai_images_creator_tasks')
-      .update({
-        credits_deducted: true
-      })
-      .eq('task_id', taskId);
     
     // 获取API配置
     const apiConfig = getApiConfig();
@@ -219,10 +224,12 @@ async function processTask(taskId: string, preserveAspectRatio: boolean = false)
       return;
     }
     
-    // 处理比例保持
-    let size: string | undefined = "1024x1024"; // 默认尺寸
+    // 设置输出尺寸 - 根据保持比例参数确定使用什么尺寸
+    let size: string = "1024x1024"; // 默认使用正方形尺寸
 
-    if (preserveAspectRatio && task.image_base64) {
+    // 当有上传图片时，总是保持比例
+    if (task.image_base64) {
+      console.log(`检测到上传图片数据，将自动保持图片比例`);
       try {
         // 从Base64数据中计算图片比例
         const aspectRatio = await calculateImageAspectRatio(task.image_base64);
@@ -233,18 +240,23 @@ async function processTask(taskId: string, preserveAspectRatio: boolean = false)
           // 根据比例确定输出尺寸，保持总像素数约为1M
           if (aspectRatio >= 1.3) { // 宽屏
             size = "1152x896";  // 约1:1.29
+            console.log(`使用宽屏输出尺寸: ${size}`);
           } else if (aspectRatio <= 0.8) { // 竖屏
             size = "896x1152";  // 约0.78:1
+            console.log(`使用竖屏输出尺寸: ${size}`);
+          } else {
+            console.log(`宽高比接近1:1，使用标准输出尺寸: ${size}`);
           }
-          // 否则使用默认的正方形
         }
       } catch (error) {
         console.error('计算图片比例时出错:', error);
-        // 继续使用默认尺寸
+        // 出错时继续使用默认尺寸
       }
+    } else {
+      console.log(`没有上传图片，使用标准输出尺寸: ${size}`);
     }
 
-    console.log(`使用输出尺寸: ${size}`);
+    console.log(`最终使用输出尺寸: ${size}`);
 
     // 创建OpenAI客户端
     const openai = new OpenAI({
@@ -284,24 +296,19 @@ async function processTask(taskId: string, preserveAspectRatio: boolean = false)
       });
     }
     
-    // 准备生成请求参数时添加size
+    // 准备生成请求参数
     const params: any = {
       model: apiConfig.model || 'gpt-4o-all',
       messages: messages as any, // 类型断言处理暂时的类型不匹配问题
       max_tokens: 4000,
       temperature: 0.7,
-      response_format: { type: 'text' }
+      response_format: { type: 'text' },
+      size: size // 直接设置尺寸，不再动态修改
     };
-
-    // 如果确定了size，加入到请求参数中
-    if (size) {
-      console.log(`添加size参数: ${size}`);
-      params.size = size;
-    }
     
     try {
-      // 调用OpenAI API
-      console.log(`开始调用OpenAI API生成图片，参数:`, {
+      // 调用OpenAI API - 只进行一次调用
+      console.log(`调用OpenAI API生成图片，参数:`, {
         model: params.model,
         hasImage: !!task.image_base64,
         size: params.size

@@ -176,8 +176,19 @@ export default function ProtectedPage() {
       if (data.success && data.tasks && data.tasks.length > 0) {
         console.log('获取到进行中任务:', data.tasks);
         
-        // 取最新的一个任务
-        const latestTask = data.tasks[0];
+        // 处理多个任务的情况
+        const tasks = [...data.tasks];
+        // 优先选择处理中的任务，其次选择最新的任务
+        tasks.sort((a, b) => {
+          // 先按状态排序：处理中的优先
+          if (a.status === 'processing' && b.status !== 'processing') return -1;
+          if (a.status !== 'processing' && b.status === 'processing') return 1;
+          // 再按创建时间排序：新的优先
+          return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+        });
+        
+        // 取排序后的第一个任务
+        const latestTask = tasks[0];
         setCurrentTask(latestTask);
         
         // 如果任务正在处理中，设置相关状态并开始轮询
@@ -331,7 +342,13 @@ export default function ProtectedPage() {
           case 'completed':
             // 任务完成，添加到生成图片列表
             if (data.task.result_url) {
-              setGeneratedImages(prev => [data.task.result_url, ...prev].slice(0, 4));
+              // 检查是否已经添加过这个URL，避免重复添加相同的图片
+              setGeneratedImages(prev => {
+                if (prev.includes(data.task.result_url)) {
+                  return prev; // 如果已存在，不重复添加
+                }
+                return [data.task.result_url, ...prev];
+              });
               setGenerationStatus("success");
               
               // 显示成功消息
@@ -355,12 +372,48 @@ export default function ProtectedPage() {
                 }
               }, 3000);
             }
-            // 停止轮询
+            
+            // 检查是否需要停止轮询 - 添加检查确认所有相关任务都已完成
             if (pollingTimer) {
-              clearTimeout(pollingTimer);
-              setPollingTimer(null);
+              // 检查是否有其他相关的任务正在处理中
+              fetch('/api/generate-image/pending-tasks')
+                .then(response => response.json())
+                .then(data => {
+                  if (!data.success || !data.tasks || data.tasks.length === 0) {
+                    // 如果没有其他正在处理的任务，停止轮询
+                    clearTimeout(pollingTimer);
+                    setPollingTimer(null);
+                    setIsGenerating(false);
+                    console.log('所有任务已完成，停止轮询');
+                  } else {
+                    // 如果还有其他任务，检查是否与当前任务相关
+                    const relatedTasks = data.tasks.filter((task: any) => 
+                      task.taskId !== data.task.taskId && 
+                      task.status !== 'completed' && 
+                      task.status !== 'failed' && 
+                      task.status !== 'cancelled'
+                    );
+                    
+                    if (relatedTasks.length === 0) {
+                      // 如果没有相关的未完成任务，停止轮询
+                      clearTimeout(pollingTimer);
+                      setPollingTimer(null);
+                      setIsGenerating(false);
+                      console.log('所有相关任务已完成，停止轮询');
+                    }
+                  }
+                })
+                .catch(error => {
+                  console.error('检查相关任务时出错:', error);
+                  // 出错时保守处理：停止轮询
+                  clearTimeout(pollingTimer);
+                  setPollingTimer(null);
+                  setIsGenerating(false);
+                });
+            } else {
+              setIsGenerating(false);
             }
-            setIsGenerating(false);
+            
             // 更新点数和历史记录
             fetchUserCredits();
             fetchImageHistory();
@@ -965,7 +1018,7 @@ export default function ProtectedPage() {
             <CardTitle className="text-sm font-medium">生成结果</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 grid-flow-row auto-rows-max">
               {isGenerating && generatedImages.length === 0 ? (
                 // 生成中的占位骨架图
                 <div className="col-span-2 md:col-span-4 aspect-square bg-muted rounded-md relative overflow-hidden animate-pulse">
