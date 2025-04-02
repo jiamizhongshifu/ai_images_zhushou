@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { Upload, SendHorizontal, PlusCircle, RefreshCw, ImageIcon, Loader2, Download, X } from "lucide-react";
+import { Upload, SendHorizontal, PlusCircle, RefreshCw, Image as ImageIcon, Loader2, Download, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 
@@ -57,6 +57,15 @@ export default function ProtectedPage() {
   
   // 添加取消任务状态
   const [isCancelling, setIsCancelling] = useState(false);
+  
+  // 添加API请求加载状态
+  const [apiRequestLoading, setApiRequestLoading] = useState(false);
+  
+  // 添加重试计数
+  const [pollingRetries, setPollingRetries] = useState(0);
+  
+  // CSS动画类名引用
+  const skeletonAnimationClass = "animate-shimmer relative overflow-hidden before:absolute before:inset-0 before:-translate-x-full before:animate-[shimmer_2s_infinite] before:bg-gradient-to-r before:from-transparent before:via-white/30 before:to-transparent";
   
   // 获取用户点数
   const fetchUserCredits = async () => {
@@ -157,61 +166,270 @@ export default function ProtectedPage() {
     }
   };
   
-  // 添加获取进行中任务的函数
-  const fetchPendingTasks = async () => {
-    try {
-      const response = await fetch('/api/generate-image/pending-tasks');
-      
-      if (!response.ok) {
-        if (response.status === 401) {
-          router.push('/login');
-          return;
-        }
-        console.error(`获取进行中任务失败: HTTP ${response.status}`);
-        return; // 静默失败，不打断用户体验
+  // 显示通知的辅助函数
+  const showNotification = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
+    // 颜色映射
+    const colorMap = {
+      success: 'bg-green-500',
+      error: 'bg-red-500',
+      info: 'bg-blue-500'
+    };
+    
+    // 图标映射
+    const iconMap = {
+      success: `<svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
+      </svg>`,
+      error: `<svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd" />
+      </svg>`,
+      info: `<svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+        <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2h-1V9a1 1 0 00-1-1H9z" clip-rule="evenodd" />
+      </svg>`
+    };
+    
+    const notificationElement = document.createElement('div');
+    notificationElement.className = `fixed top-4 right-4 ${colorMap[type]} text-white p-3 rounded-md shadow-lg z-50 animate-in fade-in slide-in-from-top`;
+    notificationElement.innerHTML = `<div class="flex items-center gap-2">
+      ${iconMap[type]}
+      <span>${message}</span>
+    </div>`;
+    
+    document.body.appendChild(notificationElement);
+    
+    // 3秒后移除通知
+    setTimeout(() => {
+      if (document.body.contains(notificationElement)) {
+        document.body.removeChild(notificationElement);
       }
-      
+    }, 3000);
+  };
+  
+  // 修改轮询任务状态函数
+  const pollTaskStatus = async (taskId: string) => {
+    console.log(`轮询任务状态: ${taskId}, 间隔: ${pollingInterval}ms`);
+    
+    try {
+      setApiRequestLoading(true);
+      const response = await fetch(`/api/generate-image/status?taskId=${taskId}`);
       const data = await response.json();
+      setApiRequestLoading(false);
       
-      if (data.success && data.tasks && data.tasks.length > 0) {
-        console.log('获取到进行中任务:', data.tasks);
+      if (data.success) {
+        // 设置当前任务状态
+        setCurrentTask(data.task);
         
-        // 处理多个任务的情况
-        const tasks = [...data.tasks];
-        // 优先选择处理中的任务，其次选择最新的任务
-        tasks.sort((a, b) => {
-          // 先按状态排序：处理中的优先
-          if (a.status === 'processing' && b.status !== 'processing') return -1;
-          if (a.status !== 'processing' && b.status === 'processing') return 1;
-          // 再按创建时间排序：新的优先
-          return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
-        });
-        
-        // 取排序后的第一个任务
-        const latestTask = tasks[0];
-        setCurrentTask(latestTask);
-        
-        // 如果任务正在处理中，设置相关状态并开始轮询
-        if (latestTask.status === 'pending' || latestTask.status === 'processing') {
-          setIsGenerating(true);
-          setGenerationStatus("loading");
-          
-          // 确保任务有taskId才启动轮询
-          if (latestTask.taskId) {
-            // 重置轮询间隔
-            setPollingInterval(5000);
+        // 根据任务状态处理
+        switch (data.task.status) {
+          case 'completed':
+            console.log('任务已完成:', data.task);
             
-            // 开始轮询任务状态
-            const timer = setTimeout(() => pollTaskStatus(latestTask.taskId), 5000);
+            // 任务完成，添加到生成图片列表
+            if (data.task.result_url) {
+              // 检查是否已经添加过这个URL，避免重复添加相同的图片
+              setGeneratedImages(prev => {
+                if (prev.includes(data.task.result_url)) {
+                  return prev; // 如果已存在，不重复添加
+                }
+                return [data.task.result_url, ...prev];
+              });
+              
+              // 使用原生通知
+              showNotification("图像生成成功！新的图像已添加到结果区域", "success");
+              
+              setGenerationStatus("success");
+              
+              // 任务完成后，立即刷新任务列表以获取最新状态
+              fetchPendingTasks();
+            }
+            
+            // 停止轮询
+            setPollingInterval(0);
+            if (pollingTimer) {
+              clearTimeout(pollingTimer);
+              setPollingTimer(null);
+            }
+            
+            // 更新UI状态 - 延迟结束生成状态，确保新图片有足够时间加载和显示
+            setTimeout(() => {
+              setIsGenerating(false);
+            }, 500);
+            setPrompt("");
+            break;
+            
+          case 'failed':
+            console.log('任务失败:', data.task);
+            
+            // 使用原生通知
+            showNotification(data.task.error || "图像生成失败，请稍后重试", "error");
+            
+            setGenerationStatus("error");
+            // 停止轮询
+            setPollingInterval(0);
+            if (pollingTimer) {
+              clearTimeout(pollingTimer);
+              setPollingTimer(null);
+            }
+            
+            // 更新UI状态
+            setIsGenerating(false);
+            break;
+            
+          case 'processing':
+            console.log('任务处理中:', data.task);
+            // 任务仍在处理，继续轮询但逐渐增加间隔
+            // 如果处理时间已经超过30秒，开始加快轮询频率以捕获结果
+            const startTime = new Date(data.task.created_at).getTime();
+            const currentTime = new Date().getTime();
+            const elapsedSeconds = Math.floor((currentTime - startTime) / 1000);
+            
+            let nextPollInterval;
+            if (elapsedSeconds > 60) {
+              // 60秒后，加快轮询频率以确保及时获取结果
+              nextPollInterval = 3000;
+            } else if (elapsedSeconds > 30) {
+              // 30秒后，保持适中频率
+              nextPollInterval = 5000;
+            } else {
+              // 逐渐增加轮询间隔，但不超过10秒
+              nextPollInterval = Math.min(pollingInterval * 1.2, 10000);
+            }
+            
+            setPollingInterval(nextPollInterval);
+            setGenerationStatus("loading");
+            // 设置下一次轮询
+            const timer = setTimeout(() => pollTaskStatus(taskId), nextPollInterval);
             setPollingTimer(timer);
-          } else {
-            console.error('任务缺少taskId，无法启动轮询');
-          }
+            break;
+            
+          case 'pending':
+            console.log('任务等待中:', data.task);
+            // 任务仍在等待，继续轮询但逐渐增加间隔
+            setPollingInterval(Math.min(pollingInterval * 1.2, 10000));
+            setGenerationStatus("loading");
+            // 设置下一次轮询
+            const pendingTimer = setTimeout(() => pollTaskStatus(taskId), pollingInterval);
+            setPollingTimer(pendingTimer);
+            break;
+            
+          default:
+            console.log('未知任务状态:', data.task);
+            setGenerationStatus("error");
+            // 处理未知状态，停止轮询
+            setPollingInterval(0);
+            if (pollingTimer) {
+              clearTimeout(pollingTimer);
+              setPollingTimer(null);
+            }
+            break;
         }
+      } else {
+        console.error('获取任务状态失败:', data.error);
+        setGenerationStatus("error");
+        
+        // 处理错误，停止轮询
+        setPollingInterval(0);
+        if (pollingTimer) {
+          clearTimeout(pollingTimer);
+          setPollingTimer(null);
+        }
+        
+        // 更新UI状态
+        setIsGenerating(false);
       }
     } catch (error) {
-      console.error('获取进行中任务出错:', error);
-      // 不将此错误显示给用户，保持良好的用户体验
+      console.error('轮询任务状态出错:', error);
+      setApiRequestLoading(false);
+      setGenerationStatus("error");
+      
+      // 处理错误，但不立即停止轮询，而是重试几次
+      if (pollingRetries < 3) {
+        setPollingRetries(pollingRetries + 1);
+        // 短暂等待后重试
+        const retryTimer = setTimeout(() => pollTaskStatus(taskId), 5000);
+        setPollingTimer(retryTimer);
+      } else {
+        // 多次重试失败后停止轮询
+        setPollingInterval(0);
+        if (pollingTimer) {
+          clearTimeout(pollingTimer);
+          setPollingTimer(null);
+        }
+        
+        // 更新UI状态
+        setIsGenerating(false);
+      }
+    }
+  };
+
+  // 改进获取待处理任务的函数
+  const fetchPendingTasks = async () => {
+    if (apiRequestLoading) return;
+    
+    try {
+      setApiRequestLoading(true);
+      const response = await fetch('/api/generate-image/pending-tasks');
+      const data = await response.json();
+      setApiRequestLoading(false);
+      setPollingRetries(0); // 重置重试计数
+      
+      if (data.success) {
+        console.log('待处理任务:', data.tasks.length);
+        
+        // 检查是否有已完成但未显示的任务
+        const completedTasks = data.tasks.filter((task: any) => 
+          task.status === 'completed' && task.result_url
+        );
+        
+        if (completedTasks.length > 0) {
+          console.log('发现已完成但未展示的任务:', completedTasks);
+          // 添加这些已完成任务的结果到显示区域
+          completedTasks.forEach((task: any) => {
+            if (task.result_url) {
+              setGeneratedImages(prev => {
+                if (prev.includes(task.result_url)) {
+                  return prev; // 避免重复
+                }
+                return [task.result_url, ...prev];
+              });
+            }
+          });
+        }
+        
+        // 查找处理中的任务
+        const processingTask = data.tasks.find((task: any) => 
+          task.status === 'pending' || task.status === 'processing'
+        );
+        
+        if (processingTask) {
+          console.log('发现处理中的任务:', processingTask);
+          // 如果没有当前任务或当前任务与发现的处理中任务不同
+          if (!currentTask || currentTask.taskId !== processingTask.taskId) {
+            console.log('设置新的当前任务:', processingTask);
+            setCurrentTask(processingTask);
+            
+            // 启动轮询
+            if (!pollingTimer) {
+              console.log('启动任务状态轮询');
+              setIsGenerating(true);
+              setPollingInterval(5000);
+              const timer = setTimeout(() => pollTaskStatus(processingTask.taskId), 5000);
+              setPollingTimer(timer);
+            }
+          }
+        } else {
+          // 没有处理中的任务
+          if (isGenerating && (!currentTask || currentTask.status !== 'completed')) {
+            console.log('没有处理中的任务，更新UI状态');
+            setIsGenerating(false);
+          }
+        }
+      } else {
+        console.error('获取待处理任务失败:', data.error);
+      }
+    } catch (error) {
+      console.error('获取待处理任务出错:', error);
+      setApiRequestLoading(false);
     }
   };
   
@@ -304,250 +522,6 @@ export default function ProtectedPage() {
     };
   }, [apiRequestTimer, pollingTimer, progressUpdateTimer]);
   
-  // 任务状态轮询函数
-  const pollTaskStatus = useCallback(async (taskId: string) => {
-    // 添加检查，确保taskId不为undefined
-    if (!taskId) {
-      console.error('轮询任务状态失败: taskId为空');
-      
-      // 停止轮询
-      if (pollingTimer) {
-        clearTimeout(pollingTimer);
-        setPollingTimer(null);
-      }
-      
-      return;
-    }
-    
-    try {
-      console.log(`轮询任务 ${taskId} 状态，当前轮询间隔: ${pollingInterval}ms`);
-      const response = await fetch(`/api/generate-image/status?taskId=${taskId}`);
-      
-      if (!response.ok) {
-        if (response.status === 401) {
-          router.push('/login');
-          return;
-        }
-        throw new Error(`查询任务状态失败: HTTP ${response.status}`);
-      }
-      
-      const data = await response.json();
-      
-      if (data.success && data.task) {
-        console.log(`任务 ${taskId} 状态: ${data.task.status}`);
-        setCurrentTask(data.task);
-        
-        // 根据任务状态处理
-        switch (data.task.status) {
-          case 'completed':
-            // 任务完成，添加到生成图片列表
-            if (data.task.result_url) {
-              // 检查是否已经添加过这个URL，避免重复添加相同的图片
-              setGeneratedImages(prev => {
-                if (prev.includes(data.task.result_url)) {
-                  return prev; // 如果已存在，不重复添加
-                }
-                return [data.task.result_url, ...prev];
-              });
-              setGenerationStatus("success");
-              
-              // 显示成功消息
-              setError(""); // 清除之前的错误
-              
-              // 添加任务完成动画或通知
-              const successElement = document.createElement('div');
-              successElement.className = 'fixed top-4 right-4 bg-green-500 text-white p-3 rounded-md shadow-lg z-50 animate-in fade-in slide-in-from-top';
-              successElement.innerHTML = `<div class="flex items-center gap-2">
-                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                  <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
-                </svg>
-                <span>图片生成完成！</span>
-              </div>`;
-              document.body.appendChild(successElement);
-              
-              // 3秒后移除通知
-              setTimeout(() => {
-                if (document.body.contains(successElement)) {
-                  document.body.removeChild(successElement);
-                }
-              }, 3000);
-            }
-            
-            // 检查是否需要停止轮询 - 添加检查确认所有相关任务都已完成
-            if (pollingTimer) {
-              // 检查是否有其他相关的任务正在处理中
-              fetch('/api/generate-image/pending-tasks')
-                .then(response => response.json())
-                .then(data => {
-                  if (!data.success || !data.tasks || data.tasks.length === 0) {
-                    // 如果没有其他正在处理的任务，停止轮询
-                    clearTimeout(pollingTimer);
-                    setPollingTimer(null);
-                    setIsGenerating(false);
-                    console.log('所有任务已完成，停止轮询');
-                  } else {
-                    // 如果还有其他任务，检查是否与当前任务相关
-                    const relatedTasks = data.tasks.filter((task: any) => 
-                      task.taskId !== data.task.taskId && 
-                      task.status !== 'completed' && 
-                      task.status !== 'failed' && 
-                      task.status !== 'cancelled'
-                    );
-                    
-                    if (relatedTasks.length === 0) {
-                      // 如果没有相关的未完成任务，停止轮询
-                      clearTimeout(pollingTimer);
-                      setPollingTimer(null);
-                      setIsGenerating(false);
-                      console.log('所有相关任务已完成，停止轮询');
-                    }
-                  }
-                })
-                .catch(error => {
-                  console.error('检查相关任务时出错:', error);
-                  // 出错时保守处理：停止轮询
-                  clearTimeout(pollingTimer);
-                  setPollingTimer(null);
-                  setIsGenerating(false);
-                });
-            } else {
-              setIsGenerating(false);
-            }
-            
-            // 更新点数和历史记录
-            fetchUserCredits();
-            fetchImageHistory();
-            break;
-            
-          case 'failed':
-            // 任务失败，显示错误信息
-            setError(data.task.error_message || '图片生成失败');
-            setGenerationStatus("error");
-            // 停止轮询
-            if (pollingTimer) {
-              clearTimeout(pollingTimer);
-              setPollingTimer(null);
-            }
-            setIsGenerating(false);
-            // 更新点数（可能已经退还）
-            fetchUserCredits();
-            break;
-            
-          case 'pending':
-          case 'processing':
-            // 继续轮询，但轮询间隔增长更平缓
-            let newInterval;
-            if (data.task.status === 'processing') {
-              // 处理中状态，维持较短的轮询间隔
-              newInterval = Math.min(pollingInterval * 1.2, 15000); // 最多15秒
-            } else {
-              // 排队中状态，可以稍微延长轮询间隔
-              newInterval = Math.min(pollingInterval * 1.5, MAX_POLLING_INTERVAL);
-            }
-            
-            setPollingInterval(newInterval);
-            
-            const timer = setTimeout(() => pollTaskStatus(taskId), newInterval);
-            setPollingTimer(timer);
-            break;
-            
-          case 'cancelled':
-            // 任务被取消
-            setError('图片生成任务已取消');
-            setGenerationStatus("error");
-            // 停止轮询
-            if (pollingTimer) {
-              clearTimeout(pollingTimer);
-              setPollingTimer(null);
-            }
-            setIsGenerating(false);
-            // 更新点数（可能已经退还）
-            fetchUserCredits();
-            break;
-        }
-      } else {
-        console.error('查询任务失败:', data.error);
-        setError(data.error || '任务状态查询失败');
-        // 停止轮询
-        if (pollingTimer) {
-          clearTimeout(pollingTimer);
-          setPollingTimer(null);
-        }
-        setIsGenerating(false);
-        setGenerationStatus("error");
-      }
-    } catch (error) {
-      console.error('轮询任务状态失败:', error);
-      // 如果是网络问题，继续轮询但增加间隔
-      const newInterval = Math.min(pollingInterval * 2, MAX_POLLING_INTERVAL);
-      setPollingInterval(newInterval);
-      
-      const timer = setTimeout(() => pollTaskStatus(taskId), newInterval);
-      setPollingTimer(timer);
-    }
-  }, [pollingInterval, pollingTimer, router, fetchUserCredits, fetchImageHistory]);
-
-  // 添加取消任务的函数
-  const cancelTask = async (taskId: string) => {
-    if (!taskId) {
-      console.error('取消任务失败: taskId为空');
-      setError('无法取消任务，任务ID不存在');
-      return;
-    }
-    
-    // 设置取消中状态
-    setIsCancelling(true);
-    
-    try {
-      const response = await fetch("/api/generate-image/cancel", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ taskId }),
-      });
-      
-      // 读取响应，即使失败也要读取内容
-      const data = await response.json().catch(() => ({ success: false, error: '解析响应失败' }));
-      
-      if (!response.ok) {
-        console.error(`取消任务请求失败: HTTP ${response.status}`, data);
-        throw new Error(data.error || `取消任务失败: HTTP ${response.status}`);
-      }
-      
-      console.log(`取消任务 ${taskId} 成功:`, data);
-      
-      // 停止轮询
-      if (pollingTimer) {
-        clearTimeout(pollingTimer);
-        setPollingTimer(null);
-      }
-      
-      setIsGenerating(false);
-      setGenerationStatus("idle");
-      setCurrentTask(null);
-      
-      // 根据响应显示不同的消息
-      if (data.warning) {
-        // 有警告但操作成功
-        setError(data.warning);
-      } else if (data.creditsRefunded) {
-        setError("任务已取消，点数已退还");
-      } else {
-        setError("任务已取消");
-      }
-      
-      // 更新点数
-      fetchUserCredits();
-    } catch (error: any) {
-      console.error('取消任务失败:', error);
-      setError(error.message || '取消任务失败，请稍后重试');
-    } finally {
-      // 清除取消中状态
-      setIsCancelling(false);
-    }
-  };
-
   // 生成图片
   const generateImage = async () => {
     if (!prompt.trim()) {
@@ -648,27 +622,14 @@ export default function ProtectedPage() {
     fileInputRef.current?.click();
   };
 
-  // 下载图片函数
-  const downloadImage = async (imageUrl: string) => {
+  // 修改下载图片函数
+  const downloadImage = (imageUrl: string) => {
     try {
-      // 创建一个临时链接
-      const link = document.createElement('a');
-      link.href = imageUrl;
-      
-      // 设置文件名 - 从URL中提取或使用默认名称
-      // 为了避免跨域问题,可能需要根据你的实际情况调整
-      const filename = `generated-image-${new Date().getTime()}.jpg`;
-      link.download = filename;
-      
-      // 模拟点击
-      document.body.appendChild(link);
-      link.click();
-      
-      // 清理DOM
-      document.body.removeChild(link);
+      // 在新标签页打开图片URL
+      window.open(imageUrl, '_blank');
     } catch (error) {
-      console.error('下载图片失败:', error);
-      setError('下载图片失败，请重试');
+      console.error('打开图片失败:', error);
+      setError('打开图片失败，请重试');
     }
   };
 
@@ -780,27 +741,25 @@ export default function ProtectedPage() {
     const currentTime = new Date().getTime();
     const elapsedSeconds = Math.floor((currentTime - startTime) / 1000);
     
-    // 估算的进度百分比 (仅用于UI显示)
-    // 任务状态不同，进度计算也不同
+    // 更精确的进度计算，基于任务状态和已经过时间
     let estimatedProgress;
     let estimatedRemainingTime;
     
-    const TOTAL_ESTIMATED_TIME = 180; // 预计总时间(秒)
+    const TOTAL_ESTIMATED_TIME = 120; // 降低预计总时间，更快反馈
     
     if (currentTask.status === 'pending') {
       // 排队中状态，进度较慢
-      estimatedProgress = Math.min(Math.floor((elapsedSeconds / TOTAL_ESTIMATED_TIME) * 40), 40);
+      estimatedProgress = Math.min(Math.floor((elapsedSeconds / TOTAL_ESTIMATED_TIME) * 30), 30);
       estimatedRemainingTime = TOTAL_ESTIMATED_TIME - elapsedSeconds;
     } else {
       // 处理中状态，进度更快
-      // 计算基础进度：40% + 剩余55%的比例
-      const baseProgress = 40;
-      const processingElapsedSeconds = elapsedSeconds - 20; // 假设前20秒为排队时间
-      const processingProgress = processingElapsedSeconds > 0 ? 
-        Math.min(Math.floor((processingElapsedSeconds / (TOTAL_ESTIMATED_TIME - 20)) * 55), 55) : 0;
+      // 计算基础进度：30% + 剩余65%的比例
+      const baseProgress = 30;
+      const processingElapsedSeconds = Math.max(0, elapsedSeconds - 5); // 假设前5秒为排队时间
+      const processingProgress = Math.min(Math.floor((processingElapsedSeconds / (TOTAL_ESTIMATED_TIME - 5)) * 65), 65);
       
       estimatedProgress = baseProgress + processingProgress;
-      estimatedRemainingTime = Math.max(TOTAL_ESTIMATED_TIME - elapsedSeconds, 10);
+      estimatedRemainingTime = Math.max(TOTAL_ESTIMATED_TIME - elapsedSeconds, 5);
     }
     
     // 安全显示任务ID
@@ -808,13 +767,13 @@ export default function ProtectedPage() {
       `任务ID: ${currentTask.taskId.substring(0, 8)}...` : 
       '任务ID: 处理中';
     
-    // 计算相对时间文本 - 使用elapsedTimeCounter确保每秒更新
+    // 计算相对时间文本
     const timeAgoText = formatTimeAgo(new Date(currentTask.created_at), elapsedTimeCounter);
     
     // 预计完成时间
-    const estimatedCompletionText = estimatedRemainingTime <= 0 ? 
+    const estimatedCompletionText = estimatedRemainingTime <= 5 ? 
       "即将完成" : 
-      `预计${Math.ceil(estimatedRemainingTime / 10) * 10}秒内完成`;
+      `预计${Math.ceil(estimatedRemainingTime / 5) * 5}秒内完成`;
     
     return (
       <div className="mt-4 space-y-2">
@@ -835,7 +794,7 @@ export default function ProtectedPage() {
         {/* 进度条 */}
         <div className="w-full bg-secondary h-1 rounded-full overflow-hidden">
           <div 
-            className="bg-primary h-full rounded-full transition-all duration-300 ease-out"
+            className="bg-primary h-full rounded-full transition-all duration-300 ease-out animate-pulse"
             style={{ width: `${estimatedProgress}%` }} 
           />
         </div>
@@ -870,6 +829,82 @@ export default function ProtectedPage() {
     if (hours < 24) return `${hours}小时前`;
     const days = Math.floor(hours / 24);
     return `${days}天前`;
+  };
+
+  // 添加取消任务的函数
+  const cancelTask = async (taskId: string) => {
+    if (!taskId) {
+      console.error('取消任务失败: taskId为空');
+      setError('无法取消任务，任务ID不存在');
+      return;
+    }
+    
+    // 设置取消中状态
+    setIsCancelling(true);
+    
+    try {
+      const response = await fetch("/api/generate-image/cancel", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ taskId }),
+      });
+      
+      // 读取响应，即使失败也要读取内容
+      const data = await response.json().catch(() => ({ success: false, error: '解析响应失败' }));
+      
+      if (!response.ok) {
+        console.error(`取消任务请求失败: HTTP ${response.status}`, data);
+        throw new Error(data.error || `取消任务失败: HTTP ${response.status}`);
+      }
+      
+      console.log(`取消任务 ${taskId} 成功:`, data);
+      
+      // 停止轮询
+      if (pollingTimer) {
+        clearTimeout(pollingTimer);
+        setPollingTimer(null);
+      }
+      
+      setIsGenerating(false);
+      setGenerationStatus("idle");
+      setCurrentTask(null);
+      
+      // 根据响应显示不同的消息
+      if (data.warning) {
+        // 有警告但操作成功
+        setError(data.warning);
+      } else if (data.creditsRefunded) {
+        setError("任务已取消，点数已退还");
+      } else {
+        setError("任务已取消");
+      }
+      
+      // 更新点数
+      fetchUserCredits();
+    } catch (error: any) {
+      console.error('取消任务失败:', error);
+      setError(error.message || '取消任务失败，请稍后重试');
+    } finally {
+      // 清除取消中状态
+      setIsCancelling(false);
+    }
+  };
+
+  // 更新图片生成骨架元素
+  const renderGeneratingImageSkeleton = () => {
+    return (
+      <div className="aspect-square bg-muted rounded-md relative overflow-hidden group hover:shadow transition-all">
+        <div className="absolute inset-0 bg-gradient-to-br from-muted to-muted/70"></div>
+        {/* 扫光动画效果 */}
+        <div className="absolute inset-0 before:absolute before:inset-0 before:-translate-x-full before:animate-shimmer before:bg-gradient-to-r before:from-transparent before:via-white/20 before:to-transparent"></div>
+        <div className="absolute inset-0 flex flex-col items-center justify-center">
+          <Loader2 className="h-8 w-8 text-primary animate-spin mb-2" />
+          <p className="text-xs text-muted-foreground font-medium">正在生成中...</p>
+        </div>
+      </div>
+    );
   };
 
   return (
@@ -1018,20 +1053,14 @@ export default function ProtectedPage() {
             <CardTitle className="text-sm font-medium">生成结果</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 grid-flow-row auto-rows-max">
-              {isGenerating && generatedImages.length === 0 ? (
-                // 生成中的占位骨架图
-                <div className="col-span-2 md:col-span-4 aspect-square bg-muted rounded-md relative overflow-hidden animate-pulse">
-                  <div className="absolute inset-0 flex items-center justify-center">
-                    <Loader2 className="h-10 w-10 text-primary animate-spin" />
-                    <p className="text-muted-foreground text-sm absolute mt-16">正在生成图像...</p>
-                  </div>
-                </div>
-              ) : generatedImages.length > 0 ? (
-                // 显示已生成的图片
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 grid-flow-row auto-rows-max w-full">
+              {isGenerating && renderGeneratingImageSkeleton()}
+                      
+              {/* 显示已生成的图片 */}
+              {generatedImages.length > 0 ? (
                 generatedImages.map((imageUrl, index) => (
                   <div 
-                    key={index} 
+                    key={`img-${index}-${imageUrl.substring(imageUrl.lastIndexOf('/') + 1, imageUrl.length)}`}
                     className="aspect-square bg-muted rounded-md relative overflow-hidden group hover:shadow transition-all cursor-pointer" 
                     onClick={() => setPreviewImage(imageUrl)}
                   >
@@ -1058,7 +1087,7 @@ export default function ProtectedPage() {
                           }}
                         >
                           <Download className="h-3 w-3" />
-                          下载
+                          查看原图
                         </Button>
                         <Button 
                           variant="secondary" 
@@ -1076,8 +1105,8 @@ export default function ProtectedPage() {
                     </div>
                   </div>
                 ))
-              ) : (
-                // 示例图片
+              ) : !isGenerating ? (
+                // 示例图片 - 只在没有生成图片且不在生成中时显示
                 Array.from({ length: 4 }).map((_, index) => (
                   <div key={index} className="aspect-square bg-muted rounded-md relative overflow-hidden group hover:shadow transition-all">
                     <div className="absolute inset-0 flex items-center justify-center">
@@ -1087,7 +1116,7 @@ export default function ProtectedPage() {
                     </div>
                   </div>
                 ))
-              )}
+              ) : null}
             </div>
           </CardContent>
           <CardFooter className="text-center border-t pt-4">
@@ -1147,3 +1176,20 @@ function StyleButton({
     </Button>
   );
 }
+
+// 添加CSS动画
+<style jsx>{`
+  .skeleton-shine {
+    animation: skeleton-loading 1.5s infinite;
+    background-size: 200% 100%;
+  }
+
+  @keyframes skeleton-loading {
+    0% {
+      transform: translateX(-100%);
+    }
+    100% {
+      transform: translateX(100%);
+    }
+  }
+`}</style>
