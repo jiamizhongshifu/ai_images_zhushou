@@ -19,6 +19,82 @@ export default function ProtectedPage() {
   // 添加预览状态
   const [previewImage, setPreviewImage] = useState<string | null>(null);
   
+  // 添加用户点数状态
+  const [userCredits, setUserCredits] = useState<number | null>(null);
+  const [isLoadingCredits, setIsLoadingCredits] = useState(false);
+  
+  // 添加历史记录状态
+  const [imageHistory, setImageHistory] = useState<any[]>([]);
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+  
+  // 获取用户点数
+  const fetchUserCredits = async () => {
+    try {
+      setIsLoadingCredits(true);
+      const response = await fetch('/api/credits/get');
+      
+      if (!response.ok) {
+        if (response.status === 401) {
+          router.push('/login'); // 未认证，跳转到登录页
+          return;
+        }
+        throw new Error('获取点数失败');
+      }
+      
+      const data = await response.json();
+      
+      if (data.success) {
+        setUserCredits(data.credits);
+      } else {
+        console.error('获取点数失败:', data.error);
+      }
+    } catch (error) {
+      console.error('获取用户点数出错:', error);
+    } finally {
+      setIsLoadingCredits(false);
+    }
+  };
+  
+  // 获取历史记录
+  const fetchImageHistory = async () => {
+    try {
+      setIsLoadingHistory(true);
+      const response = await fetch('/api/history/get?limit=4'); // 只获取最近4条记录
+      
+      if (!response.ok) {
+        if (response.status === 401) {
+          router.push('/login'); // 未认证，跳转到登录页
+          return;
+        }
+        throw new Error('获取历史记录失败');
+      }
+      
+      const data = await response.json();
+      
+      if (data.success) {
+        // 更新历史记录和生成图片列表
+        setImageHistory(data.history);
+        
+        // 如果没有手动生成的图片，从历史记录中加载
+        if (generatedImages.length === 0 && data.history.length > 0) {
+          setGeneratedImages(data.history.map((item: any) => item.image_url));
+        }
+      } else {
+        console.error('获取历史记录失败:', data.error);
+      }
+    } catch (error) {
+      console.error('获取历史记录出错:', error);
+    } finally {
+      setIsLoadingHistory(false);
+    }
+  };
+  
+  // 初始化加载
+  useEffect(() => {
+    fetchUserCredits();
+    fetchImageHistory();
+  }, []);
+  
   // 处理图片上传
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -48,6 +124,12 @@ export default function ProtectedPage() {
     setIsGenerating(true);
     
     try {
+      // 检查点数
+      if (userCredits !== null && userCredits <= 0) {
+        setError("点数不足，无法生成图片");
+        return;
+      }
+      
       // 创建完整提示词，包含风格
       let fullPrompt = prompt;
       if (activeStyle !== "无风格") {
@@ -79,10 +161,17 @@ export default function ProtectedPage() {
       // 将新生成的图片添加到列表中
       if (data.imageUrl) {
         setGeneratedImages(prev => [data.imageUrl, ...prev].slice(0, 4));
+        
+        // 更新点数和历史记录
+        fetchUserCredits();
+        fetchImageHistory();
       }
     } catch (err: any) {
       console.error("生成图片失败:", err);
       setError(err.message || "生成图片时发生错误");
+      
+      // 如果生成失败，刷新点数（可能已经退还）
+      fetchUserCredits();
     } finally {
       setIsGenerating(false);
     }
@@ -235,7 +324,13 @@ export default function ProtectedPage() {
                 <div className="flex items-center justify-end pt-3 border-t mt-3 border-border">
                   <div className="flex items-center gap-3">
                     <div className="text-muted-foreground text-sm">
-                      <span className="font-medium">5点</span>
+                      <span className="font-medium">
+                        {isLoadingCredits ? (
+                          <Loader2 className="inline h-3 w-3 animate-spin mr-1" />
+                        ) : (
+                          userCredits ?? '...'
+                        )}点
+                      </span>
                       <Button variant="ghost" size="icon" className="h-6 w-6 ml-1" title="充值点数">
                         <PlusCircle className="h-3 w-3" />
                       </Button>
@@ -244,7 +339,7 @@ export default function ProtectedPage() {
                       size="sm" 
                       className="h-8"
                       onClick={generateImage}
-                      disabled={isGenerating || !prompt.trim()}
+                      disabled={isGenerating || !prompt.trim() || (userCredits !== null && userCredits <= 0)}
                     >
                       {isGenerating ? (
                         <Loader2 className="mr-1 h-4 w-4 animate-spin" />

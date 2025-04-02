@@ -2,6 +2,8 @@ import { NextRequest } from 'next/server';
 import { addBase64Prefix, estimateBase64Size, compressImageServer } from '@/utils/image/image2Base64';
 import { OpenAI } from 'openai';
 import { getApiConfig, logApiConfig } from '@/utils/env';
+import { createClient } from '@/utils/supabase/server';
+import { createAdminClient } from '@/utils/supabase/admin';
 
 // 备用API配置（仅在环境变量不可用时使用）
 const BACKUP_API_URL = "https://api.tu-zi.com/v1";
@@ -121,10 +123,37 @@ function handleApiError(error: any): { errorType: string, message: string } {
 function extractImageUrl(content: string): string | null {
   console.log("开始提取图片URL，原始内容:", content);
   
+  // 检测错误消息模式
+  const errorPatterns = [
+    "encountered an issue",
+    "couldn't complete",
+    "unable to generate",
+    "failed to create",
+    "I'm sorry",
+    "error",
+    "cannot",
+    "couldn't"
+  ];
+  
+  // 检查内容是否包含错误信息
+  for (const pattern of errorPatterns) {
+    if (content.toLowerCase().includes(pattern.toLowerCase())) {
+      console.log(`检测到错误信息: "${pattern}"`);
+      return null;
+    }
+  }
+  
   // 1. 尝试提取Markdown格式的图片URL
   const markdownMatch = content.match(/!\[.*?\]\((https?:\/\/[^\s)]+)\)/);
   if (markdownMatch && markdownMatch[1]) {
     console.log("找到Markdown格式图片URL:", markdownMatch[1]);
+    
+    // 验证是否是占位图URL
+    if (markdownMatch[1].includes("placehold.co")) {
+      console.log("URL是占位图，不视为有效图片URL");
+      return null;
+    }
+    
     return markdownMatch[1];
   }
 
@@ -132,6 +161,13 @@ function extractImageUrl(content: string): string | null {
   const directUrlMatch = content.match(/(https?:\/\/[^\s"']+\.(jpe?g|png|gif|webp|bmp))/i);
   if (directUrlMatch && directUrlMatch[1]) {
     console.log("找到直接图片URL:", directUrlMatch[1]);
+    
+    // 验证是否是占位图URL
+    if (directUrlMatch[1].includes("placehold.co")) {
+      console.log("URL是占位图，不视为有效图片URL");
+      return null;
+    }
+    
     return directUrlMatch[1];
   }
 
@@ -139,15 +175,14 @@ function extractImageUrl(content: string): string | null {
   const anyUrlMatch = content.match(/(https?:\/\/[^\s"'<>]+)/i);
   if (anyUrlMatch && anyUrlMatch[1]) {
     console.log("找到任意URL:", anyUrlMatch[1]);
+    
+    // 验证是否是占位图URL或非图片URL
+    if (anyUrlMatch[1].includes("placehold.co") || !anyUrlMatch[1].match(/\.(jpe?g|png|gif|webp|bmp|svg)/i)) {
+      console.log("URL不是有效图片URL或是占位图");
+      return null;
+    }
+    
     return anyUrlMatch[1];
-  }
-
-  // 4. 如果内容不为空，使用文本内容生成占位图
-  if (content.trim().length > 0) {
-    const encodedText = encodeURIComponent(content.slice(0, 50) + "...");
-    const placeholderUrl = `https://placehold.co/512x512/lightblue/black?text=${encodedText}`;
-    console.log("使用文本内容生成占位图:", placeholderUrl);
-    return placeholderUrl;
   }
 
   console.log("未找到任何可用的URL");
@@ -176,13 +211,82 @@ function getEffectiveApiConfig() {
   return envConfig;
 }
 
+// 用户点数操作：扣除或增加点数
+async function updateUserCredits(userId: string, action: 'deduct' | 'add', amount = 1): Promise<boolean> {
+  try {
+    const response = await fetch(`${process.env.VERCEL_URL || 'http://localhost:3000'}/api/credits/update`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ userId, action, amount }),
+    });
+    
+    const data = await response.json();
+    return data.success;
+  } catch (error) {
+    console.error(`${action === 'deduct' ? '扣除' : '增加'}用户点数失败:`, error);
+    return false;
+  }
+}
+
+// 保存用户图片生成历史
+async function saveImageHistory(
+  userId: string, 
+  imageUrl: string, 
+  prompt: string,
+  modelUsed: string = 'gpt-4o-all',
+  generationSettings: any = {},
+  status: string = 'completed'
+): Promise<boolean> {
+  try {
+    const response = await fetch(`${process.env.VERCEL_URL || 'http://localhost:3000'}/api/history/save`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        userId,
+        imageUrl,
+        prompt,
+        modelUsed,
+        generationSettings,
+        status
+      }),
+    });
+    
+    const data = await response.json();
+    return data.success;
+  } catch (error) {
+    console.error("保存图片历史记录失败:", error);
+    return false;
+  }
+}
+
 export async function POST(request: NextRequest) {
   // 记录请求开始时间
   const startTime = Date.now();
   let hasImage = false;
   let requestType = "纯文本请求";
+  let userId: string | null = null; // 用户ID
+  let creditsDeducted = false; // 标记是否已扣除点数
 
   try {
+    // 获取当前认证用户
+    const supabase = await createClient();
+    const { data: { user }, error: authError } = await supabase.auth.getUser();
+    
+    if (authError || !user) {
+      return new Response(JSON.stringify({ error: "用户未认证" }), {
+        status: 401,
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+    }
+    
+    userId = user.id;
+
     // 获取并记录API配置
     const { apiUrl, apiKey, model, isConfigComplete } = getEffectiveApiConfig();
     
@@ -219,6 +323,57 @@ export async function POST(request: NextRequest) {
 
     console.log(`[${requestType}] 接收到图像生成请求:`, { prompt, hasImage, style });
 
+    // 在扣除用户点数前先检查点数记录是否存在，如果不存在则创建
+    const supabaseAdmin = createAdminClient();
+    const { data: existingCredits, error: checkError } = await supabaseAdmin
+      .from('ai_images_creator_credits')
+      .select('*')
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    if (checkError) {
+      console.error(`[${requestType}] 检查用户点数记录失败:`, checkError);
+    }
+
+    if (!existingCredits) {
+      console.log(`[${requestType}] 用户点数记录不存在，创建初始记录`);
+      // 如果不存在点数记录，创建一个初始记录
+      const { error: insertError } = await supabaseAdmin
+        .from('ai_images_creator_credits')
+        .insert({
+          user_id: userId,
+          credits: 5,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        });
+        
+      if (insertError) {
+        console.error(`[${requestType}] 创建用户点数记录失败:`, insertError);
+        return new Response(JSON.stringify({ error: "创建用户点数记录失败" }), {
+          status: 500,
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        });
+      }
+      
+      console.log(`[${requestType}] 已成功创建用户点数初始记录，点数: 5`);
+    }
+
+    // 先扣除用户点数
+    const deductSuccess = await updateUserCredits(userId, 'deduct');
+    if (!deductSuccess) {
+      return new Response(JSON.stringify({ error: "点数不足，无法生成图片" }), {
+        status: 400,
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+    }
+    
+    creditsDeducted = true;
+    console.log(`[${requestType}] 已扣除用户点数，用户ID: ${userId}`);
+
     // 如果使用测试模式，直接返回模拟图片URL
     if (USE_MOCK_MODE) {
       console.log("使用测试模式，返回模拟图片URL");
@@ -244,6 +399,10 @@ export async function POST(request: NextRequest) {
       
       // 构建模拟图片URL
       const mockImageUrl = `https://placehold.co/512x512/${imageColor}/black?text=${imageText}`;
+      
+      // 保存历史记录
+      await saveImageHistory(userId, mockImageUrl, prompt, "mock-model", { style });
+      
       return new Response(JSON.stringify({ imageUrl: mockImageUrl }), {
         status: 200,
         headers: {
@@ -252,201 +411,229 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // 准备请求内容
-    const enhancedPrompt = `${prompt}。请直接生成一张与描述相符的图片，不要包含任何文字说明，只返回一个图片链接。`;
-    
-    const contentItems: MessageContent[] = [
-      {
-        type: "text",
-        text: enhancedPrompt,
-      }
-    ];
+    // 实际API请求处理
+    let responseImageUrl: string | null = null;
 
-    // 如果有图片，添加到请求中
-    if (image) {
-      let imageUrl = image;
+    try {
+      // 增强提示词
+      const enhancedPrompt = `${prompt}。请直接生成一张与描述相符的图片，不要包含任何文字说明，只返回一个图片链接。`;
       
-      if (!image.startsWith('data:image/')) {
-        console.log(`[${requestType}] 图片不是有效的data:URL格式，使用工具函数处理...`);
-        imageUrl = addBase64Prefix(image);
-        console.log(`[${requestType}] 处理后的图片URL前缀:`, imageUrl.substring(0, 50) + "...");
-      }
+      // 准备消息内容
+      const messages: { role: string; content: MessageContent[] }[] = [{
+        role: "user",
+        content: [{ type: "text", text: enhancedPrompt }]
+      }];
 
-      // 估算原始图片大小
-      const originalSize = estimateBase64Size(imageUrl);
-      console.log(`[${requestType}] 原始图片大小: ${(originalSize / 1024).toFixed(2)}KB`);
-      
-      // 如果图片大于1MB，进行压缩
-      if (originalSize > 1024 * 1024) {
-        console.log(`[${requestType}] 图片大于1MB，开始压缩...`);
-        try {
-          const compressStart = Date.now();
+      // 如果有图片，添加到请求中
+      if (image) {
+        let imageUrl = image;
+        
+        if (!image.startsWith('data:image/')) {
+          console.log(`[${requestType}] 图片不是有效的data:URL格式，使用工具函数处理...`);
+          imageUrl = addBase64Prefix(image);
+          console.log(`[${requestType}] 处理后的图片URL前缀:`, imageUrl.substring(0, 50) + "...");
+        }
+        
+        // 估算原始图片大小
+        const originalSize = estimateBase64Size(imageUrl);
+        console.log(`[${requestType}] 原始图片大小: ${(originalSize / 1024).toFixed(2)}KB`);
+        
+        // 如果图片大于1MB，进行压缩
+        if (originalSize > 1024 * 1024) {
+          console.log(`[${requestType}] 图片大于1MB，开始压缩...`);
+          const compressionStart = Date.now();
           
           // 压缩图片
           imageUrl = await compressImageServer(
-            imageUrl, 
-            MAX_IMAGE_WIDTH, 
-            MAX_IMAGE_HEIGHT, 
+            imageUrl,
+            MAX_IMAGE_WIDTH,
+            MAX_IMAGE_HEIGHT,
             IMAGE_QUALITY
           );
           
-          // 计算压缩后大小
+          // 压缩后大小
           const compressedSize = estimateBase64Size(imageUrl);
-          const compressTime = Date.now() - compressStart;
-          
-          console.log(`[${requestType}] 图片压缩完成，耗时: ${compressTime}ms`);
-          console.log(`[${requestType}] 压缩前 ${(originalSize/1024).toFixed(2)}KB -> 压缩后 ${(compressedSize/1024).toFixed(2)}KB，压缩率: ${(100 - compressedSize/originalSize*100).toFixed(2)}%`);
-        } catch (error) {
-          console.warn(`[${requestType}] 图片压缩失败:`, error);
-          // 压缩失败仍继续使用原图
+          console.log(`[${requestType}] 压缩后图片大小: ${(compressedSize / 1024).toFixed(2)}KB, 压缩比: ${(compressedSize / originalSize * 100).toFixed(1)}%, 耗时: ${Date.now() - compressionStart}ms`);
         }
+        
+        // 将图片添加到消息中
+        messages[0].content.unshift({
+          type: "image_url",
+          image_url: { url: imageUrl }
+        });
       }
       
-      // 再次检查大小，确保不超过限制
-      const finalSize = estimateBase64Size(imageUrl);
-      console.log(`[${requestType}] 最终图片大小: ${(finalSize / 1024).toFixed(2)}KB`);
+      // 准备OpenAI客户端配置
+      const openaiOptions: any = {
+        baseURL: apiUrl,
+        apiKey: apiKey,
+        timeout: TIMEOUT,
+        maxRetries: MAX_RETRIES
+      };
       
-      if (finalSize > 6 * 1024 * 1024) {
-        return new Response(JSON.stringify({ error: "图片太大，请使用小于6MB的图片" }), {
+      // 创建OpenAI客户端
+      const openai = new OpenAI(openaiOptions);
+      
+      // 开始计时
+      const requestStart = Date.now();
+      
+      // 发送API请求
+      console.log(`[${requestType}] 发送API请求中，开始时间: ${new Date(requestStart).toISOString()}`);
+      const response = await openai.chat.completions.create({
+        model: model,
+        messages: [
+          {
+            role: "user",
+            content: messages[0].content
+          }
+        ],
+        max_tokens: 4096,
+        stream: false
+      });
+      
+      // 计算请求耗时
+      const requestTime = Date.now() - requestStart;
+      requestStats.recordTime(requestTime, hasImage);
+      console.log(`[${requestType}] 请求完成，耗时: ${requestTime}ms`);
+      
+      // 检查响应是否为空
+      if (!response.choices || !response.choices[0] || !response.choices[0].message) {
+        console.error(`[${requestType}] API返回数据格式不符合预期:`, response);
+        throw new Error("API返回数据格式不符合预期");
+      }
+      
+      // 提取返回内容
+      const content = response.choices[0].message.content;
+      if (!content) {
+        console.error(`[${requestType}] API返回内容为空`);
+        throw new Error("API返回内容为空");
+      }
+      
+      console.log(`[${requestType}] API返回原始内容:`, content);
+      
+      // 提取图片URL
+      responseImageUrl = extractImageUrl(content);
+      
+      if (!responseImageUrl) {
+        console.error(`[${requestType}] 无法从API响应中提取图片URL或API返回了错误信息`);
+        
+        // 如果点数已扣除，尝试退还
+        if (creditsDeducted) {
+          const refundSuccess = await updateUserCredits(userId!, 'add');
+          console.log(`[${requestType}] 图片生成失败，尝试退还点数: ${refundSuccess ? '成功' : '失败'}`);
+        }
+        
+        return new Response(JSON.stringify({ 
+          error: "图片生成失败，API无法生成有效图片或返回了错误信息，点数已退还" 
+        }), {
           status: 400,
           headers: {
             'Content-Type': 'application/json',
           },
         });
       }
-
-      const imageContent: MessageContent = {
-        type: "image_url",
-        image_url: {
-          url: imageUrl
-        }
-      };
-      contentItems.unshift(imageContent);
-    }
-
-    try {
-      console.log("开始调用API...", new Date().toISOString());
       
-      // 使用环境变量或备用配置创建OpenAI客户端
-      const openai = new OpenAI({
-        apiKey: apiKey,
-        baseURL: apiUrl,
-        timeout: TIMEOUT, // 添加超时设置
-        maxRetries: MAX_RETRIES, // 设置最大重试次数
-      });
+      console.log(`[${requestType}] 成功提取图片URL:`, responseImageUrl);
       
-      console.log("OpenAI SDK初始化完成，开始调用...", new Date().toISOString());
-      
-      // 创建超时Promise
-      const timeoutPromise = new Promise((_, reject) => {
-        setTimeout(() => reject(new Error(`API请求超时 (${TIMEOUT/1000}秒)`)), TIMEOUT);
-      });
-      
-      // 创建API调用Promise
-      const apiCallPromise = openai.chat.completions.create({
-        model: model,
-        messages: [
-          {
-            role: "system",
-            content: "你是一个AI图像生成助手。用户会给你提供图像描述，你需要生成相应的图像。请直接返回图像URL，不要有任何解释文字。"
-          },
-          {
-            role: "user",
-            content: contentItems
-          }
-        ]
-      });
-      
-      // 使用Promise.race竞争，谁先完成用谁的结果
-      const response = await Promise.race([
-        apiCallPromise,
-        timeoutPromise
-      ]) as any;
-      
-      console.log("API调用成功，开始处理响应...", new Date().toISOString());
-      
-      let imageUrl = null;
-      if (response.choices && response.choices.length > 0) {
-        const content = response.choices[0].message.content || "";
-        console.log("API完整响应内容:", content);
+      // 验证URL是否为有效的图片URL，而不是占位图
+      if (responseImageUrl.includes("placehold.co")) {
+        console.error(`[${requestType}] 提取到的是占位图URL，不是有效的图片`);
         
-        imageUrl = extractImageUrl(content);
+        // 如果点数已扣除，尝试退还
+        if (creditsDeducted) {
+          const refundSuccess = await updateUserCredits(userId!, 'add');
+          console.log(`[${requestType}] 图片生成失败，尝试退还点数: ${refundSuccess ? '成功' : '失败'}`);
+        }
+        
+        return new Response(JSON.stringify({ 
+          error: "图片生成失败，无法生成有效图片，点数已退还" 
+        }), {
+          status: 400,
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        });
+      }
+      
+      // 保存历史记录
+      await saveImageHistory(userId, responseImageUrl, prompt, model, { style });
+      
+      // 返回成功响应
+      return new Response(JSON.stringify({ imageUrl: responseImageUrl }), {
+        status: 200,
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+      
+    } catch (apiError: any) {
+      // 处理API错误
+      console.error(`[${requestType}] API调用失败:`, apiError);
+      
+      // 获取错误详情
+      const { errorType, message } = handleApiError(apiError);
+      
+      // 如果点数已扣除，尝试退还
+      if (creditsDeducted) {
+        const refundSuccess = await updateUserCredits(userId!, 'add');
+        console.log(`[${requestType}] 尝试退还点数: ${refundSuccess ? '成功' : '失败'}`);
+      }
+      
+      // 根据错误类型返回不同的响应
+      if (errorType === "quota_exceeded") {
+        return new Response(JSON.stringify({ 
+          error: message,
+          imageUrl: QUOTA_EXCEEDED_IMAGE
+        }), {
+          status: 402,
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        });
+      } else if (errorType === "invalid_token") {
+        return new Response(JSON.stringify({ 
+          error: message,
+          imageUrl: INVALID_TOKEN_IMAGE
+        }), {
+          status: 401,
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        });
       } else {
-        console.error("API响应中没有choices数据:", response);
-        imageUrl = "https://placehold.co/512x512/pink/white?text=Error:No+Choices+In+API+Response";
-      }
-
-      return new Response(JSON.stringify({ 
-        imageUrl: imageUrl || "https://placehold.co/512x512/pink/white?text=Fallback+Image",
-        apiResponse: response
-      }), {
-        status: 200,
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      });
-    } catch (error: any) {
-      console.error(`[${requestType}] API调用过程中出错:`, error);
-      
-      const errorInfo = handleApiError(error);
-      
-      // 如果是配额不足或令牌无效，返回特定错误
-      if (errorInfo.errorType === "quota_exceeded") {
+        // 其他错误类型
         return new Response(JSON.stringify({ 
-          imageUrl: QUOTA_EXCEEDED_IMAGE,
-          error: errorInfo.message,
-          errorType: errorInfo.errorType
+          error: message
         }), {
-          status: 200,
-          headers: {
-            'Content-Type': 'application/json',
-          },
-        });
-      } else if (errorInfo.errorType === "invalid_token") {
-        return new Response(JSON.stringify({ 
-          imageUrl: INVALID_TOKEN_IMAGE,
-          error: errorInfo.message,
-          errorType: errorInfo.errorType
-        }), {
-          status: 200,
+          status: 500,
           headers: {
             'Content-Type': 'application/json',
           },
         });
       }
-      
-      return new Response(JSON.stringify({ 
-        imageUrl: "https://placehold.co/512x512/red/white?text=API+Error",
-        error: `调用API失败: ${errorInfo.message}`,
-        errorType: errorInfo.errorType
-      }), {
-        status: 200,
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      });
     }
     
   } catch (error: any) {
-    console.error(`[${requestType}] 图片生成失败:`, error);
-    let errorMessage = error.message || "未知错误";
+    // 处理整体API端点的错误
+    console.error("图片生成过程中发生错误:", error);
+    
+    // 如果点数已扣除，尝试退还
+    if (creditsDeducted && userId) {
+      const refundSuccess = await updateUserCredits(userId, 'add');
+      console.log(`尝试退还点数: ${refundSuccess ? '成功' : '失败'}`);
+    }
     
     return new Response(JSON.stringify({ 
-      imageUrl: `https://placehold.co/512x512/orange/white?text=Error:${encodeURIComponent(errorMessage.slice(0, 50))}`,
-      error: `图片生成失败: ${errorMessage}` 
+      error: error.message || "图片生成过程中发生未知错误"
     }), {
-      status: 200,
+      status: 500,
       headers: {
         'Content-Type': 'application/json',
       },
     });
   } finally {
-    // 计算请求总耗时并记录
-    const endTime = Date.now();
-    const processingTime = endTime - startTime;
-    console.log(`[${requestType}] 请求处理完成, 总耗时: ${processingTime}ms`);
-    
-    // 记录到统计数据
-    requestStats.recordTime(processingTime, hasImage);
+    // 记录整体处理时间
+    const totalTime = Date.now() - startTime;
+    console.log(`[${requestType}] 总处理时间: ${totalTime}ms`);
   }
 } 

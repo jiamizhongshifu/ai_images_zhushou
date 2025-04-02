@@ -4,9 +4,15 @@ import { cookies } from "next/headers";
 export const createClient = async () => {
   const cookieStore = await cookies();
 
-  // 直接使用硬编码的URL和ANON KEY，而非环境变量
-  const supabaseUrl = "https://wcjctczyzibrswwngmvd.supabase.co";
-  const supabaseAnonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndjamN0Y3p5emlicnN3d25nbXZkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDM0MjAyMDcsImV4cCI6MjA1ODk5NjIwN30.vgCpbBqyHWV6ONAMDwOQ5kF6wn75p2txsYbMfLRJGAk";
+  // 从环境变量中读取URL和ANON KEY
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+  // 验证环境变量存在
+  if (!supabaseUrl || !supabaseAnonKey) {
+    console.error("缺少必要的Supabase环境变量");
+    throw new Error("缺少必要的Supabase环境变量");
+  }
 
   return createServerClient(
     supabaseUrl,
