@@ -38,6 +38,12 @@ CREATE POLICY "Users can view their own tasks"
   FOR SELECT
   USING (auth.uid() = user_id);
 
+-- 创建允许用户更新自己任务的策略
+CREATE POLICY "Users can update their own tasks"
+  ON ai_images_creator_tasks
+  FOR UPDATE
+  USING (auth.uid() = user_id);
+
 -- 创建触发器函数，自动更新updated_at
 CREATE OR REPLACE FUNCTION update_tasks_updated_at_column()
 RETURNS TRIGGER AS $$
@@ -68,4 +74,49 @@ $$ language 'plpgsql';
 CREATE TRIGGER set_task_completed_time_trigger
     BEFORE UPDATE ON ai_images_creator_tasks
     FOR EACH ROW
-    EXECUTE FUNCTION set_task_completed_time(); 
+    EXECUTE FUNCTION set_task_completed_time();
+    
+-- 创建任务取消函数
+CREATE OR REPLACE FUNCTION cancel_task(task_id_param TEXT, user_id_param UUID)
+RETURNS BOOLEAN AS $$
+DECLARE
+    task_exists BOOLEAN;
+    task_updatable BOOLEAN;
+BEGIN
+    -- 检查任务是否存在且属于该用户
+    SELECT EXISTS (
+        SELECT 1 FROM ai_images_creator_tasks 
+        WHERE task_id = task_id_param AND user_id = user_id_param
+    ) INTO task_exists;
+    
+    IF NOT task_exists THEN
+        RETURN FALSE;
+    END IF;
+    
+    -- 检查任务是否可以取消（只有pending和processing状态可以取消）
+    SELECT EXISTS (
+        SELECT 1 FROM ai_images_creator_tasks 
+        WHERE task_id = task_id_param 
+        AND user_id = user_id_param
+        AND status IN ('pending', 'processing')
+    ) INTO task_updatable;
+    
+    IF NOT task_updatable THEN
+        RETURN FALSE;
+    END IF;
+    
+    -- 更新任务状态为已取消
+    UPDATE ai_images_creator_tasks
+    SET status = 'cancelled',
+        updated_at = TIMEZONE('utc'::text, NOW()),
+        error_message = '用户主动取消任务'
+    WHERE task_id = task_id_param
+    AND user_id = user_id_param;
+    
+    RETURN TRUE;
+END;
+$$ language 'plpgsql';
+
+-- 为任务取消函数设置安全策略
+REVOKE ALL ON FUNCTION cancel_task FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION cancel_task TO authenticated; 

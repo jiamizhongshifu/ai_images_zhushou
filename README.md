@@ -102,3 +102,114 @@ Please file feedback and issues over on the [Supabase GitHub org](https://github
 - [Next.js Subscription Payments Starter](https://github.com/vercel/nextjs-subscription-payments)
 - [Cookie-based Auth and the Next.js 13 App Router (free course)](https://youtube.com/playlist?list=PL5S4mPUpp4OtMhpnp93EFSo42iQ40XjbF)
 - [Supabase Auth and the Next.js App Router](https://github.com/supabase/supabase/tree/master/examples/auth/nextjs)
+
+# AI 图像生成助手
+
+基于Next.js和Supabase构建的AI图像生成服务，支持异步任务处理与状态追踪。
+
+## 特性
+
+- 异步图像生成与任务状态跟踪
+- 实时任务进度更新
+- 支持任务取消和点数退还
+- 任务状态持久化，刷新页面后仍可查看任务进度
+
+## 安装与设置
+
+1. 安装依赖
+
+```bash
+npm install
+```
+
+2. 设置环境变量
+
+创建`.env.local`文件，添加以下内容：
+
+```
+NEXT_PUBLIC_SUPABASE_URL=你的Supabase项目URL
+NEXT_PUBLIC_SUPABASE_ANON_KEY=你的Supabase匿名密钥
+SUPABASE_SERVICE_ROLE_KEY=你的Supabase服务角色密钥（用于管理员操作）
+```
+
+3. 应用数据库函数
+
+```bash
+node scripts/apply-db-functions.js
+```
+
+4. 启动开发服务器
+
+```bash
+npm run dev
+```
+
+## 任务管理
+
+系统使用`ai_images_creator_tasks`表存储所有图像生成任务。任务状态包括：
+
+- `pending`: 等待处理
+- `processing`: 正在处理
+- `completed`: 已完成
+- `failed`: 失败
+- `cancelled`: 已取消
+
+任务取消流程：
+1. 前端调用`/api/generate-image/cancel`接口
+2. 后端将任务状态更新为`cancelled`
+3. 如果已扣除点数，系统自动退还
+
+点数管理：
+- 成功生成图片扣除点数
+- 任务取消或失败退还点数
+- 使用`increment_user_credits`数据库函数处理退款
+
+## 故障排除
+
+如果任务长时间处于`pending`状态：
+- 检查任务处理服务是否正常运行
+- 确认数据库连接正常
+- 尝试取消任务并重新提交
+
+如果无法取消任务：
+- 检查浏览器控制台错误信息
+- 确认API路由`/api/generate-image/cancel`可访问
+- 验证数据库连接和权限设置
+
+## 开发工具
+
+### 测试任务取消
+
+如果遇到任务无法取消的问题，可以使用测试脚本诊断问题：
+
+```bash
+# 设置环境变量（请替换为您的实际值）
+export NEXT_PUBLIC_SUPABASE_URL=your_supabase_url
+export NEXT_PUBLIC_SUPABASE_ANON_KEY=your_anon_key
+# 或者使用服务角色密钥（更高权限）
+export SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
+
+# 运行测试脚本（替换task_id为实际任务ID）
+node scripts/test-cancel.js task_id
+```
+
+这个脚本会显示任务的当前状态，并提供两种方法测试取消操作：
+1. 直接更新表状态
+2. 使用RPC函数
+
+根据测试结果，脚本会提供相应的解决方案建议。
+
+### 常见问题
+
+#### 任务无法取消
+
+可能的原因：
+1. 缺少更新权限策略。在Supabase控制台SQL编辑器中执行：
+   ```sql
+   CREATE POLICY "Users can update their own tasks"
+     ON ai_images_creator_tasks
+     FOR UPDATE
+     USING (auth.uid() = user_id);
+   ```
+
+2. 缺少RPC函数。在Supabase控制台SQL编辑器中执行`sql/ai_images_creator_tasks.sql`中的`cancel_task`函数定义。

@@ -52,6 +52,9 @@ export default function ProtectedPage() {
   // 添加进度更新定时器
   const [progressUpdateTimer, setProgressUpdateTimer] = useState<NodeJS.Timeout | null>(null);
   
+  // 添加取消任务状态
+  const [isCancelling, setIsCancelling] = useState(false);
+  
   // 获取用户点数
   const fetchUserCredits = async () => {
     try {
@@ -432,6 +435,9 @@ export default function ProtectedPage() {
       return;
     }
     
+    // 设置取消中状态
+    setIsCancelling(true);
+    
     try {
       const response = await fetch("/api/generate-image/cancel", {
         method: "POST",
@@ -441,9 +447,11 @@ export default function ProtectedPage() {
         body: JSON.stringify({ taskId }),
       });
       
-      const data = await response.json();
+      // 读取响应，即使失败也要读取内容
+      const data = await response.json().catch(() => ({ success: false, error: '解析响应失败' }));
       
       if (!response.ok) {
+        console.error(`取消任务请求失败: HTTP ${response.status}`, data);
         throw new Error(data.error || `取消任务失败: HTTP ${response.status}`);
       }
       
@@ -459,18 +467,24 @@ export default function ProtectedPage() {
       setGenerationStatus("idle");
       setCurrentTask(null);
       
-      // 如果点数已退还，显示提示
-      if (data.creditsRefunded) {
+      // 根据响应显示不同的消息
+      if (data.warning) {
+        // 有警告但操作成功
+        setError(data.warning);
+      } else if (data.creditsRefunded) {
         setError("任务已取消，点数已退还");
       } else {
         setError("任务已取消");
       }
       
-      // 更新点数（可能已经退还）
+      // 更新点数
       fetchUserCredits();
-    } catch (error) {
+    } catch (error: any) {
       console.error('取消任务失败:', error);
-      setError('取消任务失败，请稍后重试');
+      setError(error.message || '取消任务失败，请稍后重试');
+    } finally {
+      // 清除取消中状态
+      setIsCancelling(false);
     }
   };
 
@@ -665,10 +679,19 @@ export default function ProtectedPage() {
             className="h-7 text-xs" 
             title="取消生成"
             onClick={() => currentTask && cancelTask(currentTask.taskId)}
-            disabled={!currentTask}
+            disabled={!currentTask || isCancelling}
           >
-            <X className="h-3 w-3 mr-1" />
-            <span>取消生成</span>
+            {isCancelling ? (
+              <>
+                <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                <span>取消中...</span>
+              </>
+            ) : (
+              <>
+                <X className="h-3 w-3 mr-1" />
+                <span>取消生成</span>
+              </>
+            )}
           </Button>
         )}
         <Button 

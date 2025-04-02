@@ -45,3 +45,40 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 CREATE OR REPLACE TRIGGER on_auth_user_created
   AFTER INSERT ON auth.users
   FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
+
+-- 创建或更新点数增加函数
+CREATE OR REPLACE FUNCTION increment_user_credits(user_id_param UUID, credits_to_add INT)
+RETURNS VOID AS $$
+DECLARE
+  current_credits INT;
+BEGIN
+  -- 获取用户当前点数
+  SELECT credits INTO current_credits
+  FROM ai_images_creator_credits
+  WHERE user_id = user_id_param
+  ORDER BY created_at DESC
+  LIMIT 1;
+  
+  -- 如果没有记录，默认为0
+  IF current_credits IS NULL THEN
+    current_credits := 0;
+  END IF;
+  
+  -- 创建新的点数记录
+  INSERT INTO ai_images_creator_credits (
+    user_id,
+    credits,
+    operation,
+    reason
+  ) VALUES (
+    user_id_param,
+    current_credits + credits_to_add,
+    'refund',
+    '任务取消退款'
+  );
+END;
+$$ LANGUAGE plpgsql;
+
+-- 为增加用户点数函数添加安全策略
+REVOKE ALL ON FUNCTION increment_user_credits FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION increment_user_credits TO service_role;
