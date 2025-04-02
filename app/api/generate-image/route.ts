@@ -222,7 +222,13 @@ async function updateUserCredits(userId: string, action: 'deduct' | 'add', amoun
       body: JSON.stringify({ userId, action, amount }),
     });
     
+    if (!response.ok) {
+      console.error(`${action === 'deduct' ? '扣除' : '增加'}用户点数失败: HTTP状态码 ${response.status}`);
+      return false;
+    }
+    
     const data = await response.json();
+    console.log(`${action === 'deduct' ? '扣除' : '增加'}用户点数操作结果:`, data);
     return data.success;
   } catch (error) {
     console.error(`${action === 'deduct' ? '扣除' : '增加'}用户点数失败:`, error);
@@ -263,6 +269,32 @@ async function saveImageHistory(
   }
 }
 
+// 添加API请求超时控制函数
+async function fetchWithTimeout(url: string, options: any = {}, timeoutMs = TIMEOUT) {
+  const controller = new AbortController();
+  const { signal } = controller;
+  
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    setTimeout(() => {
+      controller.abort();
+      reject(new Error(`请求超时（${timeoutMs/1000}秒）`));
+    }, timeoutMs);
+  });
+  
+  try {
+    const response = await Promise.race([
+      fetch(url, { ...options, signal }),
+      timeoutPromise
+    ]) as Response;
+    return response;
+  } catch (error: any) {
+    if (error.name === 'AbortError') {
+      throw new Error(`请求超时（${timeoutMs/1000}秒）`);
+    }
+    throw error;
+  }
+}
+
 export async function POST(request: NextRequest) {
   // 记录请求开始时间
   const startTime = Date.now();
@@ -270,6 +302,7 @@ export async function POST(request: NextRequest) {
   let requestType = "纯文本请求";
   let userId: string | null = null; // 用户ID
   let creditsDeducted = false; // 标记是否已扣除点数
+  let apiRequestSent = false; // 标记是否已发送API请求
 
   try {
     // 获取当前认证用户
@@ -360,17 +393,20 @@ export async function POST(request: NextRequest) {
       console.log(`[${requestType}] 已成功创建用户点数初始记录，点数: 5`);
     }
 
-    // 先扣除用户点数
-    const deductSuccess = await updateUserCredits(userId, 'deduct');
-    if (!deductSuccess) {
-      return new Response(JSON.stringify({ error: "点数不足，无法生成图片" }), {
-        status: 400,
+    // 扣除用户点数
+    const deductedSuccess = await updateUserCredits(userId, 'deduct', 1);
+    
+    if (!deductedSuccess) {
+      console.error(`[${requestType}] 扣除用户点数失败`);
+      return new Response(JSON.stringify({ error: "扣除用户点数失败，请重试" }), {
+        status: 500,
         headers: {
           'Content-Type': 'application/json',
         },
       });
     }
     
+    // 标记已成功扣除点数
     creditsDeducted = true;
     console.log(`[${requestType}] 已扣除用户点数，用户ID: ${userId}`);
 
@@ -474,136 +510,169 @@ export async function POST(request: NextRequest) {
       // 创建OpenAI客户端
       const openai = new OpenAI(openaiOptions);
       
-      // 开始计时
-      const requestStart = Date.now();
+      // 配置超时设置
+      const abortController = new AbortController();
+      const timeoutId = setTimeout(() => abortController.abort(), TIMEOUT);
       
-      // 发送API请求
-      console.log(`[${requestType}] 发送API请求中，开始时间: ${new Date(requestStart).toISOString()}`);
-      const response = await openai.chat.completions.create({
-        model: model,
-        messages: [
-          {
-            role: "user",
-            content: messages[0].content
+      console.log(`[${requestType}] 发送API请求中，开始时间: ${new Date().toISOString()}`);
+      apiRequestSent = true;
+
+      // 使用带超时的请求
+      let completion;
+      try {
+        // 开始计时
+        const requestStart = Date.now();
+        
+        // 发送API请求
+        const response = await openai.chat.completions.create({
+          model: model,
+          messages: [
+            {
+              role: "user",
+              content: messages[0].content
+            }
+          ],
+          max_tokens: 4096,
+          stream: false
+        });
+        
+        // 计算请求耗时
+        const requestTime = Date.now() - requestStart;
+        requestStats.recordTime(requestTime, hasImage);
+        console.log(`[${requestType}] 请求完成，耗时: ${requestTime}ms`);
+        
+        // 检查响应是否为空
+        if (!response.choices || !response.choices[0] || !response.choices[0].message) {
+          console.error(`[${requestType}] API返回数据格式不符合预期:`, response);
+          throw new Error("API返回数据格式不符合预期");
+        }
+        
+        // 提取返回内容
+        const content = response.choices[0].message.content;
+        if (!content) {
+          console.error(`[${requestType}] API返回内容为空`);
+          throw new Error("API返回内容为空");
+        }
+        
+        console.log(`[${requestType}] API返回原始内容:`, content);
+        
+        // 提取图片URL
+        responseImageUrl = extractImageUrl(content);
+        
+        if (!responseImageUrl) {
+          console.error(`[${requestType}] 无法从API响应中提取图片URL或API返回了错误信息`);
+          
+          // 如果点数已扣除，尝试退还
+          if (creditsDeducted) {
+            const refundSuccess = await updateUserCredits(userId!, 'add', 1);
+            console.log(`[${requestType}] 图片生成失败，尝试退还点数: ${refundSuccess ? '成功' : '失败'}`);
           }
-        ],
-        max_tokens: 4096,
-        stream: false
-      });
-      
-      // 计算请求耗时
-      const requestTime = Date.now() - requestStart;
-      requestStats.recordTime(requestTime, hasImage);
-      console.log(`[${requestType}] 请求完成，耗时: ${requestTime}ms`);
-      
-      // 检查响应是否为空
-      if (!response.choices || !response.choices[0] || !response.choices[0].message) {
-        console.error(`[${requestType}] API返回数据格式不符合预期:`, response);
-        throw new Error("API返回数据格式不符合预期");
-      }
-      
-      // 提取返回内容
-      const content = response.choices[0].message.content;
-      if (!content) {
-        console.error(`[${requestType}] API返回内容为空`);
-        throw new Error("API返回内容为空");
-      }
-      
-      console.log(`[${requestType}] API返回原始内容:`, content);
-      
-      // 提取图片URL
-      responseImageUrl = extractImageUrl(content);
-      
-      if (!responseImageUrl) {
-        console.error(`[${requestType}] 无法从API响应中提取图片URL或API返回了错误信息`);
+          
+          return new Response(JSON.stringify({ 
+            error: "图片生成失败，API无法生成有效图片或返回了错误信息，点数已退还" 
+          }), {
+            status: 400,
+            headers: {
+              'Content-Type': 'application/json',
+            },
+          });
+        }
         
-        // 如果点数已扣除，尝试退还
-        if (creditsDeducted) {
-          const refundSuccess = await updateUserCredits(userId!, 'add');
-          console.log(`[${requestType}] 图片生成失败，尝试退还点数: ${refundSuccess ? '成功' : '失败'}`);
+        console.log(`[${requestType}] 成功提取图片URL:`, responseImageUrl);
+        
+        // 验证URL是否为有效的图片URL，而不是占位图
+        if (responseImageUrl.includes("placehold.co")) {
+          console.error(`[${requestType}] 提取到的是占位图URL，不是有效的图片`);
+          
+          // 如果点数已扣除，尝试退还
+          if (creditsDeducted) {
+            const refundSuccess = await updateUserCredits(userId!, 'add', 1);
+            console.log(`[${requestType}] 图片生成失败，尝试退还点数: ${refundSuccess ? '成功' : '失败'}`);
+          }
+          
+          return new Response(JSON.stringify({ 
+            error: "图片生成失败，无法生成有效图片，点数已退还" 
+          }), {
+            status: 400,
+            headers: {
+              'Content-Type': 'application/json',
+            },
+          });
+        }
+        
+        // 保存历史记录
+        await saveImageHistory(userId, responseImageUrl, prompt, model, { style });
+        
+        // 清除超时计时器
+        clearTimeout(timeoutId);
+        
+        console.log(`[${requestType}] API请求完成，结束时间: ${new Date().toISOString()}`);
+        
+        // 返回成功响应
+        return new Response(JSON.stringify({ imageUrl: responseImageUrl }), {
+          status: 200,
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        });
+        
+      } catch (error: any) {
+        // 清除超时计时器
+        clearTimeout(timeoutId);
+        
+        // 处理中断或超时
+        if (error.name === 'AbortError' || error.message.includes('timeout')) {
+          console.error(`[${requestType}] API请求超时或被中断`);
+          
+          // 退还用户点数
+          if (creditsDeducted && userId) {
+            const refundSuccess = await updateUserCredits(userId, 'add', 1);
+            if (refundSuccess) {
+              console.log(`[${requestType}] 由于请求超时，已退还用户点数，用户ID: ${userId}`);
+            } else {
+              console.error(`[${requestType}] 退还用户点数失败，用户ID: ${userId}`);
+            }
+          }
+          
+          return new Response(JSON.stringify({ 
+            error: "图像生成请求超时，已自动退还点数。请稍后重试。",
+            creditsRefunded: true
+          }), {
+            status: 504,
+            headers: {
+              'Content-Type': 'application/json',
+            },
+          });
+        }
+        
+        // 处理其他错误
+        const { errorType, message } = handleApiError(error);
+        console.error(`[${requestType}] API请求失败，错误类型: ${errorType}, 错误信息: ${message}`);
+        
+        // 退还用户点数
+        if (creditsDeducted && userId) {
+          const refundSuccess = await updateUserCredits(userId, 'add', 1);
+          if (refundSuccess) {
+            console.log(`[${requestType}] 由于API错误，已退还用户点数，用户ID: ${userId}`);
+          } else {
+            console.error(`[${requestType}] 退还用户点数失败，用户ID: ${userId}`);
+          }
+        }
+        
+        // 根据错误类型返回不同的错误图片和消息
+        let errorImageUrl = "https://placehold.co/512x512/red/white?text=API+Error";
+        
+        if (errorType === "quota_exceeded") {
+          errorImageUrl = QUOTA_EXCEEDED_IMAGE;
+        } else if (errorType === "invalid_token") {
+          errorImageUrl = INVALID_TOKEN_IMAGE;
         }
         
         return new Response(JSON.stringify({ 
-          error: "图片生成失败，API无法生成有效图片或返回了错误信息，点数已退还" 
-        }), {
-          status: 400,
-          headers: {
-            'Content-Type': 'application/json',
-          },
-        });
-      }
-      
-      console.log(`[${requestType}] 成功提取图片URL:`, responseImageUrl);
-      
-      // 验证URL是否为有效的图片URL，而不是占位图
-      if (responseImageUrl.includes("placehold.co")) {
-        console.error(`[${requestType}] 提取到的是占位图URL，不是有效的图片`);
-        
-        // 如果点数已扣除，尝试退还
-        if (creditsDeducted) {
-          const refundSuccess = await updateUserCredits(userId!, 'add');
-          console.log(`[${requestType}] 图片生成失败，尝试退还点数: ${refundSuccess ? '成功' : '失败'}`);
-        }
-        
-        return new Response(JSON.stringify({ 
-          error: "图片生成失败，无法生成有效图片，点数已退还" 
-        }), {
-          status: 400,
-          headers: {
-            'Content-Type': 'application/json',
-          },
-        });
-      }
-      
-      // 保存历史记录
-      await saveImageHistory(userId, responseImageUrl, prompt, model, { style });
-      
-      // 返回成功响应
-      return new Response(JSON.stringify({ imageUrl: responseImageUrl }), {
-        status: 200,
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      });
-      
-    } catch (apiError: any) {
-      // 处理API错误
-      console.error(`[${requestType}] API调用失败:`, apiError);
-      
-      // 获取错误详情
-      const { errorType, message } = handleApiError(apiError);
-      
-      // 如果点数已扣除，尝试退还
-      if (creditsDeducted) {
-        const refundSuccess = await updateUserCredits(userId!, 'add');
-        console.log(`[${requestType}] 尝试退还点数: ${refundSuccess ? '成功' : '失败'}`);
-      }
-      
-      // 根据错误类型返回不同的响应
-      if (errorType === "quota_exceeded") {
-        return new Response(JSON.stringify({ 
           error: message,
-          imageUrl: QUOTA_EXCEEDED_IMAGE
-        }), {
-          status: 402,
-          headers: {
-            'Content-Type': 'application/json',
-          },
-        });
-      } else if (errorType === "invalid_token") {
-        return new Response(JSON.stringify({ 
-          error: message,
-          imageUrl: INVALID_TOKEN_IMAGE
-        }), {
-          status: 401,
-          headers: {
-            'Content-Type': 'application/json',
-          },
-        });
-      } else {
-        // 其他错误类型
-        return new Response(JSON.stringify({ 
-          error: message
+          errorType: errorType,
+          imageUrl: errorImageUrl,
+          creditsRefunded: true
         }), {
           status: 500,
           headers: {
@@ -611,29 +680,58 @@ export async function POST(request: NextRequest) {
           },
         });
       }
+      
+    } catch (error: any) {
+      // 记录错误并计算处理时间
+      const processingTime = Date.now() - startTime;
+      console.error(`[${requestType}] 处理失败，耗时: ${processingTime}ms, 错误:`, error);
+      
+      // 如果已扣除点数但请求失败，退还点数
+      if (creditsDeducted && userId) {
+        const refundSuccess = await updateUserCredits(userId, 'add', 1);
+        if (refundSuccess) {
+          console.log(`[${requestType}] 由于请求处理失败，已退还用户点数，用户ID: ${userId}`);
+        } else {
+          console.error(`[${requestType}] 退还用户点数失败，用户ID: ${userId}`);
+        }
+      }
+      
+      // 返回错误响应
+      return new Response(JSON.stringify({ 
+        error: error.message || "图像生成失败",
+        creditsRefunded: creditsDeducted
+      }), {
+        status: 500,
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
     }
     
   } catch (error: any) {
-    // 处理整体API端点的错误
-    console.error("图片生成过程中发生错误:", error);
+    // 记录错误并计算处理时间
+    const processingTime = Date.now() - startTime;
+    console.error(`[${requestType}] 处理失败，耗时: ${processingTime}ms, 错误:`, error);
     
-    // 如果点数已扣除，尝试退还
+    // 如果已扣除点数但请求失败，退还点数
     if (creditsDeducted && userId) {
-      const refundSuccess = await updateUserCredits(userId, 'add');
-      console.log(`尝试退还点数: ${refundSuccess ? '成功' : '失败'}`);
+      const refundSuccess = await updateUserCredits(userId, 'add', 1);
+      if (refundSuccess) {
+        console.log(`[${requestType}] 由于请求处理失败，已退还用户点数，用户ID: ${userId}`);
+      } else {
+        console.error(`[${requestType}] 退还用户点数失败，用户ID: ${userId}`);
+      }
     }
     
+    // 返回错误响应
     return new Response(JSON.stringify({ 
-      error: error.message || "图片生成过程中发生未知错误"
+      error: error.message || "图像生成失败",
+      creditsRefunded: creditsDeducted
     }), {
       status: 500,
       headers: {
         'Content-Type': 'application/json',
       },
     });
-  } finally {
-    // 记录整体处理时间
-    const totalTime = Date.now() - startTime;
-    console.log(`[${requestType}] 总处理时间: ${totalTime}ms`);
   }
 } 
