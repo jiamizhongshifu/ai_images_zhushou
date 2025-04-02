@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { Upload, SendHorizontal, PlusCircle, RefreshCw, ImageIcon, Loader2 } from "lucide-react";
+import { Upload, SendHorizontal, PlusCircle, RefreshCw, ImageIcon, Loader2, Download, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 
@@ -15,6 +15,9 @@ export default function ProtectedPage() {
   const [uploadedImage, setUploadedImage] = useState<string | null>(null);
   const [activeStyle, setActiveStyle] = useState("无风格");
   const fileInputRef = useRef<HTMLInputElement>(null);
+  
+  // 添加预览状态
+  const [previewImage, setPreviewImage] = useState<string | null>(null);
   
   // 处理图片上传
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -99,6 +102,30 @@ export default function ProtectedPage() {
   // 处理文件点击上传
   const handleUploadClick = () => {
     fileInputRef.current?.click();
+  };
+
+  // 下载图片函数
+  const downloadImage = async (imageUrl: string) => {
+    try {
+      // 创建一个临时链接
+      const link = document.createElement('a');
+      link.href = imageUrl;
+      
+      // 设置文件名 - 从URL中提取或使用默认名称
+      // 为了避免跨域问题,可能需要根据你的实际情况调整
+      const filename = `generated-image-${new Date().getTime()}.jpg`;
+      link.download = filename;
+      
+      // 模拟点击
+      document.body.appendChild(link);
+      link.click();
+      
+      // 清理DOM
+      document.body.removeChild(link);
+    } catch (error) {
+      console.error('下载图片失败:', error);
+      setError('下载图片失败，请重试');
+    }
   };
 
   return (
@@ -264,16 +291,30 @@ export default function ProtectedPage() {
               ) : generatedImages.length > 0 ? (
                 // 显示已生成的图片
                 generatedImages.map((imageUrl, index) => (
-                  <div key={index} className="aspect-square bg-muted rounded-md relative overflow-hidden group hover:shadow transition-all">
+                  <div 
+                    key={index} 
+                    className="aspect-square bg-muted rounded-md relative overflow-hidden group hover:shadow transition-all cursor-pointer" 
+                    onClick={() => setPreviewImage(imageUrl)}
+                  >
                     <img 
                       src={imageUrl} 
                       alt={`生成的图片 ${index + 1}`} 
                       className="w-full h-full object-cover"
                     />
                     <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-background/80 to-transparent p-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <div className="flex justify-between items-center">
-                        <Button variant="secondary" size="sm" className="h-7 text-xs">下载</Button>
-                        <Button size="sm" className="h-7 text-xs">使用</Button>
+                      <div className="flex justify-center items-center">
+                        <Button 
+                          variant="secondary" 
+                          size="sm" 
+                          className="h-7 text-xs flex items-center gap-1"
+                          onClick={(e) => {
+                            e.stopPropagation(); // 防止触发父元素的点击事件
+                            downloadImage(imageUrl);
+                          }}
+                        >
+                          <Download className="h-3 w-3" />
+                          下载
+                        </Button>
                       </div>
                     </div>
                   </div>
@@ -288,9 +329,15 @@ export default function ProtectedPage() {
                       </div>
                     </div>
                     <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-background/80 to-transparent p-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <div className="flex justify-between items-center">
-                        <Button variant="secondary" size="sm" className="h-7 text-xs">下载</Button>
-                        <Button size="sm" className="h-7 text-xs">使用</Button>
+                      <div className="flex justify-center items-center">
+                        <Button 
+                          variant="secondary" 
+                          size="sm" 
+                          className="h-7 text-xs flex items-center gap-1"
+                        >
+                          <Download className="h-3 w-3" />
+                          下载
+                        </Button>
                       </div>
                     </div>
                   </div>
@@ -303,6 +350,33 @@ export default function ProtectedPage() {
           </CardFooter>
         </Card>
       </div>
+      
+      {/* 图片预览模态框 */}
+      {previewImage && (
+        <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4">
+          <div className="relative max-w-4xl max-h-[90vh] w-full">
+            <div className="absolute -top-12 right-0 flex justify-end">
+              <Button 
+                variant="ghost" 
+                size="icon" 
+                className="h-10 w-10 rounded-full bg-background/20 text-white hover:bg-background/40"
+                onClick={() => setPreviewImage(null)}
+              >
+                <X className="h-5 w-5" />
+              </Button>
+            </div>
+            <div className="bg-card rounded-lg overflow-hidden shadow-2xl">
+              <div className="relative aspect-square sm:aspect-video max-h-[80vh]">
+                <img 
+                  src={previewImage} 
+                  alt="预览图片" 
+                  className="w-full h-full object-contain"
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
