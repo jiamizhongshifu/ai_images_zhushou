@@ -7,6 +7,7 @@ export async function GET(req: Request) {
   try {
     // 检查认证头部，支持系统任务处理器直接访问
     const authHeader = req.headers.get('authorization');
+    const silentMode = req.headers.get('x-silent-mode') === 'true';
     let isSystemAccess = false;
     
     if (authHeader && authHeader.startsWith('Bearer ')) {
@@ -16,7 +17,10 @@ export async function GET(req: Request) {
       // 如果是系统秘钥，直接使用admin客户端查询所有任务
       if (token === validSecretKey) {
         isSystemAccess = true;
-        console.log('系统任务处理器访问已授权');
+        // 只有在非静默模式下才输出日志
+        if (!silentMode) {
+          console.log('系统任务处理器访问已授权');
+        }
         
         // 使用管理员客户端查询所有待处理任务
         const supabase = createAdminClient();

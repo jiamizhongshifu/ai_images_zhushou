@@ -39,6 +39,7 @@ export async function GET(request: Request) {
     
     // 检查Authorization头部，支持系统访问
     const authHeader = request.headers.get('authorization');
+    const silentMode = request.headers.get('x-silent-mode') === 'true';
     let isSystemAccess = false;
     
     if (authHeader && authHeader.startsWith('Bearer ')) {
@@ -48,7 +49,10 @@ export async function GET(request: Request) {
       // 如果是系统秘钥，使用管理员权限访问任务
       if (token === validSecretKey) {
         isSystemAccess = true;
-        console.log('系统访问任务状态已授权');
+        // 只有在非静默模式下才输出日志
+        if (!silentMode) {
+          console.log('系统访问任务状态已授权');
+        }
         
         // 使用管理员客户端直接查询任务，不需要用户ID
         const supabase = createAdminClient();

@@ -78,18 +78,22 @@ export default function ProtectedPage() {
           router.push('/login'); // 未认证，跳转到登录页
           return;
         }
-        throw new Error('获取点数失败');
+        throw new Error(`获取点数失败: HTTP ${response.status}`);
       }
       
-      const data = await response.json();
+      const data = await response.json().catch(err => {
+        console.error('解析点数响应失败:', err);
+        return { success: false, error: '解析响应数据失败' };
+      });
       
       if (data.success) {
         setUserCredits(data.credits);
       } else {
-        console.error('获取点数失败:', data.error);
+        console.error('获取点数失败:', data.error || '未知错误');
       }
     } catch (error) {
-      console.error('获取用户点数出错:', error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.error('获取用户点数出错:', errorMessage);
     } finally {
       setIsLoadingCredits(false);
     }
@@ -106,10 +110,13 @@ export default function ProtectedPage() {
           router.push('/login');
           return;
         }
-        throw new Error('获取历史记录失败');
+        throw new Error(`获取历史记录失败: HTTP ${response.status}`);
       }
       
-      const data = await response.json();
+      const data = await response.json().catch(err => {
+        console.error('解析历史记录响应失败:', err);
+        return { success: false, error: '解析响应数据失败' };
+      });
       
       if (data.success) {
         // 直接打印历史记录，帮助调试
@@ -133,10 +140,11 @@ export default function ProtectedPage() {
           setGeneratedImages(validImages.map((item: any) => item.image_url));
         }
       } else {
-        console.error('获取历史记录失败:', data.error);
+        console.error('获取历史记录失败:', data.error || '未知错误');
       }
     } catch (error) {
-      console.error('获取历史记录出错:', error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.error('获取历史记录出错:', errorMessage);
     } finally {
       setIsLoadingHistory(false);
     }
@@ -212,7 +220,10 @@ export default function ProtectedPage() {
     try {
       setApiRequestLoading(true);
       const response = await fetch(`/api/generate-image/status?taskId=${taskId}`);
-      const data = await response.json();
+      const data = await response.json().catch(err => {
+        console.error('解析任务状态响应失败:', err);
+        return { success: false, error: '解析响应数据失败' };
+      });
       setApiRequestLoading(false);
       
       if (data.success) {
@@ -324,7 +335,7 @@ export default function ProtectedPage() {
             break;
         }
       } else {
-        console.error('获取任务状态失败:', data.error);
+        console.error('获取任务状态失败:', data.error || '未知错误');
         setGenerationStatus("error");
         
         // 处理错误，停止轮询
@@ -338,7 +349,8 @@ export default function ProtectedPage() {
         setIsGenerating(false);
       }
     } catch (error) {
-      console.error('轮询任务状态出错:', error);
+      const errorMessage = error instanceof Error ? error.message : '未知错误';
+      console.error('轮询任务状态出错:', errorMessage);
       setApiRequestLoading(false);
       setGenerationStatus("error");
       
@@ -369,7 +381,10 @@ export default function ProtectedPage() {
     try {
       setApiRequestLoading(true);
       const response = await fetch('/api/generate-image/pending-tasks');
-      const data = await response.json();
+      const data = await response.json().catch(err => {
+        console.error('解析待处理任务响应失败:', err);
+        return { success: false, error: '解析响应数据失败' };
+      });
       setApiRequestLoading(false);
       setPollingRetries(0); // 重置重试计数
       
@@ -451,21 +466,49 @@ export default function ProtectedPage() {
   }, []);
   
   // 处理图片上传
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     
-    // 检查文件大小
-    if (file.size > 5 * 1024 * 1024) {
-      setError("图片大小不能超过5MB");
-      return;
+    try {
+      // 设置加载状态
+      setError("");
+      
+      let processedFile = file;
+      const MAX_SIZE_MB = 5;
+      
+      // 检查文件大小，如果超过限制则压缩
+      if (file.size > MAX_SIZE_MB * 1024 * 1024) {
+        showNotification(`图片大小超过${MAX_SIZE_MB}MB，正在自动压缩...`, "info");
+        
+        try {
+          processedFile = await compressImage(file, MAX_SIZE_MB);
+          
+          // 如果压缩后仍然超过限制
+          if (processedFile.size > MAX_SIZE_MB * 1024 * 1024) {
+            setError(`图片无法压缩到${MAX_SIZE_MB}MB以内，请选择更小的图片`);
+            return;
+          }
+          
+          showNotification(`图片已成功压缩至 ${(processedFile.size / (1024 * 1024)).toFixed(2)}MB`, "success");
+        } catch (error) {
+          console.error('图片压缩失败:', error);
+          setError(`图片压缩失败: ${error instanceof Error ? error.message : '未知错误'}`);
+          return;
+        }
+      }
+      
+      // 读取并显示处理后的图片
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        setUploadedImage(event.target?.result as string);
+      };
+      reader.readAsDataURL(processedFile);
+      
+    } catch (error) {
+      console.error('处理上传图片时出错:', error);
+      setError(`上传失败: ${error instanceof Error ? error.message : '未知错误'}`);
     }
-    
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      setUploadedImage(event.target?.result as string);
-    };
-    reader.readAsDataURL(file);
   };
   
   // 设置进度更新器
@@ -564,10 +607,13 @@ export default function ProtectedPage() {
         body: JSON.stringify(requestData),
       });
       
-      const data = await response.json();
+      const data = await response.json().catch(err => {
+        console.error('解析创建任务响应失败:', err);
+        return { success: false, error: '解析响应数据失败' };
+      });
       
       if (!response.ok) {
-        throw new Error(data.error || "创建任务失败");
+        throw new Error(data.error || `创建任务失败: HTTP ${response.status}`);
       }
       
       if (data.success && data.taskId) {
@@ -593,11 +639,12 @@ export default function ProtectedPage() {
           setApiRequestTimer(null);
         }
       } else {
-        throw new Error(data.error || "创建任务失败");
+        throw new Error(data.error || "创建任务失败，服务器返回无效响应");
       }
-    } catch (err: any) {
-      console.error("生成图片失败:", err);
-      setError(err.message || "生成图片时发生错误");
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      console.error("生成图片失败:", errorMessage);
+      setError(errorMessage || "生成图片时发生错误");
       setGenerationStatus("error");
       setIsGenerating(false);
       
@@ -622,71 +669,87 @@ export default function ProtectedPage() {
     fileInputRef.current?.click();
   };
 
-  // 修改下载图片函数
+  // 改进下载图片和图片错误处理函数
   const downloadImage = (imageUrl: string) => {
     try {
       // 在新标签页打开图片URL
       window.open(imageUrl, '_blank');
     } catch (error) {
-      console.error('打开图片失败:', error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.error('打开图片失败:', errorMessage);
       setError('打开图片失败，请重试');
     }
   };
 
-  const handleImageError = async (imageUrl: string, e: React.SyntheticEvent<HTMLImageElement>) => {
-    const target = e.target as HTMLImageElement;
-    const currentRetries = imageLoadRetries[imageUrl] || 0;
-    
-    console.warn(`图片加载失败 (尝试 ${currentRetries + 1}/${MAX_RETRIES}): ${imageUrl}`);
-    
-    if (currentRetries < MAX_RETRIES) {
-      // 更新重试次数
-      setImageLoadRetries(prev => ({
-        ...prev,
-        [imageUrl]: currentRetries + 1
-      }));
+  const handleImageError = (imageUrl: string, e: React.SyntheticEvent<HTMLImageElement>) => {
+    try {
+      const target = e.target as HTMLImageElement;
+      const currentRetries = imageLoadRetries[imageUrl] || 0;
       
-      // 设置占位图
-      target.src = `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='100' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' fill='%23f3f4f6'/%3E%3Cpath d='M50 40c-5.523 0-10 4.477-10 10s4.477 10 10 10 10-4.477 10-10-4.477-10-10-10zm0 18c-4.418 0-8-3.582-8-8s3.582-8 8-8 8 3.582 8 8-3.582 8-8 8z' fill='%239ca3af'/%3E%3Cpath d='M50 30c-11.046 0-20 8.954-20 20s8.954 20 20 20 20-8.954 20-20-8.954-20-20-20zm0 36c-8.837 0-16-7.163-16-16s7.163-16 16-16 16 7.163 16 16-7.163 16-16 16z' fill='%239ca3af'/%3E%3C/svg%3E`;
-      target.classList.add('opacity-50');
+      console.warn(`图片加载失败 (尝试 ${currentRetries + 1}/${MAX_RETRIES}): ${imageUrl}`);
       
-      // 尝试重新验证URL
-      const validatedUrl = validateImageUrl(imageUrl);
-      if (validatedUrl && validatedUrl !== imageUrl) {
-        // 如果URL需要更新，使用新的URL重试
+      if (currentRetries < MAX_RETRIES) {
+        // 更新重试次数
+        setImageLoadRetries(prev => ({
+          ...prev,
+          [imageUrl]: currentRetries + 1
+        }));
+        
+        // 设置占位图
+        target.src = `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='100' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' fill='%23f3f4f6'/%3E%3Cpath d='M50 40c-5.523 0-10 4.477-10 10s4.477 10 10 10 10-4.477 10-10-4.477-10-10-10zm0 18c-4.418 0-8-3.582-8-8s3.582-8 8-8 8 3.582 8 8-3.582 8-8 8z' fill='%239ca3af'/%3E%3Cpath d='M50 30c-11.046 0-20 8.954-20 20s8.954 20 20 20 20-8.954 20-20-8.954-20-20-20zm0 36c-8.837 0-16-7.163-16-16s7.163-16 16-16 16 7.163 16 16-7.163 16-16 16z' fill='%239ca3af'/%3E%3C/svg%3E`;
+        target.classList.add('opacity-50');
+        
+        // 尝试重新验证URL
+        const validatedUrl = validateImageUrl(imageUrl);
+        
+        // 创建一个延时重试的定时器
         setTimeout(() => {
-          target.src = validatedUrl;
+          try {
+            if (validatedUrl && validatedUrl !== imageUrl) {
+              // 如果URL需要更新，使用新的URL重试
+              target.src = validatedUrl;
+            } else {
+              // 使用原始URL重试
+              target.src = imageUrl;
+            }
+          } catch (innerError) {
+            console.error('图片重试加载失败:', innerError);
+          }
         }, RETRY_DELAY);
       } else {
-        // 使用原始URL重试
-        setTimeout(() => {
-          target.src = imageUrl;
-        }, RETRY_DELAY);
+        // 超过最大重试次数，显示永久占位图
+        target.src = `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='100' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' fill='%23fee2e2'/%3E%3Cpath d='M50 40c-5.523 0-10 4.477-10 10s4.477 10 10 10 10-4.477 10-10-4.477-10-10-10zm0 18c-4.418 0-8-3.582-8-8s3.582-8 8-8 8 3.582 8 8-3.582 8-8 8z' fill='%23ef4444'/%3E%3Cpath d='M50 30c-11.046 0-20 8.954-20 20s8.954 20 20 20 20-8.954 20-20-8.954-20-20-20zm0 36c-8.837 0-16-7.163-16-16s7.163-16 16-16 16 7.163 16 16-7.163 16-16 16z' fill='%23ef4444'/%3E%3C/svg%3E`;
+        target.classList.add('opacity-75');
+        console.error(`图片加载失败，已达到最大重试次数: ${imageUrl}`);
+        
+        // 从历史记录中移除失败的图片
+        setImageHistory(prev => prev.filter(item => item.image_url !== imageUrl));
+        setGeneratedImages(prev => prev.filter(url => url !== imageUrl));
+        
+        // 尝试重新获取历史记录
+        fetchImageHistory().catch(err => {
+          console.error('重新获取历史记录失败:', err);
+        });
       }
-    } else {
-      // 超过最大重试次数，显示永久占位图
-      target.src = `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='100' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' fill='%23fee2e2'/%3E%3Cpath d='M50 40c-5.523 0-10 4.477-10 10s4.477 10 10 10 10-4.477 10-10-4.477-10-10-10zm0 18c-4.418 0-8-3.582-8-8s3.582-8 8-8 8 3.582 8 8-3.582 8-8 8z' fill='%23ef4444'/%3E%3Cpath d='M50 30c-11.046 0-20 8.954-20 20s8.954 20 20 20 20-8.954 20-20-8.954-20-20-20zm0 36c-8.837 0-16-7.163-16-16s7.163-16 16-16 16 7.163 16 16-7.163 16-16 16z' fill='%23ef4444'/%3E%3C/svg%3E`;
-      target.classList.add('opacity-75');
-      console.error(`图片加载失败，已达到最大重试次数: ${imageUrl}`);
-      
-      // 从历史记录中移除失败的图片
-      setImageHistory(prev => prev.filter(item => item.image_url !== imageUrl));
-      setGeneratedImages(prev => prev.filter(url => url !== imageUrl));
-      
-      // 尝试重新获取历史记录
-      fetchImageHistory();
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.error('处理图片加载失败时出错:', errorMessage);
     }
   };
 
-  // 添加图片加载处理函数
+  // 改进图片加载处理函数
   const handleImageLoad = (imageUrl: string, e: React.SyntheticEvent<HTMLImageElement>) => {
-    console.log('图片加载成功:', imageUrl);
-    // 移除重试记录，清理状态
-    setImageLoadRetries(prev => {
-      const newRetries = {...prev};
-      delete newRetries[imageUrl];
-      return newRetries;
-    });
+    try {
+      console.log('图片加载成功:', imageUrl);
+      // 移除重试记录，清理状态
+      setImageLoadRetries(prev => {
+        const newRetries = {...prev};
+        delete newRetries[imageUrl];
+        return newRetries;
+      });
+    } catch (error) {
+      console.error('处理图片加载成功事件出错:', error);
+    }
   };
 
   // 更新输入区下方按钮，添加取消选项
@@ -839,24 +902,63 @@ export default function ProtectedPage() {
       return;
     }
     
+    // 输出更多调试信息
+    console.log(`尝试取消任务: ${taskId}，当前任务状态:`, currentTask);
+    
     // 设置取消中状态
     setIsCancelling(true);
     
     try {
+      // 添加请求超时控制
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000); // 10秒超时
+      
       const response = await fetch("/api/generate-image/cancel", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({ taskId }),
+        signal: controller.signal
       });
       
+      clearTimeout(timeoutId); // 清除超时定时器
+      
       // 读取响应，即使失败也要读取内容
-      const data = await response.json().catch(() => ({ success: false, error: '解析响应失败' }));
+      const data = await response.json().catch((err) => {
+        console.error('解析取消任务响应失败:', err);
+        return { success: false, error: '解析响应失败' };
+      });
+      
+      console.log(`取消任务 ${taskId} 响应:`, data);
       
       if (!response.ok) {
         console.error(`取消任务请求失败: HTTP ${response.status}`, data);
         throw new Error(data.error || `取消任务失败: HTTP ${response.status}`);
+      }
+      
+      // 强制刷新任务状态，不管API返回成功与否
+      try {
+        const statusResponse = await fetch(`/api/generate-image/status?taskId=${taskId}`, {
+          cache: 'no-store',
+          headers: {
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+            'Pragma': 'no-cache'
+          }
+        });
+        
+        const statusData = await statusResponse.json().catch(() => ({ success: false }));
+        console.log(`获取已取消任务 ${taskId} 的最新状态:`, statusData);
+        
+        // 如果API返回任务仍然在处理中，但我们已经收到取消成功的响应，强行在UI上标记为已取消
+        if (statusData.success && statusData.task && 
+            (statusData.task.status === 'pending' || statusData.task.status === 'processing')) {
+          console.log(`强制将本地UI任务状态标记为已取消`);
+          // 不依赖后端状态，直接在前端更新状态
+        }
+      } catch (statusError) {
+        console.error('获取任务状态失败:', statusError);
+        // 忽略状态检查错误，继续处理取消逻辑
       }
       
       console.log(`取消任务 ${taskId} 成功:`, data);
@@ -883,9 +985,24 @@ export default function ProtectedPage() {
       
       // 更新点数
       fetchUserCredits();
-    } catch (error: any) {
-      console.error('取消任务失败:', error);
-      setError(error.message || '取消任务失败，请稍后重试');
+      
+      // 立即刷新任务列表
+      setTimeout(() => {
+        fetchPendingTasks();
+      }, 1000);
+      
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.error('取消任务失败:', errorMessage);
+      setError(errorMessage || '取消任务失败，请稍后重试');
+      
+      // 即使API请求失败，也尝试在本地UI上取消任务以提升用户体验
+      if (pollingTimer) {
+        clearTimeout(pollingTimer);
+        setPollingTimer(null);
+      }
+      setIsGenerating(false);
+      
     } finally {
       // 清除取消中状态
       setIsCancelling(false);
@@ -905,6 +1022,103 @@ export default function ProtectedPage() {
         </div>
       </div>
     );
+  };
+
+  // 添加图片压缩函数
+  const compressImage = (file: File, maxSizeMB: number): Promise<File> => {
+    return new Promise((resolve, reject) => {
+      // 创建图片对象
+      const img = new Image();
+      const reader = new FileReader();
+      
+      reader.onload = (event) => {
+        img.src = event.target?.result as string;
+        
+        img.onload = () => {
+          // 创建canvas
+          const canvas = document.createElement('canvas');
+          let width = img.width;
+          let height = img.height;
+          
+          // 保持宽高比的情况下调整尺寸
+          // 对于大图片，先通过降低尺寸减小体积
+          const MAX_WIDTH = 2048;
+          const MAX_HEIGHT = 2048;
+          
+          if (width > MAX_WIDTH || height > MAX_HEIGHT) {
+            if (width > height) {
+              height = Math.round(height * MAX_WIDTH / width);
+              width = MAX_WIDTH;
+            } else {
+              width = Math.round(width * MAX_HEIGHT / height);
+              height = MAX_HEIGHT;
+            }
+          }
+          
+          canvas.width = width;
+          canvas.height = height;
+          
+          // 在canvas上绘制图片
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            reject(new Error('无法创建Canvas上下文'));
+            return;
+          }
+          
+          ctx.drawImage(img, 0, 0, width, height);
+          
+          // 从最高质量开始尝试
+          let quality = 0.95;
+          const MIN_QUALITY = 0.5; // 最低可接受质量
+          let compressedBlob: Blob | null = null;
+          
+          // 压缩过程
+          const compress = () => {
+            // 导出为blob
+            canvas.toBlob(
+              (blob) => {
+                if (!blob) {
+                  reject(new Error('压缩失败'));
+                  return;
+                }
+                
+                compressedBlob = blob;
+                
+                // 如果大小仍然超过限制且质量高于最低限制，继续压缩
+                if (blob.size > maxSizeMB * 1024 * 1024 && quality > MIN_QUALITY) {
+                  // 每次压缩，质量降低10%
+                  quality -= 0.1;
+                  compress();
+                } else {
+                  console.log(`压缩完成: ${(blob.size / (1024 * 1024)).toFixed(2)}MB, 质量: ${quality.toFixed(2)}`);
+                  // 创建新的文件对象
+                  const compressedFile = new File([blob], file.name, {
+                    type: 'image/jpeg', // 统一使用jpeg格式可获得更好的压缩效果
+                    lastModified: Date.now()
+                  });
+                  resolve(compressedFile);
+                }
+              },
+              'image/jpeg',
+              quality
+            );
+          };
+          
+          // 开始压缩过程
+          compress();
+        };
+        
+        img.onerror = () => {
+          reject(new Error('图片加载失败'));
+        };
+      };
+      
+      reader.onerror = () => {
+        reject(new Error('文件读取失败'));
+      };
+      
+      reader.readAsDataURL(file);
+    });
   };
 
   return (

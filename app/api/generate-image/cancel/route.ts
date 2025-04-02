@@ -1,6 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/utils/supabase/server";
 
+interface ErrorWithMessage {
+  message?: string;
+  code?: string;
+  details?: string;
+  hint?: string;
+}
+
 /**
  * 取消图像生成任务API
  * 
@@ -26,6 +33,8 @@ export async function POST(request: NextRequest) {
         error: '缺少任务ID参数' 
       }, { status: 400 });
     }
+    
+    console.log(`收到取消任务请求: ${taskId}`);
     
     // 获取Supabase客户端
     const supabase = await createClient();
@@ -65,6 +74,16 @@ export async function POST(request: NextRequest) {
       }, { status: 500 });
     }
     
+    console.log(`查询到任务信息:`, {
+      taskId: task.task_id,
+      status: task.status,
+      userId: task.user_id,
+      creditsDeducted: task.credits_deducted,
+      creditsRefunded: task.credits_refunded,
+      createdAt: task.created_at,
+      updatedAt: task.updated_at
+    });
+    
     // 检查任务是否可以取消
     // 只有pending或processing状态的任务可以取消
     if (task.status !== 'pending' && task.status !== 'processing') {
@@ -74,41 +93,105 @@ export async function POST(request: NextRequest) {
       }, { status: 400 });
     }
     
-    // 尝试使用RPC函数取消任务
-    const { data: cancelResult, error: rpcError } = await supabase
-      .rpc('cancel_task', {
-        task_id_param: taskId,
-        user_id_param: user.id
-      });
-
-    // 如果RPC函数不存在或出错，尝试直接更新状态
-    if (rpcError) {
-      console.log(`RPC函数调用失败，回退到直接更新:`, rpcError);
+    // 使用多种方法尝试取消任务
+    let cancelSuccess = false;
+    let cancelResult = null;
+    let rpcError: ErrorWithMessage | null = null;
+    let updateError: ErrorWithMessage | null = null;
+    
+    // 1. 首先尝试使用RPC函数取消任务
+    try {
+      const { data: result, error } = await supabase
+        .rpc('cancel_task', {
+          task_id_param: taskId,
+          user_id_param: user.id
+        });
       
-      // 直接更新任务状态为已取消
-      const { error: updateError } = await supabase
-        .from("ai_images_creator_tasks")
-        .update({
-          status: "cancelled",
-          error_message: "用户主动取消任务",
-          updated_at: new Date().toISOString(),
-        })
-        .eq("task_id", taskId)
-        .eq("user_id", user.id); // 确保只更新用户自己的任务
-
-      if (updateError) {
-        console.error("取消任务时出错:", updateError);
-        return NextResponse.json(
-          {
-            success: false,
-            error: "取消任务失败",
-            details: updateError.message,
-          },
-          { status: 500 }
-        );
+      cancelResult = result;
+      rpcError = error as ErrorWithMessage;
+      
+      if (!error && result === true) {
+        console.log(`成功通过RPC函数取消任务: ${taskId}, 结果: ${result}`);
+        cancelSuccess = true;
+      } else if (error) {
+        console.error(`RPC函数调用失败:`, error);
+      } else {
+        console.warn(`RPC函数返回非预期结果: ${result}`);
       }
-    } else {
-      console.log(`成功通过RPC函数取消任务:`, cancelResult);
+    } catch (error) {
+      console.error(`RPC函数执行异常:`, error);
+      rpcError = error as ErrorWithMessage;
+    }
+    
+    // 2. 如果RPC函数失败，尝试直接更新状态
+    if (!cancelSuccess) {
+      try {
+        console.log(`RPC函数调用失败，回退到直接更新:`, rpcError);
+        
+        // 直接更新任务状态为已取消
+        const { error } = await supabase
+          .from("ai_images_creator_tasks")
+          .update({
+            status: "cancelled",
+            error_message: "用户主动取消任务",
+            updated_at: new Date().toISOString(),
+          })
+          .eq("task_id", taskId)
+          .eq("user_id", user.id); // 确保只更新用户自己的任务
+    
+        updateError = error as ErrorWithMessage;
+        
+        if (!error) {
+          console.log(`成功通过直接更新取消任务: ${taskId}`);
+          cancelSuccess = true;
+        } else {
+          console.error("取消任务时出错:", error);
+        }
+      } catch (error) {
+        console.error(`直接更新任务状态异常:`, error);
+        updateError = error as ErrorWithMessage;
+      }
+    }
+    
+    // 3. 验证任务是否真的被取消了
+    try {
+      // 再次查询任务状态，确认已被取消
+      const { data: verifyTask, error: verifyError } = await supabase
+        .from('ai_images_creator_tasks')
+        .select('status')
+        .eq('task_id', taskId)
+        .single();
+      
+      if (!verifyError && verifyTask) {
+        if (verifyTask.status === 'cancelled') {
+          console.log(`确认任务 ${taskId} 已成功取消，状态已变更为: ${verifyTask.status}`);
+          cancelSuccess = true;
+        } else {
+          console.warn(`任务 ${taskId} 取消操作可能失败，当前状态为: ${verifyTask.status}`);
+          // 如果状态不是cancelled，但也不是pending或processing，那么我们认为已经不需要再取消
+          if (verifyTask.status !== 'pending' && verifyTask.status !== 'processing') {
+            console.log(`任务 ${taskId} 当前状态 ${verifyTask.status} 不需要取消`);
+            cancelSuccess = true;
+          }
+        }
+      }
+    } catch (error) {
+      console.error(`验证任务取消状态异常:`, error);
+    }
+    
+    // 如果所有取消方法都失败，返回错误
+    if (!cancelSuccess) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "无法取消任务，请稍后重试",
+          details: {
+            rpcError: rpcError?.message || null,
+            updateError: updateError?.message || null
+          }
+        },
+        { status: 500 }
+      );
     }
     
     // 检查是否需要退还点数
@@ -149,7 +232,10 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ 
       success: true, 
       message: '任务已成功取消',
-      creditsRefunded: creditsRefunded
+      creditsRefunded: creditsRefunded,
+      taskId: taskId,
+      cancelMethod: cancelResult ? 'rpc' : 'direct_update',
+      finalStatus: 'cancelled'
     });
 
   } catch (error) {
