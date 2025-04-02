@@ -199,6 +199,33 @@ node scripts/test-cancel.js task_id
 
 根据测试结果，脚本会提供相应的解决方案建议。
 
+### 启动任务处理器
+
+系统使用异步任务队列处理图像生成请求。必须启动任务处理器才能实际执行图像生成：
+
+```bash
+# 在开发环境启动
+node scripts/task-processor.mjs
+```
+
+任务处理器会自动：
+1. 轮询数据库中的pending任务
+2. 调用处理API执行图像生成
+3. 更新任务状态和结果
+
+在生产环境中，建议使用PM2等进程管理工具来运行任务处理器：
+
+```bash
+# 安装PM2
+npm install -g pm2
+
+# 使用PM2启动并保持运行
+pm2 start scripts/task-processor.mjs --name "ai-image-task-processor"
+
+# 查看日志
+pm2 logs ai-image-task-processor
+```
+
 ### 常见问题
 
 #### 任务无法取消
@@ -213,3 +240,10 @@ node scripts/test-cancel.js task_id
    ```
 
 2. 缺少RPC函数。在Supabase控制台SQL编辑器中执行`sql/ai_images_creator_tasks.sql`中的`cancel_task`函数定义。
+
+#### 任务长时间处于pending状态
+
+可能的原因：
+1. 任务处理器未运行。请确保运行`node scripts/task-processor.mjs`脚本。
+2. 处理API出错。检查任务处理器的日志输出。
+3. 环境变量配置不正确。确保所有必需的API密钥都已设置。

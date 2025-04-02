@@ -52,6 +52,9 @@ export default function ProtectedPage() {
   // 添加进度更新定时器
   const [progressUpdateTimer, setProgressUpdateTimer] = useState<NodeJS.Timeout | null>(null);
   
+  // 添加时间计数器状态
+  const [elapsedTimeCounter, setElapsedTimeCounter] = useState<number>(0);
+  
   // 添加取消任务状态
   const [isCancelling, setIsCancelling] = useState(false);
   
@@ -240,13 +243,15 @@ export default function ProtectedPage() {
   useEffect(() => {
     // 如果有正在处理的任务，启动进度更新定时器
     if (currentTask && (currentTask.status === 'pending' || currentTask.status === 'processing')) {
+      // 清除可能存在的旧定时器
+      if (progressUpdateTimer) {
+        clearInterval(progressUpdateTimer);
+      }
+      
       // 每秒更新一次界面进度显示
       const timer = setInterval(() => {
-        // 强制重新渲染组件，更新时间显示
-        setIsGenerating(prev => {
-          if (prev) return prev; // 保持状态不变，但触发重新渲染
-          return true; // 如果状态变了，说明任务可能已经结束
-        });
+        // 增加计数器，强制触发重新渲染
+        setElapsedTimeCounter(prev => prev + 1);
       }, 1000);
       
       setProgressUpdateTimer(timer);
@@ -254,6 +259,8 @@ export default function ProtectedPage() {
       // 如果没有进行中的任务，清除定时器
       clearInterval(progressUpdateTimer);
       setProgressUpdateTimer(null);
+      // 重置计数器
+      setElapsedTimeCounter(0);
     }
     
     // 组件卸载时清除定时器
@@ -715,18 +722,46 @@ export default function ProtectedPage() {
       return null;
     }
     
-    // 计算任务已处理时间
+    // 计算任务已处理时间 - 使用elapsedTimeCounter强制更新
     const startTime = new Date(currentTask.created_at).getTime();
-    const elapsedSeconds = Math.floor((new Date().getTime() - startTime) / 1000);
+    const currentTime = new Date().getTime();
+    const elapsedSeconds = Math.floor((currentTime - startTime) / 1000);
     
     // 估算的进度百分比 (仅用于UI显示)
-    // 假设一般任务最长需要3分钟完成
-    const estimatedProgress = Math.min(Math.floor((elapsedSeconds / 180) * 100), 95);
+    // 任务状态不同，进度计算也不同
+    let estimatedProgress;
+    let estimatedRemainingTime;
+    
+    const TOTAL_ESTIMATED_TIME = 180; // 预计总时间(秒)
+    
+    if (currentTask.status === 'pending') {
+      // 排队中状态，进度较慢
+      estimatedProgress = Math.min(Math.floor((elapsedSeconds / TOTAL_ESTIMATED_TIME) * 40), 40);
+      estimatedRemainingTime = TOTAL_ESTIMATED_TIME - elapsedSeconds;
+    } else {
+      // 处理中状态，进度更快
+      // 计算基础进度：40% + 剩余55%的比例
+      const baseProgress = 40;
+      const processingElapsedSeconds = elapsedSeconds - 20; // 假设前20秒为排队时间
+      const processingProgress = processingElapsedSeconds > 0 ? 
+        Math.min(Math.floor((processingElapsedSeconds / (TOTAL_ESTIMATED_TIME - 20)) * 55), 55) : 0;
+      
+      estimatedProgress = baseProgress + processingProgress;
+      estimatedRemainingTime = Math.max(TOTAL_ESTIMATED_TIME - elapsedSeconds, 10);
+    }
     
     // 安全显示任务ID
     const displayTaskId = currentTask.taskId ? 
       `任务ID: ${currentTask.taskId.substring(0, 8)}...` : 
       '任务ID: 处理中';
+    
+    // 计算相对时间文本 - 使用elapsedTimeCounter确保每秒更新
+    const timeAgoText = formatTimeAgo(new Date(currentTask.created_at), elapsedTimeCounter);
+    
+    // 预计完成时间
+    const estimatedCompletionText = estimatedRemainingTime <= 0 ? 
+      "即将完成" : 
+      `预计${Math.ceil(estimatedRemainingTime / 10) * 10}秒内完成`;
     
     return (
       <div className="mt-4 space-y-2">
@@ -736,7 +771,7 @@ export default function ProtectedPage() {
             <span>
               任务状态: {currentTask.status === 'pending' ? '排队中' : '处理中'}
               {' '}
-              ({formatTimeAgo(new Date(currentTask.created_at))})
+              ({timeAgoText})
             </span>
           </div>
           <div className="text-xs text-muted-foreground">
@@ -747,15 +782,17 @@ export default function ProtectedPage() {
         {/* 进度条 */}
         <div className="w-full bg-secondary h-1 rounded-full overflow-hidden">
           <div 
-            className="bg-primary h-full rounded-full transition-all duration-500 ease-out"
+            className="bg-primary h-full rounded-full transition-all duration-300 ease-out"
             style={{ width: `${estimatedProgress}%` }} 
           />
         </div>
         
         <div className="flex items-center justify-between text-xs text-muted-foreground">
           <span>已处理时间: {formatElapsedTime(elapsedSeconds)}</span>
-          {currentTask.status === 'processing' && (
-            <span className="text-primary font-medium">图像生成中...</span>
+          {currentTask.status === 'processing' ? (
+            <span className="text-primary font-medium">图像生成中... {estimatedCompletionText}</span>
+          ) : (
+            <span>{estimatedCompletionText}</span>
           )}
         </div>
       </div>
@@ -770,7 +807,7 @@ export default function ProtectedPage() {
   };
 
   // 格式化时间
-  const formatTimeAgo = (date: Date) => {
+  const formatTimeAgo = (date: Date, _counter?: number) => {
     const seconds = Math.floor((new Date().getTime() - date.getTime()) / 1000);
     
     if (seconds < 60) return `${seconds}秒前`;
