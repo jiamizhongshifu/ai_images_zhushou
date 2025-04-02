@@ -21,7 +21,7 @@ model = os.getenv("MODEL", "gpt-4o-all")
 # 这个不用改
 api_url = "https://api.tu-zi.com/v1/chat/completions"
 # 这个请到 https://api.tu-zi.com/token 自己创建
-api_token = os.getenv("API_TOKEN", "sk-jITadcbUQUAvg5vVb4XoVqPvabBKZ9ZrDB63GFvMfy7XudFG")
+api_token = os.getenv("API_TOKEN", "sk-RQiRhGQHfgT0Cjk7RQTZE8iNf192x6IdHKYlfWJfPVcNeChE")
 
 # 准备请求数据
 def prepare_image_data(image_path):
