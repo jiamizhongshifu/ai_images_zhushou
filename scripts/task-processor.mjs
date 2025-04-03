@@ -53,6 +53,7 @@ const MAX_CONCURRENT_TASKS = 3; // 最大并发处理任务数
 const SECRET_KEY = process.env.TASK_PROCESS_SECRET_KEY || 'your-secret-key-here';
 const MAX_RETRIES = 3; // 任务处理最大重试次数
 const TASK_TIMEOUT = 15 * 60 * 1000; // 任务超时时间（15分钟）
+const TASK_PROCESSING_MAX_TIME = 30 * 60 * 1000; // 任务处理最长时间（30分钟）
 
 // Supabase配置
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -74,6 +75,110 @@ const taskRetryCount = new Map();
 
 // 添加处理中任务的跟踪集合
 const processingTaskIds = new Set();
+
+// 任务处理开始时间记录
+const taskStartTimes = new Map();
+
+// 任务超时设置
+const TASK_PROCESSING_TIMEOUT = 15 * 60 * 1000; // 15分钟超时
+const TASK_MAX_AGE = 30 * 60 * 1000; // 30分钟最大生命周期
+
+// 添加检查超时任务的函数
+async function checkAndHandleTimeoutTasks() {
+  try {
+    console.log(`[${new Date().toISOString()}] 检查超时任务...`);
+    
+    const now = Date.now();
+    
+    // 检查处理中的任务是否超时
+    for (const [taskId, startTime] of taskStartTimes.entries()) {
+      const processingTime = now - startTime;
+      
+      // 如果任务处理时间超过最大值
+      if (processingTime > TASK_PROCESSING_MAX_TIME) {
+        console.warn(`任务 ${taskId} 处理时间超过 ${TASK_PROCESSING_MAX_TIME / 60000} 分钟，尝试检查并取消...`);
+        
+        try {
+          // 获取任务当前状态
+          const statusResponse = await fetch(`${process.env.NEXT_PUBLIC_SITE_URL}/api/generate-image/status?taskId=${taskId}`, {
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${process.env.TASK_PROCESS_SECRET_KEY}`,
+              'X-Silent-Mode': 'true'
+            },
+            ...fetchOptions,
+            signal: createTimeoutSignal(15000)
+          });
+          
+          if (!statusResponse.ok) {
+            console.error(`检查任务 ${taskId} 状态失败: HTTP ${statusResponse.status}`);
+            continue;
+          }
+          
+          const statusData = await statusResponse.json().catch(err => {
+            console.error(`解析任务 ${taskId} 状态响应失败:`, err);
+            return { success: false };
+          });
+          
+          if (!statusData.success || !statusData.task) {
+            console.error(`获取任务 ${taskId} 状态失败:`, statusData.error || '未知错误');
+            continue;
+          }
+          
+          // 如果任务仍在处理中，尝试取消
+          if (statusData.task.status === 'processing' || statusData.task.status === 'pending') {
+            console.warn(`任务 ${taskId} 处理超时，当前状态: ${statusData.task.status}，尝试自动取消...`);
+            
+            // 直接在数据库中标记为超时取消
+            const supabase = createSimplifiedClient(supabaseUrl, supabaseKey);
+            const { error: updateError } = await supabase
+              .from('ai_images_creator_tasks')
+              .update({
+                status: 'failed',
+                error_message: `处理超时: 任务处理时间超过 ${TASK_PROCESSING_MAX_TIME / 60000} 分钟，系统自动取消`,
+                completed_at: new Date().toISOString()
+              })
+              .eq('task_id', taskId);
+              
+            if (updateError) {
+              console.error(`标记超时任务 ${taskId} 为失败状态时出错:`, updateError);
+            } else {
+              console.log(`已将超时任务 ${taskId} 自动标记为失败`);
+            }
+            
+            // 执行退款
+            try {
+              await fetch(`${process.env.NEXT_PUBLIC_SITE_URL}/api/generate-image/refund`, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Authorization': `Bearer ${process.env.TASK_PROCESS_SECRET_KEY}`,
+                  'X-Silent-Mode': 'true'
+                },
+                body: JSON.stringify({ taskId, secretKey: process.env.TASK_PROCESS_SECRET_KEY }),
+                ...fetchOptions,
+                signal: createTimeoutSignal(15000)
+              });
+              console.log(`已为超时任务 ${taskId} 执行退款`);
+            } catch (refundError) {
+              console.error(`为超时任务 ${taskId} 执行退款时出错:`, refundError);
+            }
+          } else {
+            console.log(`任务 ${taskId} 已处于最终状态: ${statusData.task.status}，无需取消`);
+          }
+          
+          // 无论结果如何，都从跟踪记录中移除
+          taskStartTimes.delete(taskId);
+          
+        } catch (error) {
+          console.error(`处理超时任务 ${taskId} 时出错:`, error);
+        }
+      }
+    }
+  } catch (error) {
+    console.error('检查超时任务时出错:', error);
+  }
+}
 
 // 添加数据库级别的任务锁定
 async function lockTask(taskId) {
@@ -228,8 +333,38 @@ async function processTask(taskId) {
       throw new Error(`解析处理响应失败: ${jsonError.message}, 原始响应: ${await processResponse.text().catch(() => '无法获取原始响应')}`);
     }
     
+    // 优化: 区分不同类型的业务逻辑结果
     if (!processData.success) {
-      throw new Error(`处理任务业务逻辑失败: ${processData.error || '未知错误'}`);
+      // 检查是否是"任务已处于processing状态"的情况 - 同时检查error和message字段
+      if (
+        (processData.error && 
+         (processData.error.includes('已处于processing状态') || 
+          processData.error.includes('already in processing state'))) ||
+        (processData.message && 
+         (processData.message.includes('已处于 processing 状态') ||
+          processData.message.includes('已处于processing状态') ||
+          processData.message.includes('already in processing state')))
+      ) {
+        console.log(`任务 ${taskId} 已在处理中，继续监控其状态...`);
+        // 不将其视为错误，而是视为正常情况，继续监控任务状态
+        return;
+      } else if (
+        (processData.error && 
+         (processData.error.includes('已完成') || 
+          processData.error.includes('already completed'))) ||
+        (processData.message && 
+         (processData.message.includes('已完成') || 
+          processData.message.includes('already completed')))
+      ) {
+        console.log(`任务 ${taskId} 已完成，无需再次处理`);
+        // 不将其视为错误，而是视为正常情况
+        return;
+      } else {
+        // 其他业务逻辑错误，作为真正的错误处理
+        const errorMessage = processData.error || processData.message || '未知错误';
+        console.log(`任务 ${taskId} 处理返回业务错误: ${errorMessage}`);
+        throw new Error(`处理任务业务逻辑失败: ${errorMessage}`);
+      }
     }
     
     console.log(`任务 ${taskId} 处理请求已成功发送: ${processData.message}`);
@@ -246,33 +381,67 @@ async function processTask(taskId) {
     
     // 将错误报告到数据库
     try {
+      console.log(`尝试更新任务 ${taskId} 的状态为失败，错误信息: ${error.message}`);
       const supabase = createSimplifiedClient(supabaseUrl, supabaseKey);
-      await supabase
-        .from('ai_images_creator_tasks')
-        .update({
-          status: 'failed',
-          error_message: `处理失败: ${error.message || '未知错误'}`,
-          completed_at: new Date().toISOString()
-        })
-        .eq('task_id', taskId);
       
-      console.log(`已将任务 ${taskId} 标记为失败，并记录错误信息`);
-      
-      // 尝试退还用户点数
-      await fetch(`${process.env.NEXT_PUBLIC_SITE_URL}/api/generate-image/refund`, {
-        method: 'POST',
+      // 先获取任务当前状态，只有在特定状态才标记为失败
+      const checkResponse = await fetch(`${process.env.NEXT_PUBLIC_SITE_URL}/api/generate-image/status?taskId=${taskId}`, {
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${process.env.TASK_PROCESS_SECRET_KEY}`,
-          'X-Silent-Mode': 'true' // 添加静默模式头部
+          'X-Silent-Mode': 'true'
         },
-        body: JSON.stringify({ taskId, secretKey: process.env.TASK_PROCESS_SECRET_KEY }),
-        ...fetchOptions, // 使用全局配置
-        signal: createTimeoutSignal(15000) // 使用新创建的信号
-      }).catch(refundError => {
-        console.error(`为任务 ${taskId} 执行退款时出错:`, refundError);
+        signal: createTimeoutSignal(30000)
+      }).catch(e => {
+        console.error(`获取任务状态失败:`, e);
+        return { ok: false };
       });
       
+      if (checkResponse.ok) {
+        const checkData = await checkResponse.json().catch(() => ({ success: false }));
+        
+        if (checkData.success && checkData.task) {
+          const currentStatus = checkData.task.status;
+          
+          // 只有处于pending或processing状态的任务才允许更新为失败状态
+          if (currentStatus === 'pending' || currentStatus === 'processing') {
+            console.log(`任务 ${taskId} 当前状态为 ${currentStatus}，将更新为失败状态`);
+            
+            // 更新数据库状态
+            await supabase
+              .from('ai_images_creator_tasks')
+              .update({
+                status: 'failed',
+                error_message: `处理失败: ${error.message || '未知错误'}`,
+                completed_at: new Date().toISOString()
+              })
+              .eq('task_id', taskId);
+            
+            console.log(`已将任务 ${taskId} 标记为失败，并记录错误信息`);
+            
+            // 尝试退还用户点数
+            await fetch(`${process.env.NEXT_PUBLIC_SITE_URL}/api/generate-image/refund`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${process.env.TASK_PROCESS_SECRET_KEY}`,
+                'X-Silent-Mode': 'true'
+              },
+              body: JSON.stringify({ taskId, secretKey: process.env.TASK_PROCESS_SECRET_KEY }),
+              ...fetchOptions,
+              signal: createTimeoutSignal(15000)
+            }).catch(refundError => {
+              console.error(`为任务 ${taskId} 执行退款时出错:`, refundError);
+            });
+          } else {
+            console.log(`任务 ${taskId} 已处于 ${currentStatus} 状态，不再将其标记为失败`);
+          }
+        } else {
+          console.error(`获取任务 ${taskId} 状态失败，无法更新状态`);
+        }
+      } else {
+        console.error(`获取任务 ${taskId} 状态请求失败，无法更新状态`);
+      }
     } catch (dbError) {
       console.error(`无法更新任务 ${taskId} 的错误状态:`, dbError);
     }
@@ -332,6 +501,9 @@ async function pollForTasks() {
       data.tasks = [];
     }
     
+    // 清理长时间处于处理中但可能已经完成或失败的任务
+    await cleanupStaleTasks();
+    
     // 过滤出未处理且不在处理中集合里的任务
     const pendingTasks = data.tasks.filter(task => {
       // 确保任务有有效的ID
@@ -368,9 +540,18 @@ async function pollForTasks() {
     for (const task of tasksToProcess) {
       console.log(`准备处理任务 ${task.taskId}...`);
       
+      // 再次确认任务未被处理，避免并发问题
+      if (processingTaskIds.has(task.taskId) || processingTasks.has(task.taskId)) {
+        console.log(`任务 ${task.taskId} 已被其他实例标记为处理中，跳过`);
+        continue;
+      }
+      
       // 将任务添加到处理中集合
       processingTaskIds.add(task.taskId);
       processingTasks.add(task.taskId); // 双重标记
+      
+      // 记录任务处理的开始时间，用于超时检测
+      taskStartTimes.set(task.taskId, Date.now());
       
       console.log(`开始处理任务 ${task.taskId}...`);
       
@@ -384,6 +565,8 @@ async function pollForTasks() {
         setTimeout(() => {
           const removed = processingTaskIds.delete(task.taskId);
           const removedDuplicate = processingTasks.delete(task.taskId); // 双重移除
+          taskStartTimes.delete(task.taskId); // 移除开始时间记录
+          
           console.log(`任务 ${task.taskId} 处理完成，从跟踪集合中移除，结果: primary=${removed}, secondary=${removedDuplicate}`);
           
           // 主动获取任务最新状态并记录
@@ -423,13 +606,40 @@ async function pollForTasks() {
 }
 
 // 轮询循环
-console.log('任务处理器已启动，开始轮询任务...');
+console.log('==============================================');
+console.log(`任务处理器已启动，版本: 1.2.0 (优化版)`);
+console.log(`启动时间: ${new Date().toISOString()}`);
+console.log('==============================================');
 console.log(`- 轮询间隔: ${POLL_INTERVAL}ms`);
 console.log(`- 最大并发任务数: ${MAX_CONCURRENT_TASKS}`);
 console.log(`- 最大重试次数: ${MAX_RETRIES}`);
 console.log(`- 任务超时时间: ${TASK_TIMEOUT / 60000}分钟`);
+console.log(`- 处理超时时间: ${TASK_PROCESSING_TIMEOUT / 60000}分钟`);
+console.log(`- 任务最大生命周期: ${TASK_MAX_AGE / 60000}分钟`);
 console.log(`- Supabase URL: ${supabaseUrl}`);
 console.log(`- 当前时间: ${new Date().toISOString()}`);
+console.log('==============================================');
+
+// 周期性状态报告
+setInterval(() => {
+  const now = new Date().toISOString();
+  console.log('==============================================');
+  console.log(`系统状态报告 - ${now}`);
+  console.log(`- 处理中任务数: ${processingTaskIds.size}`);
+  
+  // 报告处理中任务的详情
+  if (processingTaskIds.size > 0) {
+    console.log('- 当前处理中任务:');
+    let index = 1;
+    for (const [taskId, startTime] of taskStartTimes.entries()) {
+      const ageInSeconds = Math.round((Date.now() - startTime) / 1000);
+      console.log(`  ${index}. 任务ID: ${taskId}, 已处理: ${ageInSeconds}秒`);
+      index++;
+    }
+  }
+  
+  console.log('==============================================');
+}, 5 * 60 * 1000); // 每5分钟报告一次
 
 // 首次立即执行
 pollForTasks();
@@ -484,4 +694,108 @@ process.on('uncaughtException', (error) => {
 process.on('unhandledRejection', (reason, promise) => {
   console.error('未处理的Promise拒绝:', reason);
   // 记录但不退出，保持服务运行
-}); 
+});
+
+// 清理长时间处于处理中但可能已经完成或失败的任务
+async function cleanupStaleTasks() {
+  const now = Date.now();
+  const taskIdsToCheck = [];
+  
+  // 收集所有可能超时的任务
+  for (const [taskId, startTime] of taskStartTimes.entries()) {
+    const taskAge = now - startTime;
+    
+    if (taskAge > TASK_PROCESSING_TIMEOUT) {
+      taskIdsToCheck.push(taskId);
+      console.log(`检测到可能超时的任务: ${taskId}, 已处理 ${Math.round(taskAge / 1000)} 秒`);
+    }
+  }
+  
+  if (taskIdsToCheck.length === 0) {
+    return;
+  }
+  
+  console.log(`共有 ${taskIdsToCheck.length} 个任务需要检查超时状态`);
+  
+  // 逐个检查任务状态并处理
+  for (const taskId of taskIdsToCheck) {
+    try {
+      // 获取任务当前状态
+      const response = await fetch(`${process.env.NEXT_PUBLIC_SITE_URL}/api/generate-image/status?taskId=${taskId}`, {
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${process.env.TASK_PROCESS_SECRET_KEY}`,
+          'X-Silent-Mode': 'true'
+        },
+        ...fetchOptions,
+        signal: createTimeoutSignal(15000)
+      });
+      
+      if (!response.ok) {
+        console.error(`获取任务 ${taskId} 状态失败: HTTP ${response.status}`);
+        continue;
+      }
+      
+      const data = await response.json().catch(() => ({ success: false }));
+      
+      if (!data.success || !data.task) {
+        console.error(`获取任务 ${taskId} 数据失败`);
+        continue;
+      }
+      
+      const taskStatus = data.task.status;
+      console.log(`超时检查 - 任务 ${taskId} 当前状态: ${taskStatus}`);
+      
+      // 如果任务已经是终态，直接从跟踪集合中移除
+      if (taskStatus === 'completed' || taskStatus === 'failed' || taskStatus === 'cancelled') {
+        processingTaskIds.delete(taskId);
+        processingTasks.delete(taskId);
+        taskStartTimes.delete(taskId);
+        console.log(`任务 ${taskId} 已是终态(${taskStatus})，从处理集合中移除`);
+        continue;
+      }
+      
+      // 如果任务仍在处理中且已超时，尝试取消
+      const taskAge = now - taskStartTimes.get(taskId);
+      if ((taskStatus === 'pending' || taskStatus === 'processing') && taskAge > TASK_MAX_AGE) {
+        console.log(`任务 ${taskId} 处理时间过长(${Math.round(taskAge / 1000)}秒)，尝试取消...`);
+        
+        // 尝试取消任务
+        try {
+          const cancelResponse = await fetch(`${process.env.NEXT_PUBLIC_SITE_URL}/api/generate-image/cancel`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${process.env.TASK_PROCESS_SECRET_KEY}`,
+              'X-Silent-Mode': 'true'
+            },
+            body: JSON.stringify({ 
+              taskId,
+              secretKey: process.env.TASK_PROCESS_SECRET_KEY,
+              reason: '任务处理超时，系统自动取消'
+            }),
+            ...fetchOptions,
+            signal: createTimeoutSignal(15000)
+          });
+          
+          const cancelData = await cancelResponse.json().catch(() => ({ success: false }));
+          
+          if (cancelResponse.ok && cancelData.success) {
+            console.log(`成功取消超时任务 ${taskId}`);
+            
+            // 从处理集合中移除
+            processingTaskIds.delete(taskId);
+            processingTasks.delete(taskId);
+            taskStartTimes.delete(taskId);
+          } else {
+            console.error(`取消超时任务 ${taskId} 失败:`, cancelData.error || '未知错误');
+          }
+        } catch (cancelError) {
+          console.error(`取消超时任务过程中出错:`, cancelError);
+        }
+      }
+    } catch (error) {
+      console.error(`检查任务 ${taskId} 超时状态时出错:`, error);
+    }
+  }
+} 
