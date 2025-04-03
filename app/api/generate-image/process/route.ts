@@ -137,47 +137,54 @@ export async function POST(request: NextRequest) {
 async function processTask(taskId: string, preserveAspectRatio: boolean = false) {
   const supabase = createAdminClient();
   
-  // 添加检查任务是否被取消的帮助函数
+  // 优化取消任务检查逻辑，增加错误处理
   const checkTaskCancelled = async (): Promise<boolean> => {
     try {
-      // 首先，通过notify-cancel API检查内存缓存
-      const cancelResponse = await fetch(`${process.env.NEXT_PUBLIC_SITE_URL}/api/generate-image/notify-cancel?taskId=${taskId}`, {
-        headers: {
-          'Authorization': `Bearer ${process.env.TASK_PROCESS_SECRET_KEY || ''}`,
-          'Cache-Control': 'no-cache, no-store, must-revalidate',
-          'Pragma': 'no-cache'
-        }
-      });
-      
-      if (cancelResponse.ok) {
-        const cancelData = await cancelResponse.json();
-        if (cancelData.isCancelled) {
-          console.log(`检测到任务 ${taskId} 已被取消 (来自notify-cancel缓存)`);
-          return true;
-        }
-      }
-      
-      // 如果内存缓存没有，再检查数据库
-      const { data: task, error } = await supabase
+      // 先检查任务是否已经被取消
+      const { data, error } = await supabase
         .from('ai_images_creator_tasks')
         .select('status')
         .eq('task_id', taskId)
         .single();
       
       if (error) {
-        console.error(`检查任务 ${taskId} 状态失败:`, error);
-        return false;
+        console.error(`检查任务 ${taskId} 状态时出错:`, error);
+        return false; // 查询错误时默认为未取消
       }
       
-      if (task.status === 'cancelled') {
-        console.log(`检测到任务 ${taskId} 已被取消 (状态: ${task.status})`);
+      // 任务状态为cancelled说明已被取消
+      if (data && data.status === 'cancelled') {
+        console.log(`任务 ${taskId} 已被取消`);
         return true;
       }
+
+      // 尝试从取消通知API获取信息(可选的额外检查)
+      try {
+        const response = await fetch(`${process.env.NEXT_PUBLIC_SITE_URL}/api/generate-image/notify-cancel?taskId=${taskId}`, {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${process.env.TASK_PROCESS_SECRET_KEY || ''}`,
+          },
+          signal: AbortSignal.timeout(5000) // 使用5秒超时
+        });
+        
+        if (response.ok) {
+          const notifyData = await response.json();
+          if (notifyData.cancelled) {
+            console.log(`通过通知API确认任务 ${taskId} 已被取消`);
+            return true;
+          }
+        }
+      } catch (notifyError) {
+        console.warn(`检查取消通知API时出错:`, notifyError);
+        // 通知API查询失败不影响主流程
+      }
       
-      return false;
-    } catch (error) {
-      console.error(`检查任务 ${taskId} 是否被取消时出错:`, error);
-      return false;
+      return false; // 默认为未取消
+    } catch (e) {
+      console.error(`检查任务取消状态时发生异常:`, e);
+      return false; // 发生异常时默认为未取消
     }
   };
   
@@ -384,20 +391,44 @@ async function processTask(taskId: string, preserveAspectRatio: boolean = false)
       if (isOfficialOpenAI) {
         console.log('使用OpenAI官方API，直接调用images.generate');
         
-        // 设置中断检查定时器 - 每5秒检查一次任务是否被取消
+        // 设置中断检查定时器 - 每3秒检查一次任务是否被取消
         let isCancelled = false;
         const cancelCheckInterval = setInterval(async () => {
-          if (await checkTaskCancelled()) {
-            isCancelled = true;
-            clearInterval(cancelCheckInterval);
+          try {
+            if (await checkTaskCancelled()) {
+              isCancelled = true;
+              clearInterval(cancelCheckInterval);
+              console.log(`任务 ${taskId} 在API调用期间被取消，将尝试中止处理`);
+            }
+          } catch (checkError) {
+            console.error('取消检查定时器出错:', checkError);
           }
-        }, 5000);
+        }, 3000); // 减少为3秒，提高响应性
+        
+        // 设置总超时保护，无论任何情况下，任务处理不应超过10分钟
+        const timeoutId = setTimeout(() => {
+          clearInterval(cancelCheckInterval);
+          
+          if (!isCancelled) {
+            console.error(`任务 ${taskId} 处理时间超过10分钟，强制标记为失败`);
+            // 这里不需要await，我们不想让超时处理阻塞
+            updateTaskStatus(taskId, 'failed', null, '处理超时，已自动终止')
+              .catch(e => console.error('更新超时任务状态失败:', e));
+            
+            refundCredits(task.user_id)
+              .catch(e => console.error('退还积分失败:', e));
+            
+            updateTaskRefundStatus(taskId, true)
+              .catch(e => console.error('更新退款状态失败:', e));
+          }
+        }, 600000); // 10分钟超时
         
         // 使用OpenAI官方API直接生成图片
         const response = await openai.images.generate(imageOptions);
         
-        // 清除定时器
+        // 清除所有定时器
         clearInterval(cancelCheckInterval);
+        clearTimeout(timeoutId);
         
         // 检查是否在API调用期间被取消
         if (isCancelled || await checkTaskCancelled()) {
@@ -453,20 +484,44 @@ async function processTask(taskId: string, preserveAspectRatio: boolean = false)
           size: size // 直接设置尺寸，不再动态修改
         };
         
-        // 设置中断检查定时器 - 每5秒检查一次任务是否被取消
+        // 设置中断检查定时器 - 每3秒检查一次任务是否被取消
         let isCancelled = false;
         const cancelCheckInterval = setInterval(async () => {
-          if (await checkTaskCancelled()) {
-            isCancelled = true;
-            clearInterval(cancelCheckInterval);
+          try {
+            if (await checkTaskCancelled()) {
+              isCancelled = true;
+              clearInterval(cancelCheckInterval);
+              console.log(`任务 ${taskId} 在API调用期间被取消，将尝试中止处理`);
+            }
+          } catch (checkError) {
+            console.error('取消检查定时器出错:', checkError);
           }
-        }, 5000);
+        }, 3000); // 减少为3秒，提高响应性
+        
+        // 设置总超时保护，无论任何情况下，任务处理不应超过10分钟
+        const timeoutId = setTimeout(() => {
+          clearInterval(cancelCheckInterval);
+          
+          if (!isCancelled) {
+            console.error(`任务 ${taskId} 处理时间超过10分钟，强制标记为失败`);
+            // 这里不需要await，我们不想让超时处理阻塞
+            updateTaskStatus(taskId, 'failed', null, '处理超时，已自动终止')
+              .catch(e => console.error('更新超时任务状态失败:', e));
+            
+            refundCredits(task.user_id)
+              .catch(e => console.error('退还积分失败:', e));
+            
+            updateTaskRefundStatus(taskId, true)
+              .catch(e => console.error('更新退款状态失败:', e));
+          }
+        }, 600000); // 10分钟超时
         
         // 调用OpenAI API - 只进行一次调用
         const response = await openai.chat.completions.create(params);
         
-        // 清除定时器
+        // 清除所有定时器
         clearInterval(cancelCheckInterval);
+        clearTimeout(timeoutId);
         
         // 检查是否在API调用期间被取消
         if (isCancelled || await checkTaskCancelled()) {
