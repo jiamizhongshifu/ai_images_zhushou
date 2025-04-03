@@ -6,7 +6,7 @@ require('./utils/load-env');
 const nextConfig = {
   // 确保环境变量可用于客户端
   env: {
-    OPENAI_MODEL: process.env.OPENAI_MODEL || 'gpt-4o-all',
+    OPENAI_MODEL: process.env.TUZI_MODEL || 'gpt-4o-all',
   },
   // Next.js配置
   reactStrictMode: true,

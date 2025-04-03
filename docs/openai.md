@@ -4,8 +4,8 @@ import { OpenAI } from 'openai';
 import { image2Base64 } from './utils';
 
 const openai = new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY,
-    baseURL: process.env.OPENAI_BASE_URL,
+    apiKey: process.env.TUZI_API_KEY,
+    baseURL: process.env.TUZI_BASE_URL,
 });
 
 const imagePath = './assets/photo.jpg'; // 图片的路径
@@ -15,7 +15,7 @@ async function main() {
     try {
         console.log("开始请求")
         const stream = await openai.chat.completions.create({
-            model: process.env.OPENAI_MODEL as string,
+            model: process.env.TUZI_MODEL as string,
             messages: [{
                 role: 'user', content: [
                     {
