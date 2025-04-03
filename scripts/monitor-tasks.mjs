@@ -148,7 +148,21 @@ async function fixStuckTasks(stuckTasks) {
           // 使用代理（如果有）
           if (HTTP_PROXY) {
             try {
-              const { Agent } = await import('undici');
+              // 先尝试直接导入
+              let Agent;
+              try {
+                const undici = await import('undici');
+                Agent = undici.Agent;
+                console.log('从全局 undici 包成功导入 Agent');
+              } catch (importErr) {
+                console.log(`全局导入失败: ${importErr.message}, 尝试从本地路径导入`);
+                // 如果全局导入失败，尝试从本地路径导入
+                const undiciPath = path.join(process.cwd(), 'node_modules', 'undici');
+                const undici = await import(/* webpackIgnore: true */ `file://${undiciPath}/index.js`);
+                Agent = undici.Agent;
+                console.log('从本地路径成功导入 Agent');
+              }
+              
               const proxyAgent = new Agent({
                 connect: {
                   proxy: {
@@ -160,6 +174,8 @@ async function fixStuckTasks(stuckTasks) {
               console.log(`为任务 ${task.task_id} 退款使用代理: ${HTTP_PROXY}`);
             } catch (proxyError) {
               console.warn(`配置代理失败: ${proxyError.message}，将尝试直接连接`);
+              // 添加详细错误信息以便调试
+              console.error('详细错误信息:', proxyError);
             }
           }
           

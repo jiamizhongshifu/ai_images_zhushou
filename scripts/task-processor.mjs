@@ -24,6 +24,7 @@ if (!process.env.__ENV_LOADED) {
 import { createClient } from '@supabase/supabase-js';
 import fetch from 'node-fetch';
 import { EventEmitter } from 'events';
+import path from 'path';
 
 // 设置事件监听器最大数量，避免警告
 EventEmitter.defaultMaxListeners = 20;
@@ -339,7 +340,23 @@ async function processTask(taskId) {
           // 尝试使用代理
           try {
             // 动态导入HTTP代理代理
-            const { Agent } = await import('undici');
+            const undiciPath = path.join(process.cwd(), 'node_modules', 'undici');
+            console.log(`尝试从 ${undiciPath} 导入 undici 包`);
+            
+            // 先尝试直接导入
+            let Agent;
+            try {
+              const undici = await import('undici');
+              Agent = undici.Agent;
+              console.log('从全局 undici 包成功导入 Agent');
+            } catch (importErr) {
+              console.log(`全局导入失败: ${importErr.message}, 尝试从本地路径导入`);
+              // 如果全局导入失败，尝试从本地路径导入
+              const undici = await import(/* webpackIgnore: true */ `file://${undiciPath}/index.js`);
+              Agent = undici.Agent;
+              console.log('从本地路径成功导入 Agent');
+            }
+            
             const proxyAgent = new Agent({
               connect: {
                 proxy: {
@@ -352,6 +369,8 @@ async function processTask(taskId) {
             console.log(`为任务 ${taskId} 使用代理: ${HTTP_PROXY}`);
           } catch (proxyError) {
             console.warn(`配置代理失败: ${proxyError.message}，将尝试直接连接`);
+            // 添加详细错误信息以便调试
+            console.error('详细错误信息:', proxyError);
           }
         }
         
