@@ -55,10 +55,18 @@ const MAX_RETRIES = 3; // 任务处理最大重试次数
 const TASK_TIMEOUT = 10 * 60 * 1000; // 任务超时时间（10分钟）
 const TASK_PROCESSING_MAX_TIME = 15 * 60 * 1000; // 任务处理最长时间（15分钟，减少等待时间）
 
-// 新增API调用选项，添加更多的超时保护
+// 新增API调用选项
 const API_CALL_TIMEOUT = 60000; // API调用超时时间，1分钟
 const API_RETRY_DELAY = 3000; // API重试延迟，3秒
 const MAX_API_RETRIES = 2; // 最大API重试次数
+
+// 添加代理配置
+const HTTP_PROXY = process.env.HTTP_PROXY || process.env.HTTPS_PROXY || '';
+if (HTTP_PROXY) {
+  console.log(`使用代理配置: ${HTTP_PROXY}`);
+} else {
+  console.log('未检测到代理配置，将直接连接');
+}
 
 // Supabase配置
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -324,6 +332,34 @@ async function processTask(taskId) {
     while (retryCount < MAX_API_RETRIES && !success) {
       try {
         // 使用带超时的fetch请求
+        const fetchOptions = {};
+        
+        // 添加代理支持
+        if (HTTP_PROXY) {
+          // 尝试使用代理
+          try {
+            // 动态导入HTTP代理代理
+            const { Agent } = await import('undici');
+            const proxyAgent = new Agent({
+              connect: {
+                proxy: {
+                  uri: HTTP_PROXY
+                }
+              }
+            });
+            
+            fetchOptions.dispatcher = proxyAgent;
+            console.log(`为任务 ${taskId} 使用代理: ${HTTP_PROXY}`);
+          } catch (proxyError) {
+            console.warn(`配置代理失败: ${proxyError.message}，将尝试直接连接`);
+          }
+        }
+        
+        // 设置请求超时
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), API_CALL_TIMEOUT);
+        fetchOptions.signal = controller.signal;
+        
         const response = await fetch(`${process.env.NEXT_PUBLIC_SITE_URL}/api/generate-image/process`, {
           method: 'POST',
           headers: {
@@ -335,8 +371,10 @@ async function processTask(taskId) {
             secretKey: process.env.TASK_PROCESS_SECRET_KEY,
             preserveAspectRatio: false
           }),
-          signal: AbortSignal.timeout(API_CALL_TIMEOUT) // 使用1分钟超时
+          ...fetchOptions
         });
+        
+        clearTimeout(timeoutId);
         
         // 处理响应
         if (!response.ok) {

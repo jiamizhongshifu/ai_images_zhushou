@@ -41,6 +41,14 @@ const SYSTEM_HEALTH_CHECK_INTERVAL = 30 * 60 * 1000; // 系统健康检查间隔
 const MAX_TASK_COUNT_THRESHOLD = 10; // 最大积压任务数阈值，超过此值会触发系统健康检查
 const MONITOR_LOGFILE = 'task-monitor.log'; // 监控日志文件
 
+// 获取代理配置
+const HTTP_PROXY = process.env.HTTP_PROXY || process.env.HTTPS_PROXY || '';
+if (HTTP_PROXY) {
+  console.log(`使用代理配置: ${HTTP_PROXY}`);
+} else {
+  console.log('未检测到代理配置，将直接连接');
+}
+
 // 工作记录
 const lastFixAttempts = new Map(); // 记录上次修复尝试时间
 const healthCheckHistory = []; // 系统健康检查历史
@@ -133,32 +141,101 @@ async function fixStuckTasks(stuckTasks) {
         console.log(`成功将任务 ${task.task_id} 标记为失败`);
         
         // 尝试退还用户点数
-        const { data: credits, error: creditError } = await supabase
-          .from('ai_images_creator_credits')
-          .select('credits')
-          .eq('user_id', task.user_id)
-          .single();
-        
-        if (creditError) {
-          console.error(`查询用户 ${task.user_id} 点数时出错:`, creditError);
-        } else {
-          // 更新点数记录
-          const newCredits = (credits?.credits || 0) + 1;
-          const { error: refundError } = await supabase
-            .from('ai_images_creator_credits')
-            .update({ credits: newCredits })
-            .eq('user_id', task.user_id);
+        try {
+          // 创建fetch选项
+          const fetchOptions = {};
           
-          if (refundError) {
-            console.error(`为用户 ${task.user_id} 退还点数时出错:`, refundError);
+          // 使用代理（如果有）
+          if (HTTP_PROXY) {
+            try {
+              const { Agent } = await import('undici');
+              const proxyAgent = new Agent({
+                connect: {
+                  proxy: {
+                    uri: HTTP_PROXY
+                  }
+                }
+              });
+              fetchOptions.dispatcher = proxyAgent;
+              console.log(`为任务 ${task.task_id} 退款使用代理: ${HTTP_PROXY}`);
+            } catch (proxyError) {
+              console.warn(`配置代理失败: ${proxyError.message}，将尝试直接连接`);
+            }
+          }
+          
+          // 设置请求超时
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 15000);
+          fetchOptions.signal = controller.signal;
+          
+          const response = await fetch(`${process.env.NEXT_PUBLIC_SITE_URL}/api/generate-image/refund`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${process.env.TASK_PROCESS_SECRET_KEY}`
+            },
+            body: JSON.stringify({
+              taskId: task.task_id,
+              secretKey: process.env.TASK_PROCESS_SECRET_KEY
+            }),
+            ...fetchOptions
+          });
+          
+          clearTimeout(timeoutId);
+          
+          if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`退款API调用失败: ${response.status}, 响应: ${errorText}`);
+          }
+          
+          const data = await response.json();
+          
+          if (data.success) {
+            console.log(`成功为任务 ${task.task_id} 执行退款`);
           } else {
-            console.log(`成功为用户 ${task.user_id} 退还1点积分`);
+            console.error(`退款API返回错误: ${data.error || '未知错误'}`);
+          }
+        } catch (refundError) {
+          console.error(`为任务 ${task.task_id} 执行退款失败:`, refundError.message);
+          
+          // 直接尝试更新数据库
+          try {
+            // 获取用户当前积分
+            const { data: credits, error: creditError } = await supabase
+              .from('ai_images_creator_credits')
+              .select('credits')
+              .eq('user_id', task.user_id)
+              .single();
             
-            // 更新任务的退款状态
-            await supabase
-              .from('ai_images_creator_tasks')
-              .update({ refunded: true })
-              .eq('task_id', task.task_id);
+            if (creditError) {
+              console.error(`查询用户 ${task.user_id} 积分时出错:`, creditError);
+            } else {
+              // 更新积分
+              const newCredits = (credits?.credits || 0) + 1;
+              const { error: updateError } = await supabase
+                .from('ai_images_creator_credits')
+                .update({ credits: newCredits })
+                .eq('user_id', task.user_id);
+              
+              if (updateError) {
+                console.error(`为用户 ${task.user_id} 退还积分时出错:`, updateError);
+              } else {
+                console.log(`成功为用户 ${task.user_id} 退还1点积分`);
+                
+                // 尝试更新任务退款状态
+                try {
+                  await supabase
+                    .from('ai_images_creator_tasks')
+                    .update({ refunded: true })
+                    .eq('task_id', task.task_id);
+                } catch (err) {
+                  // 忽略refunded字段不存在的错误
+                  console.log('注意: 表中可能没有refunded字段，已跳过标记退款状态');
+                }
+              }
+            }
+          } catch (dbError) {
+            console.error(`直接退还积分失败:`, dbError);
           }
         }
         
