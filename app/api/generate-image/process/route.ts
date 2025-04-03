@@ -1,7 +1,7 @@
 import { NextRequest } from 'next/server';
 import { createAdminClient } from '@/utils/supabase/admin';
 import { OpenAI } from 'openai';
-import { getApiConfig } from '@/utils/env';
+import { getApiConfig, getOfficialOpenAIConfig, getApiPreference } from '@/utils/env';
 
 // 网络请求配置
 const MAX_RETRIES = 3;
@@ -137,6 +137,50 @@ export async function POST(request: NextRequest) {
 async function processTask(taskId: string, preserveAspectRatio: boolean = false) {
   const supabase = createAdminClient();
   
+  // 添加检查任务是否被取消的帮助函数
+  const checkTaskCancelled = async (): Promise<boolean> => {
+    try {
+      // 首先，通过notify-cancel API检查内存缓存
+      const cancelResponse = await fetch(`${process.env.NEXT_PUBLIC_SITE_URL}/api/generate-image/notify-cancel?taskId=${taskId}`, {
+        headers: {
+          'Authorization': `Bearer ${process.env.TASK_PROCESS_SECRET_KEY || ''}`,
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          'Pragma': 'no-cache'
+        }
+      });
+      
+      if (cancelResponse.ok) {
+        const cancelData = await cancelResponse.json();
+        if (cancelData.isCancelled) {
+          console.log(`检测到任务 ${taskId} 已被取消 (来自notify-cancel缓存)`);
+          return true;
+        }
+      }
+      
+      // 如果内存缓存没有，再检查数据库
+      const { data: task, error } = await supabase
+        .from('ai_images_creator_tasks')
+        .select('status')
+        .eq('task_id', taskId)
+        .single();
+      
+      if (error) {
+        console.error(`检查任务 ${taskId} 状态失败:`, error);
+        return false;
+      }
+      
+      if (task.status === 'cancelled') {
+        console.log(`检测到任务 ${taskId} 已被取消 (状态: ${task.status})`);
+        return true;
+      }
+      
+      return false;
+    } catch (error) {
+      console.error(`检查任务 ${taskId} 是否被取消时出错:`, error);
+      return false;
+    }
+  };
+  
   try {
     // 获取任务信息
     const { data: task, error: taskError } = await supabase
@@ -153,6 +197,12 @@ async function processTask(taskId: string, preserveAspectRatio: boolean = false)
     // 检查任务状态
     if (task.status !== 'processing') {
       console.log(`任务 ${taskId} 状态为 ${task.status}，跳过处理`);
+      return;
+    }
+    
+    // 首次检查任务是否已被取消
+    if (await checkTaskCancelled()) {
+      console.log(`任务 ${taskId} 已被取消，停止处理`);
       return;
     }
     
@@ -213,10 +263,38 @@ async function processTask(taskId: string, preserveAspectRatio: boolean = false)
         .eq('task_id', taskId);
     }
     
-    // 获取API配置
-    const apiConfig = getApiConfig();
+    // 再次检查任务是否已被取消
+    if (await checkTaskCancelled()) {
+      console.log(`任务 ${taskId} 在扣点后被取消，停止处理并退还点数`);
+      await refundCredits(task.user_id);
+      await updateTaskRefundStatus(taskId, true);
+      return;
+    }
     
-    if (!apiConfig.isConfigComplete) {
+    // 获取API配置和偏好设置
+    const apiPreference = getApiPreference();
+    
+    // 根据API偏好决定使用哪种API
+    let apiConfig: { apiKey: string; apiUrl?: string; model?: string; isConfigComplete: boolean };
+    let isOfficialOpenAI = false;
+    
+    if (apiPreference.preferTuzi && apiPreference.tuziConfigComplete) {
+      // 使用TUZI API
+      console.log('根据配置，优先使用TUZI API');
+      apiConfig = getApiConfig();
+      isOfficialOpenAI = false;
+    } else if (apiPreference.openaiConfigComplete) {
+      // 使用OpenAI官方API
+      console.log('根据配置，使用OpenAI官方API');
+      apiConfig = { ...getOfficialOpenAIConfig(), model: 'dall-e-3' };
+      isOfficialOpenAI = true;
+    } else if (apiPreference.tuziConfigComplete) {
+      // 回退到TUZI API
+      console.log('OpenAI官方API配置不完整，回退到TUZI API');
+      apiConfig = getApiConfig();
+      isOfficialOpenAI = false;
+    } else {
+      // 两种API都配置不完整
       console.error('API配置不完整，无法处理任务');
       await updateTaskStatus(taskId, 'failed', null, 'API配置不完整');
       await refundCredits(task.user_id);
@@ -258,168 +336,243 @@ async function processTask(taskId: string, preserveAspectRatio: boolean = false)
 
     console.log(`最终使用输出尺寸: ${size}`);
 
+    // 创建OpenAI客户端前再次检查任务是否已被取消
+    if (await checkTaskCancelled()) {
+      console.log(`任务 ${taskId} 在获取API配置后被取消，停止处理并退还点数`);
+      await refundCredits(task.user_id);
+      await updateTaskRefundStatus(taskId, true);
+      return;
+    }
+
     // 创建OpenAI客户端
     const openai = new OpenAI({
       apiKey: apiConfig.apiKey,
-      baseURL: apiConfig.apiUrl
+      ...(isOfficialOpenAI ? {} : { baseURL: apiConfig.apiUrl })
     });
     
-    // 准备生成请求
-    let messages: Array<{
-      role: 'user' | 'assistant' | 'system'; 
-      content: Array<{type: 'text' | 'image_url', text?: string, image_url?: {url: string}}> | string;
-    }> = [];
-    
-    // 生成主提示词
-    const fullPrompt = task.style 
-      ? `${task.prompt}，风格：${task.style}`
-      : task.prompt;
-      
-    // 使用标准格式的消息
-    if (task.image_base64) {
-      // 如果有图片，使用多部分内容
-      messages.push({
-        role: 'user',
-        content: [
-          { type: 'text', text: fullPrompt },
-          { 
-            type: 'image_url', 
-            image_url: { url: task.image_base64 }
-          }
-        ]
-      });
-    } else {
-      // 纯文本消息
-      messages.push({
-        role: 'user',
-        content: fullPrompt
-      });
-    }
-    
-    // 准备生成请求参数
-    const params: any = {
-      model: apiConfig.model || 'gpt-4o-all',
-      messages: messages as any, // 类型断言处理暂时的类型不匹配问题
-      max_tokens: 4000,
-      temperature: 0.7,
-      response_format: { type: 'text' },
-      size: size // 直接设置尺寸，不再动态修改
-    };
-    
     try {
-      // 调用OpenAI API - 只进行一次调用
-      console.log(`调用OpenAI API生成图片，参数:`, {
-        model: params.model,
-        hasImage: !!task.image_base64,
-        size: params.size
+      // 准备提示词
+      const fullPrompt = task.style 
+        ? `${task.prompt}，风格：${task.style}`
+        : task.prompt;
+      
+      // 确定生成选项
+      const imageOptions: any = {
+        prompt: fullPrompt,
+        n: 1,
+        size: size as "256x256" | "512x512" | "1024x1024",
+        style: "vivid", // 默认使用生动风格
+        response_format: 'url'
+      };
+      
+      console.log(`使用DALL-E 3 API生成图片，参数:`, {
+        prompt: imageOptions.prompt.substring(0, 50) + '...',
+        size: imageOptions.size,
+        style: imageOptions.style
       });
       
-      const response = await openai.chat.completions.create(params);
-      
-      // 提取图片URL
-      const content = response.choices[0]?.message.content;
-      
-      if (!content) {
-        console.error('API返回内容为空');
-        await updateTaskStatus(taskId, 'failed', null, 'API返回内容为空');
+      // 在调用API前最后检查一次任务是否已被取消
+      if (await checkTaskCancelled()) {
+        console.log(`任务 ${taskId} 在调用API前被取消，停止处理并退还点数`);
         await refundCredits(task.user_id);
         await updateTaskRefundStatus(taskId, true);
         return;
       }
       
-      // 记录原始响应内容（忽略过长内容）
-      const contentPreview = content.length > 200 
-        ? `${content.substring(0, 200)}... (内容较长，已截断)`
-        : content;
-      console.log(`任务 ${taskId} API返回原始内容: ${contentPreview}`);
+      let imageUrl: string | null = null;
       
-      // 识别不同响应格式并适当处理
-      let finalContent = content;
-      
-      // 检查是否是JSON格式响应
-      if (content.includes('```json') && content.includes('```')) {
-        console.log('检测到JSON格式响应，尝试提取JSON数据');
+      if (isOfficialOpenAI) {
+        console.log('使用OpenAI官方API，直接调用images.generate');
         
-        // 尝试提取JSON
-        const jsonMatch = content.match(/```json\s*([\s\S]*?)\s*```/);
-        if (jsonMatch && jsonMatch[1]) {
-          try {
-            const jsonData = JSON.parse(jsonMatch[1]);
-            console.log('成功解析JSON数据:', JSON.stringify(jsonData).substring(0, 100) + '...');
-            
-            // 检查是否直接包含图片URL
-            if (jsonData.url || jsonData.image || jsonData.image_url) {
-              const directUrl = jsonData.url || jsonData.image || jsonData.image_url;
-              if (directUrl && typeof directUrl === 'string' && directUrl.startsWith('http')) {
-                console.log(`从JSON中直接提取到URL: ${directUrl}`);
-                
-                // 验证URL
-                const isValid = await isValidImageUrl(directUrl);
-                if (isValid) {
-                  // 直接使用找到的URL
-                  await updateTaskStatus(taskId, 'completed', directUrl);
-                  await saveImageHistory(
-                    task.user_id,
-                    directUrl,
-                    task.prompt,
-                    apiConfig.model,
-                    { style: task.style }
-                  );
-                  console.log(`任务 ${taskId} : 从JSON直接提取图片URL成功`);
-                  return;
+        // 设置中断检查定时器 - 每5秒检查一次任务是否被取消
+        let isCancelled = false;
+        const cancelCheckInterval = setInterval(async () => {
+          if (await checkTaskCancelled()) {
+            isCancelled = true;
+            clearInterval(cancelCheckInterval);
+          }
+        }, 5000);
+        
+        // 使用OpenAI官方API直接生成图片
+        const response = await openai.images.generate(imageOptions);
+        
+        // 清除定时器
+        clearInterval(cancelCheckInterval);
+        
+        // 检查是否在API调用期间被取消
+        if (isCancelled || await checkTaskCancelled()) {
+          console.log(`任务 ${taskId} 在API调用期间或之后被取消，停止处理并退还点数`);
+          await refundCredits(task.user_id);
+          await updateTaskRefundStatus(taskId, true);
+          return;
+        }
+        
+        // 获取生成的图片URL
+        if (response.data && response.data.length > 0 && response.data[0].url) {
+          imageUrl = response.data[0].url;
+        } else {
+          throw new Error('OpenAI API未返回有效的图片URL');
+        }
+      } else {
+        console.log('检测到使用第三方API（TUZI），通过聊天接口生成图片');
+        
+        // 准备生成请求
+        let messages: Array<{
+          role: 'user' | 'assistant' | 'system'; 
+          content: Array<{type: 'text' | 'image_url', text?: string, image_url?: {url: string}}> | string;
+        }> = [];
+        
+        // 使用标准格式的消息
+        if (task.image_base64) {
+          // 如果有图片，使用多部分内容
+          messages.push({
+            role: 'user',
+            content: [
+              { type: 'text', text: fullPrompt },
+              { 
+                type: 'image_url', 
+                image_url: { url: task.image_base64 }
+              }
+            ]
+          });
+        } else {
+          // 纯文本消息
+          messages.push({
+            role: 'user',
+            content: fullPrompt
+          });
+        }
+        
+        // 准备生成请求参数
+        const params: any = {
+          model: apiConfig.model || 'gpt-4o-all',
+          messages: messages as any, // 类型断言处理暂时的类型不匹配问题
+          max_tokens: 4000,
+          temperature: 0.7,
+          response_format: { type: 'text' },
+          size: size // 直接设置尺寸，不再动态修改
+        };
+        
+        // 设置中断检查定时器 - 每5秒检查一次任务是否被取消
+        let isCancelled = false;
+        const cancelCheckInterval = setInterval(async () => {
+          if (await checkTaskCancelled()) {
+            isCancelled = true;
+            clearInterval(cancelCheckInterval);
+          }
+        }, 5000);
+        
+        // 调用OpenAI API - 只进行一次调用
+        const response = await openai.chat.completions.create(params);
+        
+        // 清除定时器
+        clearInterval(cancelCheckInterval);
+        
+        // 检查是否在API调用期间被取消
+        if (isCancelled || await checkTaskCancelled()) {
+          console.log(`任务 ${taskId} 在API调用期间或之后被取消，停止处理并退还点数`);
+          await refundCredits(task.user_id);
+          await updateTaskRefundStatus(taskId, true);
+          return;
+        }
+        
+        // 提取图片URL
+        const content = response.choices[0]?.message.content;
+        
+        if (!content) {
+          console.error('API返回内容为空');
+          await updateTaskStatus(taskId, 'failed', null, 'API返回内容为空');
+          await refundCredits(task.user_id);
+          await updateTaskRefundStatus(taskId, true);
+          return;
+        }
+        
+        // 记录原始响应内容（忽略过长内容）
+        const contentPreview = content.length > 200 
+          ? `${content.substring(0, 200)}... (内容较长，已截断)`
+          : content;
+        console.log(`任务 ${taskId} API返回原始内容: ${contentPreview}`);
+        
+        // 识别不同响应格式并适当处理
+        let finalContent = content;
+        
+        // 检查是否是JSON格式响应
+        if (content.includes('```json') && content.includes('```')) {
+          console.log('检测到JSON格式响应，尝试提取JSON数据');
+          
+          // 尝试提取JSON
+          const jsonMatch = content.match(/```json\s*([\s\S]*?)\s*```/);
+          if (jsonMatch && jsonMatch[1]) {
+            try {
+              const jsonData = JSON.parse(jsonMatch[1]);
+              console.log('成功解析JSON数据:', JSON.stringify(jsonData).substring(0, 100) + '...');
+              
+              // 检查是否直接包含图片URL
+              if (jsonData.url || jsonData.image || jsonData.image_url) {
+                const directUrl = jsonData.url || jsonData.image || jsonData.image_url;
+                if (directUrl && typeof directUrl === 'string' && directUrl.startsWith('http')) {
+                  console.log(`从JSON中直接提取到URL: ${directUrl}`);
+                  
+                  // 验证URL
+                  const isValid = await isValidImageUrl(directUrl);
+                  if (isValid) {
+                    // 直接使用找到的URL
+                    imageUrl = directUrl;
+                  }
                 }
               }
+              
+              // 如果没找到直接URL，使用JSON内容替换原始内容进行提取
+              if (!imageUrl) {
+                finalContent = JSON.stringify(jsonData);
+              }
+            } catch (e) {
+              console.warn('解析JSON失败，将使用原始内容:', e);
             }
+          }
+        }
+        
+        // 如果还没找到URL，尝试提取
+        if (!imageUrl) {
+          // 首次尝试提取URL
+          imageUrl = await extractImageUrlWithRetry(finalContent, 1);
+          
+          // 如果首次尝试失败，等待更多时间再尝试（某些API会延迟返回完整结果）
+          if (!imageUrl) {
+            console.log('首次提取URL失败，等待5秒后再次尝试...');
+            await new Promise(resolve => setTimeout(resolve, 5000));
             
-            // 使用JSON内容替换原始内容进行提取
-            finalContent = JSON.stringify(jsonData);
-          } catch (e) {
-            console.warn('解析JSON失败，将使用原始内容:', e);
+            // 尝试从原始内容中提取
+            imageUrl = await extractImageUrlWithRetry(content, 2);
+          }
+          
+          // 如果仍然失败，尝试最后的后备提取
+          if (!imageUrl) {
+            // 最后的尝试：非常宽松地查找任何URL
+            console.log('标准提取方法失败，使用最宽松匹配尝试提取任何URL...');
+            imageUrl = extractAnyPossibleUrl(content);
           }
         }
       }
       
-      // 检查是否包含markdown图片标记
-      if (content.includes('![') && content.includes('](')) {
-        console.log('检测到Markdown图片标记');
-      }
-      
-      // 首次尝试提取URL
-      let imageUrl = await extractImageUrlWithRetry(finalContent, 1);
-      
-      // 如果首次尝试失败，等待更多时间再尝试（某些API会延迟返回完整结果）
-      if (!imageUrl) {
-        console.log('首次提取URL失败，等待5秒后再次尝试...');
-        await new Promise(resolve => setTimeout(resolve, 5000));
-        
-        // 尝试从原始内容中提取
-        imageUrl = await extractImageUrlWithRetry(content, 2);
-      }
-      
-      // 如果仍然失败，尝试最后的后备提取
-      if (!imageUrl) {
-        // 最后的尝试：非常宽松地查找任何URL
-        console.log('标准提取方法失败，使用最宽松匹配尝试提取任何URL...');
-        imageUrl = extractAnyPossibleUrl(content);
+      // 最后一次检查任务是否已被取消
+      if (await checkTaskCancelled()) {
+        console.log(`任务 ${taskId} 在获取图片URL后被取消，停止处理并退还点数`);
+        await refundCredits(task.user_id);
+        await updateTaskRefundStatus(taskId, true);
+        return;
       }
       
       if (!imageUrl) {
-        console.error('经过多次尝试，仍未能从API响应中提取图片URL');
-        
-        // 提供更详细的错误信息
-        let errorMsg = '未能提取图片URL';
-        if (content.length > 50) {
-          errorMsg += `, 响应内容开头: ${content.substring(0, 50)}...`;
-        }
-        
-        await updateTaskStatus(taskId, 'failed', null, errorMsg);
+        console.error('经过多次尝试，仍未能获取有效图片URL');
+        await updateTaskStatus(taskId, 'failed', null, '未能获取有效图片URL');
         await refundCredits(task.user_id);
         await updateTaskRefundStatus(taskId, true);
         return;
       }
       
       // 保存图片URL和历史记录
-      console.log(`成功提取到图片URL: ${imageUrl}`);
+      console.log(`成功获取到图片URL: ${imageUrl}`);
       await updateTaskStatus(taskId, 'completed', imageUrl);
       
       // 保存历史记录
@@ -427,14 +580,23 @@ async function processTask(taskId: string, preserveAspectRatio: boolean = false)
         task.user_id,
         imageUrl,
         task.prompt,
-        apiConfig.model,
-        { style: task.style }
+        isOfficialOpenAI ? 'dall-e-3' : (apiConfig.model || 'gpt-4o-all'),
+        { 
+          style: task.style,
+          size: size,
+          api: isOfficialOpenAI ? 'openai' : 'tuzi'
+        }
       );
       
       console.log(`任务 ${taskId} : 图片生成成功`);
-      
     } catch (error: any) {
-      console.error(`调用OpenAI API失败:`, error);
+      // 再次检查任务是否已被取消，如果是，则不需要记录错误
+      if (await checkTaskCancelled()) {
+        console.log(`任务 ${taskId} 在发生错误时检测到已被取消，不记录错误`);
+        return;
+      }
+      
+      console.error(`调用API失败:`, error);
       
       // 更新任务状态为失败
       await updateTaskStatus(
@@ -454,6 +616,13 @@ async function processTask(taskId: string, preserveAspectRatio: boolean = false)
     
     // 尝试更新任务状态为失败
     try {
+      // 先检查任务是否已被取消
+      const isCancelled = await checkTaskCancelled();
+      if (isCancelled) {
+        console.log(`任务 ${taskId} 在处理过程中已被取消，不记录错误`);
+        return;
+      }
+      
       await updateTaskStatus(
         taskId,
         'failed',

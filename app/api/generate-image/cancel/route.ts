@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/utils/supabase/server";
+import { createAdminClient } from "@/utils/supabase/admin";
 
 interface ErrorWithMessage {
   message?: string;
@@ -38,6 +39,8 @@ export async function POST(request: NextRequest) {
     
     // 获取Supabase客户端
     const supabase = await createClient();
+    // 同时创建管理员客户端用于备用和验证
+    const adminSupabase = createAdminClient();
     
     // 验证用户身份
     const { data: { user }, error: authError } = await supabase.auth.getUser();
@@ -98,6 +101,7 @@ export async function POST(request: NextRequest) {
     let cancelResult = null;
     let rpcError: ErrorWithMessage | null = null;
     let updateError: ErrorWithMessage | null = null;
+    let adminUpdateError: ErrorWithMessage | null = null;
     
     // 1. 首先尝试使用RPC函数取消任务
     try {
@@ -153,33 +157,89 @@ export async function POST(request: NextRequest) {
       }
     }
     
-    // 3. 验证任务是否真的被取消了
-    try {
-      // 再次查询任务状态，确认已被取消
-      const { data: verifyTask, error: verifyError } = await supabase
-        .from('ai_images_creator_tasks')
-        .select('status')
-        .eq('task_id', taskId)
-        .single();
-      
-      if (!verifyError && verifyTask) {
-        if (verifyTask.status === 'cancelled') {
-          console.log(`确认任务 ${taskId} 已成功取消，状态已变更为: ${verifyTask.status}`);
+    // 3. 如果前两种方法都失败，使用管理员权限强制更新
+    if (!cancelSuccess) {
+      try {
+        console.log(`普通权限更新失败，尝试使用管理员权限强制更新...`);
+        
+        // 使用管理员客户端直接更新状态，绕过权限问题
+        const { error } = await adminSupabase
+          .from("ai_images_creator_tasks")
+          .update({
+            status: "cancelled",
+            error_message: "用户主动取消任务（管理员权限）",
+            updated_at: new Date().toISOString(),
+          })
+          .eq("task_id", taskId)
+          .eq("user_id", user.id); // 仍然验证用户ID
+        
+        adminUpdateError = error as ErrorWithMessage;
+        
+        if (!error) {
+          console.log(`成功通过管理员权限更新取消任务: ${taskId}`);
           cancelSuccess = true;
         } else {
-          console.warn(`任务 ${taskId} 取消操作可能失败，当前状态为: ${verifyTask.status}`);
-          // 如果状态不是cancelled，但也不是pending或processing，那么我们认为已经不需要再取消
-          if (verifyTask.status !== 'pending' && verifyTask.status !== 'processing') {
-            console.log(`任务 ${taskId} 当前状态 ${verifyTask.status} 不需要取消`);
-            cancelSuccess = true;
-          }
+          console.error("管理员权限取消任务失败:", error);
         }
+      } catch (error) {
+        console.error(`管理员更新任务状态异常:`, error);
+        adminUpdateError = error as ErrorWithMessage;
       }
-    } catch (error) {
-      console.error(`验证任务取消状态异常:`, error);
     }
     
-    // 如果所有取消方法都失败，返回错误
+    // 4. 验证任务是否真的被取消了 - 使用多次重试
+    let verificationAttempts = 0;
+    const MAX_VERIFY_ATTEMPTS = 3;
+    let verifySuccess = false;
+    
+    while (!verifySuccess && verificationAttempts < MAX_VERIFY_ATTEMPTS) {
+      verificationAttempts++;
+      try {
+        // 强制等待一小段时间，让数据库操作完成
+        await new Promise(resolve => setTimeout(resolve, 500 * verificationAttempts));
+        
+        // 使用管理员客户端获取最新状态，避免权限问题
+        const { data: verifyTask, error: verifyError } = await adminSupabase
+          .from('ai_images_creator_tasks')
+          .select('status')
+          .eq('task_id', taskId)
+          .single();
+        
+        if (!verifyError && verifyTask) {
+          console.log(`验证尝试 ${verificationAttempts}: 任务 ${taskId} 当前状态为 ${verifyTask.status}`);
+          
+          if (verifyTask.status === 'cancelled') {
+            console.log(`确认任务 ${taskId} 已成功取消，状态已变更为: ${verifyTask.status}`);
+            verifySuccess = true;
+            cancelSuccess = true;
+            break;
+          } else if (verifyTask.status !== 'pending' && verifyTask.status !== 'processing') {
+            // 如果状态不是pending或processing，那么我们认为已经不需要再取消
+            console.log(`任务 ${taskId} 当前状态为 ${verifyTask.status}，已不需要取消`);
+            verifySuccess = true;
+            cancelSuccess = true;
+            break;
+          } else if (verificationAttempts < MAX_VERIFY_ATTEMPTS) {
+            // 如果状态仍为pending或processing，且还有重试次数，则尝试再次强制更新
+            console.log(`任务 ${taskId} 仍处于 ${verifyTask.status} 状态，尝试再次强制更新...`);
+            
+            // 再次尝试强制更新状态
+            await adminSupabase
+              .from("ai_images_creator_tasks")
+              .update({
+                status: "cancelled",
+                error_message: `用户主动取消任务（强制更新尝试 ${verificationAttempts}）`,
+                updated_at: new Date().toISOString(),
+              })
+              .eq("task_id", taskId);
+          }
+        }
+      } catch (error) {
+        console.error(`验证任务取消状态异常 (尝试 ${verificationAttempts}):`, error);
+      }
+    }
+    
+    // 5. 如果所有方法都失败，返回错误
     if (!cancelSuccess) {
       return NextResponse.json(
         {
@@ -187,11 +247,35 @@ export async function POST(request: NextRequest) {
           error: "无法取消任务，请稍后重试",
           details: {
             rpcError: rpcError?.message || null,
-            updateError: updateError?.message || null
+            updateError: updateError?.message || null,
+            adminUpdateError: adminUpdateError?.message || null,
+            verificationAttempts
           }
         },
         { status: 500 }
       );
+    }
+    
+    // 6. 通知任务处理器任务已取消（异步进行，不影响响应）
+    try {
+      const TASK_PROCESS_SECRET_KEY = process.env.TASK_PROCESS_SECRET_KEY || '';
+      // 异步发送通知，不等待响应
+      fetch(`${process.env.NEXT_PUBLIC_SITE_URL}/api/generate-image/notify-cancel`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${TASK_PROCESS_SECRET_KEY}`
+        },
+        body: JSON.stringify({ 
+          taskId,
+          userId: user.id,
+          cancelTime: new Date().toISOString()
+        })
+      }).catch(error => {
+        console.warn('发送取消通知失败，但这不影响主要流程:', error);
+      });
+    } catch (notifyError) {
+      console.warn('准备取消通知失败，但这不影响主要流程:', notifyError);
     }
     
     // 检查是否需要退还点数
@@ -234,8 +318,9 @@ export async function POST(request: NextRequest) {
       message: '任务已成功取消',
       creditsRefunded: creditsRefunded,
       taskId: taskId,
-      cancelMethod: cancelResult ? 'rpc' : 'direct_update',
-      finalStatus: 'cancelled'
+      cancelMethod: cancelResult ? 'rpc' : adminUpdateError ? 'admin_update' : 'direct_update',
+      finalStatus: 'cancelled',
+      verificationAttempts
     });
 
   } catch (error) {

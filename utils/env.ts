@@ -15,11 +15,12 @@ export function getEnv(name: string, defaultValue?: string): string {
   return value || '';
 }
 
-// 获取API配置相关的环境变量
+// 获取TUZI API配置相关的环境变量
 export function getApiConfig() {
-  const apiUrl = getEnv('OPENAI_BASE_URL');
-  const apiKey = getEnv('OPENAI_API_KEY');
-  const model = getEnv('OPENAI_MODEL', 'gpt-4o-all');
+  // 优先使用TUZI专用的环境变量，如果不存在则回退到旧的OPENAI环境变量
+  const apiUrl = getEnv('TUZI_BASE_URL') || getEnv('OPENAI_BASE_URL');
+  const apiKey = getEnv('TUZI_API_KEY') || getEnv('OPENAI_API_KEY');
+  const model = getEnv('TUZI_MODEL') || getEnv('OPENAI_MODEL', 'gpt-4o-all');
   
   // 检查必要的环境变量是否存在
   const isConfigComplete = !!apiUrl && !!apiKey;
@@ -29,6 +30,63 @@ export function getApiConfig() {
     apiKey, 
     model,
     isConfigComplete
+  };
+}
+
+// 获取OpenAI官方API配置
+export function getOfficialOpenAIConfig() {
+  const apiKey = getEnv('OPENAI_API_KEY');
+  
+  // 检查必要的环境变量是否存在
+  const isConfigComplete = !!apiKey;
+  
+  return {
+    apiKey,
+    isConfigComplete
+  };
+}
+
+// 获取API偏好设置
+export function getApiPreference() {
+  // 默认优先使用官方API，如果设置了USE_TUZI_API=true则使用TUZI
+  const useTuziApi = getEnv('USE_TUZI_API', 'false').toLowerCase() === 'true';
+  
+  // 检查两种API配置是否完整
+  const tuziConfig = getApiConfig();
+  const openaiConfig = getOfficialOpenAIConfig();
+  
+  // 如果用户指定了TUZI API且配置完整，则使用TUZI
+  if (useTuziApi && tuziConfig.isConfigComplete) {
+    return {
+      preferTuzi: true,
+      tuziConfigComplete: tuziConfig.isConfigComplete,
+      openaiConfigComplete: openaiConfig.isConfigComplete
+    };
+  }
+  
+  // 如果OpenAI官方API配置完整，优先使用官方API
+  if (openaiConfig.isConfigComplete) {
+    return {
+      preferTuzi: false,
+      tuziConfigComplete: tuziConfig.isConfigComplete,
+      openaiConfigComplete: openaiConfig.isConfigComplete
+    };
+  }
+  
+  // 如果官方API不完整但TUZI配置完整，则使用TUZI
+  if (tuziConfig.isConfigComplete) {
+    return {
+      preferTuzi: true,
+      tuziConfigComplete: tuziConfig.isConfigComplete,
+      openaiConfigComplete: openaiConfig.isConfigComplete
+    };
+  }
+  
+  // 两种配置都不完整，返回默认值
+  return {
+    preferTuzi: false,
+    tuziConfigComplete: false,
+    openaiConfigComplete: false
   };
 }
 

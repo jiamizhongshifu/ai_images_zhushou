@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Upload, SendHorizontal, PlusCircle, RefreshCw, Image as ImageIcon, Loader2, Download, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { TaskCancellationStatus } from "@/components/TaskCancellationStatus";
 
 export default function ProtectedPage() {
   const router = useRouter();
@@ -63,6 +64,13 @@ export default function ProtectedPage() {
   
   // 添加重试计数
   const [pollingRetries, setPollingRetries] = useState(0);
+  
+  // 添加本地取消任务跟踪
+  const [cancelledTaskIds, setCancelledTaskIds] = useState<Set<string>>(new Set());
+  
+  // 添加任务取消状态显示
+  const [cancelledTaskId, setCancelledTaskId] = useState<string | null>(null);
+  const [showCancelStatus, setShowCancelStatus] = useState(false);
   
   // CSS动画类名引用
   const skeletonAnimationClass = "animate-shimmer relative overflow-hidden before:absolute before:inset-0 before:-translate-x-full before:animate-[shimmer_2s_infinite] before:bg-gradient-to-r before:from-transparent before:via-white/30 before:to-transparent";
@@ -216,6 +224,17 @@ export default function ProtectedPage() {
   // 修改轮询任务状态函数
   const pollTaskStatus = async (taskId: string) => {
     console.log(`轮询任务状态: ${taskId}, 间隔: ${pollingInterval}ms`);
+    
+    // 如果任务已被本地标记为取消，不再轮询
+    if (cancelledTaskIds.has(taskId)) {
+      console.log(`任务 ${taskId} 已在本地标记为取消，停止轮询`);
+      if (pollingTimer) {
+        clearTimeout(pollingTimer);
+        setPollingTimer(null);
+      }
+      setIsGenerating(false);
+      return;
+    }
     
     try {
       setApiRequestLoading(true);
@@ -391,8 +410,12 @@ export default function ProtectedPage() {
       if (data.success) {
         console.log('待处理任务:', data.tasks.length);
         
+        // 过滤掉本地已标记为取消的任务
+        const filteredTasks = data.tasks.filter((task: any) => !cancelledTaskIds.has(task.taskId));
+        console.log('过滤后的待处理任务:', filteredTasks.length, '已本地取消任务数:', cancelledTaskIds.size);
+        
         // 检查是否有已完成但未显示的任务
-        const completedTasks = data.tasks.filter((task: any) => 
+        const completedTasks = filteredTasks.filter((task: any) => 
           task.status === 'completed' && task.result_url
         );
         
@@ -412,7 +435,7 @@ export default function ProtectedPage() {
         }
         
         // 查找处理中的任务
-        const processingTask = data.tasks.find((task: any) => 
+        const processingTask = filteredTasks.find((task: any) => 
           task.status === 'pending' || task.status === 'processing'
         );
         
@@ -756,6 +779,18 @@ export default function ProtectedPage() {
   const renderActionButtons = () => {
     return (
       <div className="flex justify-end mt-2 gap-2">
+        {/* 添加重启任务管理器按钮 */}
+        <Button 
+          variant="outline" 
+          size="sm" 
+          className="h-7 text-xs text-muted-foreground" 
+          title="重启任务管理器"
+          onClick={restartTaskManager}
+        >
+          <RefreshCw className="h-3 w-3 mr-1" />
+          <span>重启任务管理器</span>
+        </Button>
+      
         {currentTask && (currentTask.status === 'pending' || currentTask.status === 'processing') && (
           <Button 
             variant="destructive" 
@@ -894,74 +929,96 @@ export default function ProtectedPage() {
     return `${days}天前`;
   };
 
-  // 添加取消任务的函数
+  // 修改取消任务函数
   const cancelTask = async (taskId: string) => {
+    // 验证任务ID
     if (!taskId) {
-      console.error('取消任务失败: taskId为空');
-      setError('无法取消任务，任务ID不存在');
+      console.error('取消任务失败: 任务ID为空');
+      setError('无法取消任务：未提供有效的任务ID');
       return;
     }
     
-    // 输出更多调试信息
-    console.log(`尝试取消任务: ${taskId}，当前任务状态:`, currentTask);
+    console.log(`正在取消任务: ${taskId}`);
+    console.log(`当前任务状态:`, currentTask);
     
     // 设置取消中状态
     setIsCancelling(true);
     
     try {
-      // 添加请求超时控制
+      // 设置超时控制
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 10000); // 10秒超时
       
-      const response = await fetch("/api/generate-image/cancel", {
-        method: "POST",
+      // 通知用户
+      showNotification('正在取消任务，请稍候...', 'info');
+      
+      // 发送取消请求
+      const response = await fetch('/api/generate-image/cancel', {
+        method: 'POST',
         headers: {
-          "Content-Type": "application/json",
+          'Content-Type': 'application/json',
         },
         body: JSON.stringify({ taskId }),
         signal: controller.signal
       });
       
-      clearTimeout(timeoutId); // 清除超时定时器
+      // 清除超时控制
+      clearTimeout(timeoutId);
       
-      // 读取响应，即使失败也要读取内容
-      const data = await response.json().catch((err) => {
-        console.error('解析取消任务响应失败:', err);
-        return { success: false, error: '解析响应失败' };
-      });
+      let data;
       
-      console.log(`取消任务 ${taskId} 响应:`, data);
-      
-      if (!response.ok) {
-        console.error(`取消任务请求失败: HTTP ${response.status}`, data);
-        throw new Error(data.error || `取消任务失败: HTTP ${response.status}`);
-      }
-      
-      // 强制刷新任务状态，不管API返回成功与否
       try {
-        const statusResponse = await fetch(`/api/generate-image/status?taskId=${taskId}`, {
-          cache: 'no-store',
-          headers: {
-            'Cache-Control': 'no-cache, no-store, must-revalidate',
-            'Pragma': 'no-cache'
-          }
-        });
-        
-        const statusData = await statusResponse.json().catch(() => ({ success: false }));
-        console.log(`获取已取消任务 ${taskId} 的最新状态:`, statusData);
-        
-        // 如果API返回任务仍然在处理中，但我们已经收到取消成功的响应，强行在UI上标记为已取消
-        if (statusData.success && statusData.task && 
-            (statusData.task.status === 'pending' || statusData.task.status === 'processing')) {
-          console.log(`强制将本地UI任务状态标记为已取消`);
-          // 不依赖后端状态，直接在前端更新状态
-        }
-      } catch (statusError) {
-        console.error('获取任务状态失败:', statusError);
-        // 忽略状态检查错误，继续处理取消逻辑
+        // 尝试解析响应
+        data = await response.json();
+      } catch (parseError) {
+        console.error('解析取消响应失败:', parseError);
+        throw new Error('服务器返回了无效的响应');
       }
       
-      console.log(`取消任务 ${taskId} 成功:`, data);
+      // 更新本地取消状态
+      setCancelledTaskIds(prev => new Set(prev).add(taskId));
+      
+      // 处理响应
+      if (response.ok && data.success) {
+        console.log('取消任务成功:', data);
+        
+        // 更新任务状态显示
+        setCancelledTaskId(taskId);
+        setShowCancelStatus(true);
+        
+        // 立即刷新任务列表
+        fetchPendingTasks();
+        fetchPendingTasks(); // 再次刷新以确保状态更新
+        
+        // 通知用户
+        showNotification(
+          data.creditsRefunded 
+            ? '任务已取消，点数已退还' 
+            : '任务已取消',
+          'success'
+        );
+      } else {
+        console.error('取消任务失败:', data.error);
+        showNotification(`取消任务失败: ${data.error}`, 'error');
+      }
+      
+      // 不管成功与否，都尝试获取最新的任务状态
+      // 这样可以确认取消是否实际生效
+      setTimeout(async () => {
+        try {
+          const statusResponse = await fetch(`/api/generate-image/task-status?taskId=${taskId}`);
+          if (statusResponse.ok) {
+            const statusData = await statusResponse.json();
+            console.log(`获取已取消任务 ${taskId} 的最新状态:`, statusData);
+            
+            if (statusData.task && statusData.task.status === 'cancelled') {
+              console.log(`取消任务 ${taskId} 成功:`, statusData);
+            }
+          }
+        } catch (error) {
+          console.error('获取任务状态失败:', error);
+        }
+      }, 1000);
       
       // 停止轮询
       if (pollingTimer) {
@@ -973,38 +1030,15 @@ export default function ProtectedPage() {
       setGenerationStatus("idle");
       setCurrentTask(null);
       
-      // 根据响应显示不同的消息
-      if (data.warning) {
-        // 有警告但操作成功
-        setError(data.warning);
-      } else if (data.creditsRefunded) {
-        setError("任务已取消，点数已退还");
-      } else {
-        setError("任务已取消");
-      }
-      
       // 更新点数
       fetchUserCredits();
-      
-      // 立即刷新任务列表
-      setTimeout(() => {
-        fetchPendingTasks();
-      }, 1000);
       
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       console.error('取消任务失败:', errorMessage);
       setError(errorMessage || '取消任务失败，请稍后重试');
-      
-      // 即使API请求失败，也尝试在本地UI上取消任务以提升用户体验
-      if (pollingTimer) {
-        clearTimeout(pollingTimer);
-        setPollingTimer(null);
-      }
-      setIsGenerating(false);
-      
+      showNotification('取消任务失败，请稍后重试', 'error');
     } finally {
-      // 清除取消中状态
       setIsCancelling(false);
     }
   };
@@ -1119,6 +1153,44 @@ export default function ProtectedPage() {
       
       reader.readAsDataURL(file);
     });
+  };
+
+  // 添加重启任务管理器功能
+  const restartTaskManager = () => {
+    try {
+      console.log('正在重启任务管理器...');
+      showNotification('正在重启任务管理器...', 'info');
+      
+      // 停止所有轮询
+      if (pollingTimer) {
+        clearTimeout(pollingTimer);
+        setPollingTimer(null);
+      }
+      
+      if (progressUpdateTimer) {
+        clearInterval(progressUpdateTimer);
+        setProgressUpdateTimer(null);
+      }
+      
+      // 重置任务状态
+      setCurrentTask(null);
+      setPollingInterval(5000);
+      setPollingRetries(0);
+      setElapsedTimeCounter(0);
+      setGenerationStatus("idle");
+      
+      // 重新获取待处理任务
+      fetchPendingTasks();
+      
+      // 重新获取用户点数
+      fetchUserCredits();
+      
+      console.log('任务管理器已重启');
+      showNotification('任务管理器已重启', 'success');
+    } catch (error) {
+      console.error('重启任务管理器失败:', error);
+      showNotification('重启任务管理器失败', 'error');
+    }
   };
 
   return (
@@ -1362,6 +1434,21 @@ export default function ProtectedPage() {
                 />
               </div>
             </div>
+          </div>
+        </div>
+      )}
+      
+      {/* 任务取消状态弹窗 */}
+      {showCancelStatus && cancelledTaskId && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+          <div className="max-w-md w-full">
+            <TaskCancellationStatus 
+              taskId={cancelledTaskId} 
+              onClose={() => {
+                setShowCancelStatus(false);
+                setCancelledTaskId(null);
+              }}
+            />
           </div>
         </div>
       )}
