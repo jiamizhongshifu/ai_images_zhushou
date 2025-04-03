@@ -1,4 +1,4 @@
-import { createServerClient } from "@supabase/ssr";
+import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { cookies } from "next/headers";
 
 export const createClient = async () => {
@@ -19,20 +19,29 @@ export const createClient = async () => {
     supabaseAnonKey,
     {
       cookies: {
-        getAll() {
-          return cookieStore.getAll();
+        get(name: string) {
+          return cookieStore.get(name)?.value;
         },
-        setAll(cookiesToSet) {
-          try {
-            cookiesToSet.forEach(({ name, value, options }) => {
-              cookieStore.set(name, value, options);
-            });
-          } catch (error) {
-            // The `set` method was called from a Server Component.
-            // This can be ignored if you have middleware refreshing
-            // user sessions.
-          }
+        set(name: string, value: string, options?: CookieOptions) {
+          // 添加明确的cookie选项以增强cookie稳定性
+          const finalOptions = {
+            ...options,
+            // 确保cookie在整个域名下可用
+            path: options?.path || "/",
+            // 增加cookie持久性，默认为7天
+            maxAge: options?.maxAge || 60 * 60 * 24 * 7,
+            // 确保安全设置
+            secure: process.env.NODE_ENV === "production",
+            // 确保cookie可用于跨请求
+            httpOnly: true,
+            sameSite: "lax" as const
+          };
+          
+          cookieStore.set(name, value, finalOptions);
         },
+        remove(name: string, options?: CookieOptions) {
+          cookieStore.set(name, "", { ...options, maxAge: 0 });
+        }
       },
     },
   );

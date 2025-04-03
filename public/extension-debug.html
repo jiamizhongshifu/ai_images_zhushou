@@ -1,0 +1,467 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>浏览器扩展诊断</title>
+  <style>
+    body {
+      font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif;
+      line-height: 1.6;
+      color: #333;
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+    h1 {
+      color: #2563eb;
+      border-bottom: 2px solid #e5e7eb;
+      padding-bottom: 10px;
+    }
+    h2 {
+      color: #4b5563;
+      margin-top: 30px;
+    }
+    .info-box {
+      background-color: #f3f4f6;
+      border-radius: 8px;
+      padding: 15px;
+      margin-bottom: 20px;
+    }
+    .info-item {
+      margin-bottom: 8px;
+    }
+    .info-label {
+      font-weight: bold;
+      display: inline-block;
+      width: 150px;
+    }
+    .extension-list {
+      list-style-type: none;
+      padding: 0;
+    }
+    .extension-item {
+      padding: 8px 0;
+      border-bottom: 1px solid #e5e7eb;
+    }
+    .button {
+      background-color: #2563eb;
+      color: white;
+      border: none;
+      padding: 10px 15px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+      margin-right: 10px;
+    }
+    .button:hover {
+      background-color: #1d4ed8;
+    }
+    .result {
+      margin-top: 15px;
+      padding: 10px;
+      border-radius: 4px;
+      display: none;
+    }
+    .success {
+      background-color: #d1fae5;
+      border: 1px solid #34d399;
+      color: #065f46;
+    }
+    .error {
+      background-color: #fee2e2;
+      border: 1px solid #f87171;
+      color: #b91c1c;
+    }
+    .steps {
+      background-color: #e0f2fe;
+      border-radius: 8px;
+      padding: 15px;
+    }
+    .step {
+      margin-bottom: 15px;
+    }
+    .step-number {
+      display: inline-block;
+      width: 24px;
+      height: 24px;
+      background-color: #0ea5e9;
+      color: white;
+      border-radius: 50%;
+      text-align: center;
+      line-height: 24px;
+      margin-right: 10px;
+    }
+    pre {
+      background-color: #f8f9fa;
+      padding: 10px;
+      border-radius: 4px;
+      overflow-x: auto;
+      font-family: monospace;
+    }
+    .tab {
+      overflow: hidden;
+      border: 1px solid #ccc;
+      background-color: #f1f1f1;
+      border-radius: 4px 4px 0 0;
+    }
+    .tab button {
+      background-color: inherit;
+      float: left;
+      border: none;
+      outline: none;
+      cursor: pointer;
+      padding: 10px 16px;
+      transition: 0.3s;
+    }
+    .tab button:hover {
+      background-color: #ddd;
+    }
+    .tab button.active {
+      background-color: #2563eb;
+      color: white;
+    }
+    .tabcontent {
+      display: none;
+      padding: 15px;
+      border: 1px solid #ccc;
+      border-top: none;
+      border-radius: 0 0 4px 4px;
+    }
+  </style>
+  <script src="/extension-compat.js"></script>
+</head>
+<body>
+  <h1>浏览器扩展诊断</h1>
+  
+  <div class="info-box">
+    <h2>当前浏览器信息</h2>
+    <div class="info-item">
+      <span class="info-label">浏览器名称:</span>
+      <span id="browser-name">检测中...</span>
+    </div>
+    <div class="info-item">
+      <span class="info-label">浏览器版本:</span>
+      <span id="browser-version">检测中...</span>
+    </div>
+    <div class="info-item">
+      <span class="info-label">操作系统:</span>
+      <span id="os-info">检测中...</span>
+    </div>
+    <div class="info-item">
+      <span class="info-label">Cookie 状态:</span>
+      <span id="cookie-enabled">检测中...</span>
+    </div>
+  </div>
+
+  <div class="tab">
+    <button class="tablinks active" onclick="openTab(event, 'extensionTab')">浏览器扩展</button>
+    <button class="tablinks" onclick="openTab(event, 'supabaseTab')">Supabase测试</button>
+    <button class="tablinks" onclick="openTab(event, 'troubleshootTab')">故障排除</button>
+  </div>
+
+  <div id="extensionTab" class="tabcontent" style="display: block;">
+    <h2>常见冲突扩展</h2>
+    <p>以下扩展可能会干扰网站的正常运行，尤其是登录功能：</p>
+    <ul class="extension-list">
+      <li class="extension-item">🦊 MetaMask (加密钱包)</li>
+      <li class="extension-item">🛡️ AdBlock / AdBlock Plus (广告拦截器)</li>
+      <li class="extension-item">🔒 Privacy Badger (隐私保护)</li>
+      <li class="extension-item">🔍 Grammarly (语法检查)</li>
+      <li class="extension-item">🌐 浏览器翻译扩展</li>
+      <li class="extension-item">🔒 密码管理器 (LastPass, 1Password等)</li>
+      <li class="extension-item">🧬 脚本管理器 (Tampermonkey, Greasemonkey)</li>
+    </ul>
+    
+    <h2>浏览器API测试</h2>
+    <button id="test-extensions-btn" class="button">测试浏览器扩展冲突</button>
+    <div id="extension-test-result" class="result"></div>
+  </div>
+
+  <div id="supabaseTab" class="tabcontent">
+    <h2>Supabase 连接测试</h2>
+    <p>此测试将检查您的浏览器是否能够正常连接到Supabase服务。</p>
+    
+    <div class="info-box">
+      <div class="info-item">
+        <span class="info-label">测试URL:</span>
+        <span id="supabase-url">https://wcjctczyzibrswwngmvd.supabase.co</span>
+      </div>
+    </div>
+    
+    <button id="test-supabase-network-btn" class="button">测试网络连接</button>
+    <button id="test-supabase-auth-btn" class="button">测试登录功能</button>
+    <div id="supabase-test-result" class="result"></div>
+    
+    <div id="supabase-auth-form" style="display: none; margin-top: 20px;">
+      <h3>测试登录</h3>
+      <p>请输入您的登录信息进行测试：</p>
+      <div style="margin-bottom: 10px;">
+        <label style="display: block; margin-bottom: 5px;">邮箱：</label>
+        <input type="email" id="test-email" style="width: 100%; padding: 8px; border-radius: 4px; border: 1px solid #ccc;">
+      </div>
+      <div style="margin-bottom: 10px;">
+        <label style="display: block; margin-bottom: 5px;">密码：</label>
+        <input type="password" id="test-password" style="width: 100%; padding: 8px; border-radius: 4px; border: 1px solid #ccc;">
+      </div>
+      <button id="submit-login-test" class="button">测试登录</button>
+    </div>
+  </div>
+
+  <div id="troubleshootTab" class="tabcontent">
+    <h2>登录问题排查步骤</h2>
+    
+    <div class="steps">
+      <div class="step">
+        <span class="step-number">1</span>
+        <strong>使用无痕模式</strong>: 打开浏览器的隐私/无痕模式尝试登录。这会禁用所有扩展，如果能够登录成功，则问题可能是扩展引起的。
+      </div>
+      <div class="step">
+        <span class="step-number">2</span>
+        <strong>禁用扩展</strong>: 临时禁用所有浏览器扩展，特别是上面列表中的扩展，然后尝试重新登录。
+      </div>
+      <div class="step">
+        <span class="step-number">3</span>
+        <strong>尝试不同浏览器</strong>: 使用另一个浏览器（如Firefox、Edge或Safari）尝试登录。
+      </div>
+      <div class="step">
+        <span class="step-number">4</span>
+        <strong>清除缓存和Cookie</strong>: 清除浏览器缓存、Cookie和本地存储数据，然后重新尝试。
+      </div>
+      <div class="step">
+        <span class="step-number">5</span>
+        <strong>检查网络连接</strong>: 确保您的网络连接稳定，没有被代理或防火墙阻止。
+      </div>
+      <div class="step">
+        <span class="step-number">6</span>
+        <strong>确认账户状态</strong>: 确认您的账户未被锁定或禁用。可以尝试重置密码来验证账户状态。
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // 浏览器信息检测
+    function detectBrowser() {
+      const userAgent = navigator.userAgent;
+      let browserName = "未知";
+      let browserVersion = "未知";
+      
+      if (userAgent.indexOf("Chrome") > -1) {
+        browserName = "Chrome";
+        browserVersion = userAgent.match(/Chrome\/([0-9.]+)/)[1];
+      } else if (userAgent.indexOf("Firefox") > -1) {
+        browserName = "Firefox";
+        browserVersion = userAgent.match(/Firefox\/([0-9.]+)/)[1];
+      } else if (userAgent.indexOf("Safari") > -1 && userAgent.indexOf("Chrome") === -1) {
+        browserName = "Safari";
+        browserVersion = userAgent.match(/Version\/([0-9.]+)/)[1];
+      } else if (userAgent.indexOf("Edge") > -1 || userAgent.indexOf("Edg") > -1) {
+        browserName = "Edge";
+        browserVersion = userAgent.match(/Edge\/([0-9.]+)/)?.[1] || userAgent.match(/Edg\/([0-9.]+)/)[1];
+      }
+      
+      let osInfo = "未知";
+      if (userAgent.indexOf("Win") > -1) osInfo = "Windows";
+      else if (userAgent.indexOf("Mac") > -1) osInfo = "macOS";
+      else if (userAgent.indexOf("Linux") > -1) osInfo = "Linux";
+      else if (userAgent.indexOf("Android") > -1) osInfo = "Android";
+      else if (userAgent.indexOf("iPhone") > -1 || userAgent.indexOf("iPad") > -1) osInfo = "iOS";
+      
+      document.getElementById("browser-name").textContent = browserName;
+      document.getElementById("browser-version").textContent = browserVersion;
+      document.getElementById("os-info").textContent = osInfo;
+      document.getElementById("cookie-enabled").textContent = navigator.cookieEnabled ? "启用" : "禁用";
+    }
+    
+    // 测试浏览器扩展冲突
+    document.getElementById("test-extensions-btn").addEventListener("click", function() {
+      const resultElement = document.getElementById("extension-test-result");
+      resultElement.style.display = "block";
+      
+      try {
+        // 检查是否存在已知可能冲突的扩展API
+        const hasChrome = typeof chrome !== 'undefined';
+        const hasBrowser = typeof browser !== 'undefined';
+        const hasMetaMask = typeof window.ethereum !== 'undefined';
+        
+        // 测试原型链是否被修改
+        const hasModifiedPrototype = (function() {
+          const originalToString = Object.prototype.toString;
+          return Object.prototype.toString !== originalToString;
+        })();
+        
+        // 测试Fetch API是否可用
+        const fetchTest = fetch('https://www.google.com/favicon.ico')
+          .then(() => true)
+          .catch(() => false);
+        
+        // 测试localStorage访问
+        const storageTest = (function() {
+          try {
+            localStorage.setItem('test', 'test');
+            localStorage.removeItem('test');
+            return true;
+          } catch (e) {
+            return false;
+          }
+        })();
+        
+        // 测试结果
+        let issues = [];
+        if (hasMetaMask) issues.push("检测到MetaMask加密钱包");
+        if (hasModifiedPrototype) issues.push("检测到JavaScript原型被修改（可能是MetaMask的lockdown脚本）");
+        if (!storageTest) issues.push("浏览器阻止了localStorage的访问");
+        
+        // 显示结果
+        resultElement.innerHTML = `
+          <h3>测试结果:</h3>
+          <div class="info-item"><span class="info-label">Chrome扩展API:</span> ${hasChrome ? '可用' : '不可用'}</div>
+          <div class="info-item"><span class="info-label">Firefox扩展API:</span> ${hasBrowser ? '可用' : '不可用'}</div>
+          <div class="info-item"><span class="info-label">MetaMask钱包:</span> ${hasMetaMask ? '已检测到' : '未检测到'}</div>
+          <div class="info-item"><span class="info-label">JS原型修改:</span> ${hasModifiedPrototype ? '已检测到修改' : '未检测到修改'}</div>
+          <div class="info-item"><span class="info-label">本地存储访问:</span> ${storageTest ? '正常' : '受限'}</div>
+          ${issues.length > 0 ? '<h4>潜在问题:</h4><ul>' + issues.map(issue => `<li>${issue}</li>`).join('') + '</ul>' : '<p>未检测到明显冲突。</p>'}
+        `;
+        
+        // 根据是否有问题设置样式
+        if (issues.length > 0) {
+          resultElement.className = "result error";
+        } else {
+          resultElement.className = "result success";
+        }
+      } catch (error) {
+        resultElement.className = "result error";
+        resultElement.innerHTML = `<p>测试过程中发生错误: ${error.message}</p>`;
+      }
+    });
+    
+    // Supabase网络连接测试
+    document.getElementById("test-supabase-network-btn").addEventListener("click", function() {
+      const resultElement = document.getElementById("supabase-test-result");
+      resultElement.style.display = "block";
+      resultElement.className = "result";
+      resultElement.innerHTML = "<p>正在测试连接到Supabase服务...</p>";
+      
+      // 测试连接到Supabase
+      const startTime = performance.now();
+      fetch('https://wcjctczyzibrswwngmvd.supabase.co/auth/v1/health', {
+        method: 'GET',
+        headers: { 'Content-Type': 'application/json' }
+      })
+      .then(response => {
+        const endTime = performance.now();
+        const responseTime = Math.round(endTime - startTime);
+        
+        if (response.ok) {
+          return response.json().then(data => {
+            resultElement.className = "result success";
+            resultElement.innerHTML = `
+              <h3>连接测试成功!</h3>
+              <p>Supabase服务可以正常访问</p>
+              <p>响应时间: ${responseTime}ms</p>
+              <p>服务状态: ${data.status || 'OK'}</p>
+            `;
+          });
+        } else {
+          resultElement.className = "result error";
+          resultElement.innerHTML = `
+            <h3>连接测试失败</h3>
+  
+  <h2>当前浏览器信息</h2>
+  <div id="browser-info" class="info-box"></div>
+  
+  <h2>已安装扩展检测</h2>
+  <div class="info-box">
+    由于浏览器安全限制，我们无法直接列出您安装的所有扩展。但以下扩展常见冲突问题：
+    <ul id="extension-list">
+      <li class="extension-item">MetaMask (加密钱包扩展)</li>
+      <li class="extension-item">AdBlock / AdBlock Plus / uBlock Origin (广告拦截器)</li>
+      <li class="extension-item">Privacy Badger (隐私保护扩展)</li>
+      <li class="extension-item">HTTPS Everywhere (HTTPS强制扩展)</li>
+      <li class="extension-item">NoScript / ScriptSafe (脚本拦截扩展)</li>
+    </ul>
+  </div>
+  
+  <h2>测试通信</h2>
+  <div class="info-box">
+    <p>点击下方按钮测试浏览器API通信是否正常：</p>
+    <button id="test-api">测试浏览器API</button>
+    <div id="api-result" class="info-box" style="display:none;"></div>
+  </div>
+  
+  <h2>解决方法</h2>
+  <div class="info-box">
+    <p>如果您无法登录，请尝试以下方法：</p>
+    <ol>
+      <li>使用浏览器的隐私/无痕模式（不加载扩展）</li>
+      <li>临时禁用所有浏览器扩展后重试</li>
+      <li>尝试使用不同的浏览器（如Firefox或Edge）</li>
+      <li>清除浏览器缓存和Cookie后重试</li>
+    </ol>
+  </div>
+  
+  <script>
+    // 显示浏览器信息
+    document.addEventListener('DOMContentLoaded', function() {
+      var browserInfo = document.getElementById('browser-info');
+      var userAgent = navigator.userAgent;
+      var browserName = '';
+      var browserVersion = '';
+      
+      if (userAgent.indexOf('Firefox') > -1) {
+        browserName = 'Firefox';
+        browserVersion = userAgent.match(/Firefox\/([0-9.]+)/)[1];
+      } else if (userAgent.indexOf('Edge') > -1 || userAgent.indexOf('Edg') > -1) {
+        browserName = 'Microsoft Edge';
+        browserVersion = userAgent.match(/Edge\/([0-9.]+)/) || userAgent.match(/Edg\/([0-9.]+)/);
+        browserVersion = browserVersion ? browserVersion[1] : '';
+      } else if (userAgent.indexOf('Chrome') > -1) {
+        browserName = 'Chrome';
+        browserVersion = userAgent.match(/Chrome\/([0-9.]+)/)[1];
+      } else if (userAgent.indexOf('Safari') > -1) {
+        browserName = 'Safari';
+        browserVersion = userAgent.match(/Safari\/([0-9.]+)/)[1];
+      } else {
+        browserName = '未知浏览器';
+      }
+      
+      browserInfo.innerHTML = `
+        <strong>浏览器:</strong> ${browserName} ${browserVersion}<br>
+        <strong>操作系统:</strong> ${navigator.platform}<br>
+        <strong>User Agent:</strong> ${userAgent}<br>
+        <strong>Cookie启用:</strong> ${navigator.cookieEnabled ? '是' : '否'}
+      `;
+    });
+    
+    // 测试浏览器API
+    document.getElementById('test-api').addEventListener('click', function() {
+      var apiResult = document.getElementById('api-result');
+      apiResult.style.display = 'block';
+      
+      try {
+        // 测试localStorage
+        localStorage.setItem('test', 'value');
+        localStorage.removeItem('test');
+        
+        // 测试fetch API
+        fetch('https://jsonplaceholder.typicode.com/todos/1')
+          .then(response => {
+            if (!response.ok) throw new Error('网络请求失败');
+            return response.json();
+          })
+          .then(data => {
+            apiResult.innerHTML = '✅ 浏览器API工作正常。这表明扩展可能没有阻止基本功能。';
+            apiResult.className = 'info-box success';
+          })
+          .catch(error => {
+            apiResult.innerHTML = '❌ 网络API测试失败: ' + error.message;
+            apiResult.className = 'info-box error';
+          });
+      } catch (error) {
+        apiResult.innerHTML = '❌ 浏览器API测试失败: ' + error.message;
+        apiResult.className = 'info-box error';
+      }
+    });
+  </script>
+</body>
+</html> 

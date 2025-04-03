@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>简易登录</title>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      margin: 0;
+      background-color: #f9fafb;
+      color: #111827;
+    }
+    
+    .login-container {
+      width: 100%;
+      max-width: 400px;
+      padding: 2rem;
+      background-color: white;
+      border-radius: 0.5rem;
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+    }
+    
+    h1 {
+      text-align: center;
+      font-size: 1.5rem;
+      font-weight: 600;
+      margin-bottom: 1.5rem;
+    }
+    
+    .info-box {
+      padding: 0.75rem;
+      background-color: #f0f9ff;
+      border-radius: 0.375rem;
+      margin-bottom: 1.5rem;
+      font-size: 0.875rem;
+    }
+    
+    .form-group {
+      margin-bottom: 1rem;
+    }
+    
+    label {
+      display: block;
+      margin-bottom: 0.5rem;
+      font-weight: 500;
+    }
+    
+    input {
+      width: 100%;
+      padding: 0.5rem;
+      border: 1px solid #d1d5db;
+      border-radius: 0.375rem;
+      box-sizing: border-box;
+    }
+    
+    button {
+      width: 100%;
+      padding: 0.625rem;
+      background-color: #4f46e5;
+      color: white;
+      border: none;
+      border-radius: 0.375rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background-color 0.2s;
+    }
+    
+    button:hover {
+      background-color: #4338ca;
+    }
+    
+    button:disabled {
+      background-color: #9ca3af;
+      cursor: not-allowed;
+    }
+    
+    .error {
+      color: #dc2626;
+      font-size: 0.875rem;
+      margin-top: 0.5rem;
+      text-align: center;
+    }
+    
+    .logs {
+      margin-top: 1.5rem;
+      padding: 0.75rem;
+      background-color: #f3f4f6;
+      border-radius: 0.375rem;
+      font-size: 0.75rem;
+      max-height: 150px;
+      overflow-y: auto;
+    }
+    
+    .log-entry {
+      margin-bottom: 0.25rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="login-container">
+    <h1>简易登录界面</h1>
+    
+    <div class="info-box">
+      这是一个独立的登录页面，不使用任何扩展兼容性脚本，使用最新的Supabase API密钥。
+    </div>
+    
+    <form id="loginForm">
+      <div class="form-group">
+        <label for="email">电子邮箱</label>
+        <input type="email" id="email" name="email" required>
+      </div>
+      
+      <div class="form-group">
+        <label for="password">密码</label>
+        <input type="password" id="password" name="password" required>
+      </div>
+      
+      <div id="error" class="error" style="display: none;"></div>
+      
+      <button type="submit" id="loginButton">登录</button>
+    </form>
+    
+    <div class="logs" id="logs">
+      <div class="log-entry">准备就绪，请输入登录信息...</div>
+    </div>
+  </div>
+
+  <script>
+    // 避免使用window或全局对象属性，以防止与扩展冲突
+    (function() {
+      // 使用.env文件中的正确Supabase API配置
+      const SUPABASE_URL = 'https://wcjctczyzibrswwngmvd.supabase.co';
+      const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndjamN0Y3p5emlicnN3d25nbXZkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDM0MjAyMDcsImV4cCI6MjA1ODk5NjIwN30.vgCpbBqyHWV6ONAMDwOQ5kF6wn75p2txsYbMfLRJGAk';
+      
+      // DOM元素
+      const loginForm = document.getElementById('loginForm');
+      const emailInput = document.getElementById('email');
+      const passwordInput = document.getElementById('password');
+      const loginButton = document.getElementById('loginButton');
+      const errorElement = document.getElementById('error');
+      const logsElement = document.getElementById('logs');
+      
+      // 添加日志函数
+      function addLog(message) {
+        console.log(`[登录] ${message}`);
+        const logEntry = document.createElement('div');
+        logEntry.className = 'log-entry';
+        logEntry.textContent = `${new Date().toLocaleTimeString()}: ${message}`;
+        logsElement.appendChild(logEntry);
+        logsElement.scrollTop = logsElement.scrollHeight;
+      }
+      
+      // 显示错误信息
+      function showError(message) {
+        errorElement.textContent = message;
+        errorElement.style.display = 'block';
+      }
+      
+      // 隐藏错误信息
+      function hideError() {
+        errorElement.style.display = 'none';
+      }
+      
+      // 测试Supabase连接
+      async function testConnection() {
+        addLog('测试Supabase连接...');
+        
+        try {
+          const response = await fetch(`${SUPABASE_URL}/auth/v1/health`, {
+            method: 'GET',
+            headers: {
+              'Content-Type': 'application/json',
+              'apikey': SUPABASE_KEY
+            }
+          });
+          
+          if (response.ok) {
+            const data = await response.json();
+            addLog(`连接成功! 状态: ${JSON.stringify(data)}`);
+            return true;
+          } else {
+            addLog(`连接失败! 状态码: ${response.status}`);
+            return false;
+          }
+        } catch (error) {
+          addLog(`连接错误: ${error.message}`);
+          return false;
+        }
+      }
+      
+      // 登录函数
+      async function login(email, password) {
+        addLog(`尝试登录用户: ${email}`);
+        
+        try {
+          const response = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'apikey': SUPABASE_KEY,
+              'Authorization': `Bearer ${SUPABASE_KEY}`
+            },
+            body: JSON.stringify({
+              email,
+              password
+            })
+          });
+          
+          const data = await response.json();
+          
+          if (response.ok) {
+            addLog('登录成功!');
+            addLog(`用户ID: ${data.user.id}`);
+            
+            // 保存会话到本地存储
+            localStorage.setItem('supabase.auth.token', JSON.stringify({
+              access_token: data.access_token,
+              refresh_token: data.refresh_token,
+              expires_at: Date.now() + data.expires_in * 1000
+            }));
+            
+            // 重定向到受保护页面
+            window.location.href = '/protected';
+            return true;
+          } else {
+            addLog(`登录失败: ${data.error_description || data.error || '未知错误'}`);
+            showError(data.error_description || data.error || '登录失败');
+            return false;
+          }
+        } catch (error) {
+          addLog(`登录过程出错: ${error.message}`);
+          showError('请求过程中发生错误，请检查网络连接');
+          return false;
+        }
+      }
+      
+      // 表单提交处理
+      loginForm.addEventListener('submit', async function(event) {
+        event.preventDefault();
+        
+        // 隐藏之前的错误信息
+        hideError();
+        
+        // 禁用登录按钮
+        loginButton.disabled = true;
+        loginButton.textContent = '登录中...';
+        
+        // 获取表单值
+        const email = emailInput.value.trim();
+        const password = passwordInput.value;
+        
+        // 测试连接
+        const connectionOk = await testConnection();
+        
+        if (connectionOk) {
+          // 尝试登录
+          await login(email, password);
+        } else {
+          showError('无法连接到Supabase服务器，请检查网络连接');
+        }
+        
+        // 恢复登录按钮
+        loginButton.disabled = false;
+        loginButton.textContent = '登录';
+      });
+      
+      // 页面加载时测试连接
+      document.addEventListener('DOMContentLoaded', function() {
+        addLog('页面已加载，准备就绪');
+        testConnection();
+      });
+    })();
+  </script>
+</body>
+</html> 

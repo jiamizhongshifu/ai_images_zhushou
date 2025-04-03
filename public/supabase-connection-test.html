@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Supabase连接测试</title>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      line-height: 1.5;
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 20px;
+      color: #333;
+    }
+    .header {
+      text-align: center;
+      margin-bottom: 30px;
+    }
+    h1 {
+      color: #3b82f6;
+    }
+    .section {
+      margin-bottom: 20px;
+      padding: 20px;
+      border-radius: 8px;
+      background-color: #f9fafb;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    }
+    .result {
+      margin-top: 10px;
+      padding: 15px;
+      border-radius: 4px;
+      font-family: monospace;
+      white-space: pre-wrap;
+      word-break: break-all;
+      max-height: 200px;
+      overflow-y: auto;
+    }
+    .success {
+      background-color: #d1fae5;
+      color: #065f46;
+    }
+    .error {
+      background-color: #fee2e2;
+      color: #b91c1c;
+    }
+    .loading {
+      background-color: #e5e7eb;
+      color: #4b5563;
+    }
+    .neutral {
+      background-color: #f3f4f6;
+      color: #1f2937;
+    }
+    .btn {
+      background-color: #3b82f6;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      padding: 10px 15px;
+      cursor: pointer;
+      font-size: 16px;
+      transition: background-color 0.2s;
+    }
+    .btn:hover {
+      background-color: #2563eb;
+    }
+    .btn:disabled {
+      background-color: #9ca3af;
+      cursor: not-allowed;
+    }
+    .test-group {
+      margin-bottom: 15px;
+    }
+    .steps {
+      list-style-type: decimal;
+      padding-left: 20px;
+    }
+    .steps li {
+      margin-bottom: 10px;
+    }
+    .dns-results {
+      max-height: 150px;
+      overflow-y: auto;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>Supabase连接测试工具</h1>
+    <p>用于诊断与Supabase服务器的连接问题</p>
+  </div>
+
+  <div class="section">
+    <h2>基本连接测试</h2>
+    <p>这将检查您能否连接到Supabase服务器</p>
+    <div class="test-group">
+      <button id="pingBtn" class="btn">Ping Supabase</button>
+      <div id="pingResult" class="result neutral">点击按钮开始测试...</div>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>DNS解析测试</h2>
+    <p>这将检查您是否可以正确解析Supabase域名</p>
+    <div class="test-group">
+      <button id="dnsBtn" class="btn">测试DNS</button>
+      <div id="dnsResult" class="result neutral">点击按钮开始测试...</div>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>环境变量检查</h2>
+    <p>检查环境变量是否正确配置</p>
+    <div class="test-group">
+      <button id="envBtn" class="btn">检查环境变量</button>
+      <div id="envResult" class="result neutral">点击按钮开始测试...</div>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>网络诊断</h2>
+    <p>如果您无法连接到Supabase，请尝试以下步骤：</p>
+    <ol class="steps">
+      <li>检查您的网络连接是否正常工作（尝试访问其他网站）</li>
+      <li>确认您的防火墙或网络安全设置没有阻止对*.supabase.co域名的访问</li>
+      <li>如果您使用公司或学校网络，请确认没有网络策略阻止对Supabase的访问</li>
+      <li>尝试使用不同的网络（如手机热点）连接</li>
+      <li>清除浏览器缓存和Cookie</li>
+      <li>尝试使用无痕/隐私浏览模式</li>
+      <li>禁用所有浏览器扩展，特别是广告拦截器或隐私保护扩展</li>
+    </ol>
+  </div>
+
+  <script>
+    // 获取Supabase URL
+    function getSupabaseUrl() {
+      try {
+        // 尝试从localStorage或预置环境获取URL
+        return localStorage.getItem('SUPABASE_URL') || 
+               window.SUPABASE_URL || 
+               (typeof process !== 'undefined' && process.env && process.env.NEXT_PUBLIC_SUPABASE_URL);
+      } catch (e) {
+        return null;
+      }
+    }
+
+    // 检测环境变量
+    document.getElementById('envBtn').addEventListener('click', function() {
+      const resultDiv = document.getElementById('envResult');
+      resultDiv.className = 'result loading';
+      resultDiv.textContent = '检查中...';
+      
+      setTimeout(() => {
+        const supabaseUrl = getSupabaseUrl();
+        
+        if (supabaseUrl) {
+          resultDiv.className = 'result success';
+          resultDiv.textContent = `找到Supabase URL: ${supabaseUrl.substring(0, 8)}...（为安全起见已部分隐藏）`;
+        } else {
+          resultDiv.className = 'result error';
+          resultDiv.textContent = '未找到Supabase URL环境变量，这可能导致连接问题。';
+        }
+      }, 500);
+    });
+
+    // Ping测试
+    document.getElementById('pingBtn').addEventListener('click', async function() {
+      const btn = this;
+      const resultDiv = document.getElementById('pingResult');
+      
+      btn.disabled = true;
+      resultDiv.className = 'result loading';
+      resultDiv.textContent = '正在连接Supabase...';
+      
+      try {
+        // 尝试从存储的URL获取，如果没有，使用通用的supabase.co域名
+        const supabaseUrl = getSupabaseUrl() || 'https://supabase.co';
+        const startTime = Date.now();
+        
+        const response = await fetch(supabaseUrl, {
+          method: 'HEAD',
+          mode: 'no-cors', // 尝试绕过CORS问题
+          cache: 'no-cache'
+        }).catch(e => {
+          throw new Error(`请求失败: ${e.message}`);
+        });
+        
+        const endTime = Date.now();
+        const pingTime = endTime - startTime;
+        
+        resultDiv.className = 'result success';
+        resultDiv.textContent = `连接成功！\n响应时间: ${pingTime}ms`;
+      } catch (error) {
+        resultDiv.className = 'result error';
+        resultDiv.textContent = `连接失败: ${error.message}\n\n这可能表明您的网络无法访问Supabase服务器，或者服务器当前不可用。`;
+      } finally {
+        btn.disabled = false;
+      }
+    });
+
+    // DNS测试
+    document.getElementById('dnsBtn').addEventListener('click', async function() {
+      const btn = this;
+      const resultDiv = document.getElementById('dnsResult');
+      
+      btn.disabled = true;
+      resultDiv.className = 'result loading';
+      resultDiv.textContent = '正在测试DNS解析...';
+      
+      try {
+        // 由于浏览器不能直接进行DNS查询，我们使用HTTP请求来模拟测试
+        const supabaseUrl = getSupabaseUrl() || 'https://supabase.co';
+        const hostname = new URL(supabaseUrl).hostname;
+        
+        resultDiv.textContent = `正在解析 ${hostname}...`;
+        
+        // 向服务器发送请求以测试DNS解析
+        const startTime = Date.now();
+        await fetch(`https://${hostname}/favicon.ico`, {
+          mode: 'no-cors',
+          cache: 'no-cache'
+        }).catch(e => {
+          throw new Error(`DNS解析可能失败: ${e.message}`);
+        });
+        
+        const endTime = Date.now();
+        const resolveTime = endTime - startTime;
+        
+        resultDiv.className = 'result success';
+        resultDiv.textContent = `DNS解析成功！\n主机名: ${hostname}\n解析时间: ${resolveTime}ms`;
+      } catch (error) {
+        resultDiv.className = 'result error';
+        resultDiv.textContent = `DNS解析测试失败: ${error.message}\n\n这可能表明您的DNS服务器无法解析Supabase域名，或者您的网络连接有问题。`;
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html> 

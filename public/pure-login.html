@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>纯客户端登录</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    }
+    body {
+      background-color: #f7fafc;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 1rem;
+    }
+    .container {
+      max-width: 400px;
+      width: 100%;
+      background-color: white;
+      border-radius: 0.5rem;
+      box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+      padding: 2rem;
+      margin: 0 auto;
+    }
+    .header {
+      text-align: center;
+      margin-bottom: 1.5rem;
+    }
+    .title {
+      font-size: 1.5rem;
+      font-weight: bold;
+      color: #1a202c;
+      margin-bottom: 0.5rem;
+    }
+    .subtitle {
+      font-size: 0.875rem;
+      color: #718096;
+    }
+    .form-group {
+      margin-bottom: 1rem;
+    }
+    label {
+      display: block;
+      font-size: 0.875rem;
+      color: #4a5568;
+      margin-bottom: 0.5rem;
+    }
+    input {
+      width: 100%;
+      padding: 0.5rem 0.75rem;
+      border: 1px solid #e2e8f0;
+      border-radius: 0.25rem;
+      font-size: 0.875rem;
+      color: #1a202c;
+      transition: border-color 0.15s ease-in-out;
+    }
+    input:focus {
+      outline: none;
+      border-color: #4299e1;
+      box-shadow: 0 0 0 3px rgba(66, 153, 225, 0.15);
+    }
+    .btn {
+      display: block;
+      width: 100%;
+      padding: 0.5rem 0.75rem;
+      font-size: 0.875rem;
+      font-weight: 500;
+      color: white;
+      background-color: #4f46e5;
+      border: none;
+      border-radius: 0.25rem;
+      cursor: pointer;
+      transition: background-color 0.15s ease-in-out;
+    }
+    .btn:hover {
+      background-color: #3c366b;
+    }
+    .btn:disabled {
+      opacity: 0.7;
+      cursor: not-allowed;
+    }
+    .error {
+      color: #e53e3e;
+      font-size: 0.875rem;
+      margin-top: 0.5rem;
+      text-align: center;
+    }
+    .action-row {
+      display: flex;
+      gap: 0.5rem;
+      margin-bottom: 1.5rem;
+    }
+    .btn-secondary {
+      flex: 1;
+      padding: 0.5rem;
+      font-size: 0.75rem;
+      color: #4a5568;
+      background-color: #edf2f7;
+      border: none;
+      border-radius: 0.25rem;
+      cursor: pointer;
+      transition: background-color 0.15s ease-in-out;
+    }
+    .btn-secondary:hover {
+      background-color: #e2e8f0;
+    }
+    .logs {
+      margin-top: 1.5rem;
+      padding: 1rem;
+      background-color: #f7fafc;
+      border-radius: 0.25rem;
+      font-size: 0.75rem;
+      color: #4a5568;
+      max-height: 150px;
+      overflow-y: auto;
+    }
+    .logs-title {
+      font-weight: bold;
+      margin-bottom: 0.5rem;
+    }
+    .log-entry {
+      margin-bottom: 0.25rem;
+      line-height: 1.4;
+    }
+    .success {
+      text-align: center;
+    }
+    .success-icon {
+      color: #38a169;
+      font-size: 3rem;
+      margin-bottom: 1rem;
+    }
+    .countdown {
+      margin-top: 1rem;
+      color: #718096;
+      font-size: 0.875rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="container" id="login-container">
+    <div id="login-form-container">
+      <div class="header">
+        <h1 class="title">登录您的账户</h1>
+        <p class="subtitle">纯客户端应急登录页面</p>
+      </div>
+      
+      <div class="action-row">
+        <button id="test-connection" class="btn-secondary">测试Supabase连接</button>
+        <button id="clear-session" class="btn-secondary">清除会话</button>
+      </div>
+      
+      <form id="login-form">
+        <div class="form-group">
+          <label for="email">邮箱地址</label>
+          <input type="email" id="email" name="email" required placeholder="请输入邮箱地址">
+        </div>
+        
+        <div class="form-group">
+          <label for="password">密码</label>
+          <input type="password" id="password" name="password" required placeholder="请输入密码">
+        </div>
+        
+        <div id="error-message" class="error" style="display: none;"></div>
+        
+        <button type="submit" id="login-button" class="btn">登录</button>
+      </form>
+      
+      <div id="logs" class="logs">
+        <div class="logs-title">操作日志:</div>
+        <div id="log-entries"></div>
+      </div>
+    </div>
+    
+    <div id="success-container" style="display: none;">
+      <div class="success">
+        <div class="success-icon">✓</div>
+        <h2 class="title">登录成功！</h2>
+        <p>您的身份已验证</p>
+        <div class="countdown" id="countdown">3秒后自动跳转到应用...</div>
+        <button id="enter-now" class="btn" style="margin-top: 1rem;">立即进入应用</button>
+      </div>
+      
+      <div id="success-logs" class="logs">
+        <div class="logs-title">登录过程日志:</div>
+        <div id="success-log-entries"></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Supabase配置
+    const SUPABASE_URL = 'https://wcjctczyzibrswwngmvd.supabase.co';
+    const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndjamN0Y3p5emlicnN3d25nbXZkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDM0MjAyMDcsImV4cCI6MjA1ODk5NjIwN30.vgCpbBqyHWV6ONAMDwOQ5kF6wn75p2txsYbMfLRJGAk';
+    
+    // DOM元素
+    const loginForm = document.getElementById('login-form');
+    const loginButton = document.getElementById('login-button');
+    const loginFormContainer = document.getElementById('login-form-container');
+    const successContainer = document.getElementById('success-container');
+    const errorMessage = document.getElementById('error-message');
+    const logEntries = document.getElementById('log-entries');
+    const successLogEntries = document.getElementById('success-log-entries');
+    const countdownElement = document.getElementById('countdown');
+    const testConnectionButton = document.getElementById('test-connection');
+    const clearSessionButton = document.getElementById('clear-session');
+    const enterNowButton = document.getElementById('enter-now');
+    
+    // 日志函数
+    function log(message) {
+      const now = new Date().toLocaleTimeString();
+      const logEntry = document.createElement('div');
+      logEntry.className = 'log-entry';
+      logEntry.textContent = `${now}: ${message}`;
+      logEntries.appendChild(logEntry);
+      
+      // 同时添加到成功页面的日志
+      const successLogEntry = logEntry.cloneNode(true);
+      successLogEntries.appendChild(successLogEntry);
+      
+      console.log(`[纯客户端登录] ${message}`);
+    }
+    
+    // 显示错误消息
+    function showError(message) {
+      errorMessage.textContent = message;
+      errorMessage.style.display = 'block';
+      loginButton.disabled = false;
+      loginButton.textContent = '登录';
+      log(`错误: ${message}`);
+    }
+    
+    // 测试Supabase连接
+    async function testConnection() {
+      log('测试Supabase连接...');
+      
+      try {
+        const response = await fetch(`${SUPABASE_URL}/auth/v1/health`, {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+            'apikey': SUPABASE_ANON_KEY
+          }
+        });
+        
+        if (response.ok) {
+          const health = await response.json();
+          log(`健康检查成功: ${health.status || JSON.stringify(health)}`);
+        } else {
+          log(`健康检查失败，状态码: ${response.status}`);
+        }
+        
+        // 检查当前会话
+        const sessionResponse = await fetch(`${SUPABASE_URL}/auth/v1/session`, {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+            'apikey': SUPABASE_ANON_KEY
+          },
+          credentials: 'include'
+        });
+        
+        if (sessionResponse.ok) {
+          const sessionData = await sessionResponse.json();
+          if (sessionData && sessionData.user) {
+            log(`已存在会话，用户ID: ${sessionData.user.id}`);
+          } else {
+            log('无活跃会话');
+          }
+        } else {
+          log(`会话检查失败，状态码: ${sessionResponse.status}`);
+        }
+      } catch (error) {
+        log(`连接测试出错: ${error.message}`);
+      }
+    }
+    
+    // 清除会话
+    async function clearSession() {
+      log('正在清除现有会话...');
+      
+      try {
+        const response = await fetch(`${SUPABASE_URL}/auth/v1/logout`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'apikey': SUPABASE_ANON_KEY
+          },
+          credentials: 'include'
+        });
+        
+        if (response.ok) {
+          log('会话已成功清除');
+          
+          // 清除本地存储
+          localStorage.removeItem('supabase.auth.token');
+          sessionStorage.removeItem('isAuthenticated');
+          sessionStorage.removeItem('authTime');
+        } else {
+          log(`会话清除失败，状态码: ${response.status}`);
+        }
+      } catch (error) {
+        log(`会话清除出错: ${error.message}`);
+      }
+    }
+    
+    // 处理登录
+    async function handleLogin(event) {
+      event.preventDefault();
+      
+      const email = document.getElementById('email').value;
+      const password = document.getElementById('password').value;
+      
+      if (!email || !password) {
+        showError('请填写邮箱和密码');
+        return;
+      }
+      
+      loginButton.disabled = true;
+      loginButton.textContent = '登录中...';
+      errorMessage.style.display = 'none';
+      
+      log(`尝试登录用户: ${email}`);
+      
+      try {
+        // 使用Supabase Auth API直接登录
+        const response = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'apikey': SUPABASE_ANON_KEY
+          },
+          body: JSON.stringify({ email, password }),
+          credentials: 'include'
+        });
+        
+        const data = await response.json();
+        
+        if (!response.ok) {
+          throw new Error(data.error_description || data.error || '登录失败');
+        }
+        
+        log('登录成功，获取到会话Token');
+        
+        // 使用本地存储保存会话
+        localStorage.setItem('supabase.auth.token', JSON.stringify({
+          access_token: data.access_token,
+          refresh_token: data.refresh_token,
+          expires_at: Date.now() + data.expires_in * 1000
+        }));
+        
+        // 保存登录标记
+        sessionStorage.setItem('isAuthenticated', 'true');
+        sessionStorage.setItem('authTime', Date.now().toString());
+        
+        // 显示成功页面
+        loginFormContainer.style.display = 'none';
+        successContainer.style.display = 'block';
+        
+        // 3秒后自动跳转
+        let countdown = 3;
+        const timer = setInterval(() => {
+          countdown--;
+          countdownElement.textContent = `${countdown}秒后自动跳转到应用...`;
+          
+          if (countdown <= 0) {
+            clearInterval(timer);
+            navigateToProtected();
+          }
+        }, 1000);
+        
+        log('登录成功，即将重定向到受保护页面...');
+      } catch (error) {
+        showError(error.message);
+      }
+    }
+    
+    // 导航到受保护页面
+    function navigateToProtected() {
+      log('导航到受保护页面');
+      
+      // 添加手动认证Cookie
+      document.cookie = `manualAuth=true; path=/; max-age=3600;`;
+      
+      // 使用内联导航避免重定向问题
+      setTimeout(() => {
+        const loginTime = Date.now();
+        log(`跳转到: /protected?just_logged_in=true&login_time=${loginTime}`);
+        window.location.href = `/protected?just_logged_in=true&login_time=${loginTime}`;
+      }, 500);
+    }
+    
+    // 页面加载时检查现有会话
+    window.addEventListener('DOMContentLoaded', async () => {
+      log('页面加载完成，检查现有会话...');
+      
+      try {
+        const response = await fetch(`${SUPABASE_URL}/auth/v1/session`, {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+            'apikey': SUPABASE_ANON_KEY
+          },
+          credentials: 'include'
+        });
+        
+        if (response.ok) {
+          const data = await response.json();
+          if (data && data.user) {
+            log(`检测到活跃会话，用户ID: ${data.user.id}`);
+            
+            // 已登录则自动显示成功页面
+            loginFormContainer.style.display = 'none';
+            successContainer.style.display = 'block';
+            
+            // 3秒后自动跳转
+            let countdown = 3;
+            const timer = setInterval(() => {
+              countdown--;
+              countdownElement.textContent = `${countdown}秒后自动跳转到应用...`;
+              
+              if (countdown <= 0) {
+                clearInterval(timer);
+                navigateToProtected();
+              }
+            }, 1000);
+          } else {
+            log('无活跃会话，请登录');
+          }
+        } else {
+          log('会话检查请求失败，请手动登录');
+        }
+      } catch (error) {
+        log(`会话检查出错: ${error.message}`);
+      }
+    });
+    
+    // 添加事件监听器
+    loginForm.addEventListener('submit', handleLogin);
+    testConnectionButton.addEventListener('click', testConnection);
+    clearSessionButton.addEventListener('click', clearSession);
+    enterNowButton.addEventListener('click', navigateToProtected);
+  </script>
+</body>
+</html> 
