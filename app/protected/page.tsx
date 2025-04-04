@@ -383,7 +383,7 @@ export default function ProtectedPage() {
     } finally {
       // 短延时确保DOM更新
       setTimeout(() => {
-        setIsLoadingHistory(false);
+      setIsLoadingHistory(false);
         console.log('历史记录加载完成');
       }, 500);
     }
@@ -468,7 +468,7 @@ export default function ProtectedPage() {
     notification.className = `fixed top-4 right-4 flex items-center p-3 rounded-md shadow-lg transform transition-transform duration-500 translate-x-full ${colorMap[type]} text-white max-w-xs z-50`;
     notification.innerHTML = `
       <div class="mr-3 flex-shrink-0">
-        ${iconMap[type]}
+      ${iconMap[type]}
       </div>
       <div class="text-sm mr-2">${message}</div>
       <button class="ml-auto text-white">
@@ -485,13 +485,13 @@ export default function ProtectedPage() {
     const closeButton = notification.querySelector('button');
     closeButton?.addEventListener('click', () => {
       notification.classList.add('translate-x-full', 'opacity-0');
-      setTimeout(() => {
+    setTimeout(() => {
         notification.remove();
       }, 300);
     });
     
     // 显示通知（在下一帧添加过渡动画）
-    setTimeout(() => {
+            setTimeout(() => {
       notification.classList.remove('translate-x-full');
     }, 10);
     
@@ -693,24 +693,24 @@ export default function ProtectedPage() {
       const target = e.target as HTMLImageElement;
       const currentRetries = imageLoadRetries[imageUrl] || 0;
       
-      // 更新重试次数
-      setImageLoadRetries(prev => ({
-        ...prev,
-        [imageUrl]: currentRetries + 1
-      }));
-      
-      // 设置占位图
+        // 更新重试次数
+        setImageLoadRetries(prev => ({
+          ...prev,
+          [imageUrl]: currentRetries + 1
+        }));
+        
+        // 设置占位图
       target.src = `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='100' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' fill='%23f3f4f6'/%3E%3Cpath d='M50 30c-11.046 0-20 8.954-20 20s8.954 20 20 20 20-8.954 20-20-8.954-20-20-20z' fill='%23ef4444' fill-opacity='0.2'/%3E%3Cpath d='M45 45l10 10M55 45l-10 10' stroke='%23ef4444' stroke-width='3'/%3E%3C/svg%3E`;
-      target.classList.add('opacity-50');
-      
+        target.classList.add('opacity-50');
+        
       // 如果未超过最大重试次数，尝试清理和验证URL
       if (currentRetries < MAX_RETRIES) {
         // 延时后重试
         setTimeout(() => {
           if (target && document.body.contains(target)) {
             console.log(`尝试重新加载图片 (${currentRetries + 1}/${MAX_RETRIES}): ${imageUrl}`);
-            target.src = imageUrl;
-          }
+              target.src = imageUrl;
+            }
         }, RETRY_DELAY * (currentRetries + 1)); // 递增重试延迟
       } else {
         // 超过最大重试次数，显示永久失败状态
@@ -798,9 +798,9 @@ export default function ProtectedPage() {
   const handleDeleteImage = async (imageToDelete: string) => {
     // 确认是否删除
     if (!confirm('确定要删除这张图片吗？删除后不可恢复。')) {
-      return;
-    }
-    
+            return;
+          }
+          
     try {
       console.log('开始删除图片:', imageToDelete);
       
@@ -859,16 +859,12 @@ export default function ProtectedPage() {
   return (
     <div className="flex-1 w-full flex flex-col items-center">
       <div className="max-w-7xl w-full px-4 py-8">
-        {/* 页面标题 */}
+        {/* 页面标题 - 使用中文，去掉价格 */}
         <div className="flex flex-col items-center mb-8">
-          <div className="relative w-20 h-20 mb-4">
-            <div className="absolute inset-0 bg-primary rounded-lg flex items-center justify-center">
-              <ImageIcon className="h-10 w-10 text-primary-foreground" />
-            </div>
-            <div className="absolute -bottom-1 -right-1 w-full h-full bg-muted rounded-lg -z-10 transform translate-x-1 translate-y-1"></div>
-          </div>
-          <h1 className="text-2xl font-bold text-foreground mb-2">欢迎使用 ChatIMG 图像助手</h1>
-          <p className="text-sm text-muted-foreground">上传图片或开始描述您想要生成的图像</p>
+          <h1 className="text-4xl font-bold text-foreground mb-3">照片风格转换</h1>
+          <p className="text-lg text-muted-foreground text-center max-w-2xl">
+            将您的照片转化为魔幻风格的艺术作品，上传照片并选择风格，创造独特的视觉效果
+          </p>
         </div>
 
         {/* 错误信息显示 */}
@@ -878,62 +874,40 @@ export default function ProtectedPage() {
           </div>
         )}
 
-        {/* 风格选择 */}
-        <Card className="mb-4">
-          <CardHeader className="py-2 px-4">
-            <CardTitle className="text-sm font-medium flex items-center gap-2">
-              <div className="w-5 h-5 rounded-full bg-muted flex items-center justify-center">
-                <span className="text-xs">🎨</span>
-              </div>
-              选择艺术风格
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="py-2 px-4">
-            <div className="flex flex-row gap-3 overflow-x-auto pb-2">
-              {STYLE_EXAMPLES.map((style) => (
-                <StyleCard
-                  key={style.id}
-                  style={style}
-                  isActive={activeStyle === style.id}
-                  onClick={() => setActiveStyle(style.id)}
-                />
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* 图片上传与输入区 */}
-        <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-8">
-          {/* 图片上传 */}
-          <Card className="md:col-span-1 border-dashed">
-            <CardContent className="p-6 flex flex-col items-center justify-center text-center h-48 cursor-pointer hover:bg-accent/50 transition-colors" onClick={handleUploadClick}>
+        {/* 垂直流程布局 */}
+        <div className="flex flex-col gap-6">
+          {/* 1. 上传区域 - 更大更醒目 */}
+          <Card className="border-dashed border-2 bg-background/50">
+            <CardContent className="p-8 flex flex-col items-center justify-center text-center cursor-pointer hover:bg-accent/30 transition-colors min-h-[280px]" onClick={handleUploadClick}>
               {uploadedImage ? (
-                <div className="w-full h-full relative">
+                <div className="w-full h-full relative max-h-[280px]">
                   <img 
                     src={uploadedImage} 
                     alt="上传的图片" 
-                    className="w-full h-full object-contain rounded-md"
+                    className="max-h-[280px] object-contain rounded-md mx-auto"
                   />
                   <Button 
                     variant="secondary" 
                     size="sm" 
-                    className="absolute top-0 right-0 m-1 h-6 w-6 p-0" 
+                    className="absolute top-0 right-0 m-1 h-7 w-7 p-0" 
                     onClick={(e) => {
                       e.stopPropagation();
                       setUploadedImage(null);
                       if (fileInputRef.current) fileInputRef.current.value = "";
                     }}
                   >
-                    &times;
+                    <X className="h-4 w-4" />
                   </Button>
                 </div>
               ) : (
                 <>
-                  <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center mb-3">
-                    <Upload className="text-primary h-5 w-5" />
+                  <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center mb-4">
+                    <Upload className="text-primary h-7 w-7" />
                   </div>
-                  <p className="font-medium text-sm text-foreground">点击或拖放图片</p>
-                  <p className="text-xs text-muted-foreground mt-1">(支持JPEG, PNG, WebP等格式)</p>
+                  <h3 className="text-xl font-medium text-foreground mb-2">拖放图片到这里</h3>
+                  <p className="text-muted-foreground mb-4">或</p>
+                  <Button>浏览文件</Button>
+                  <p className="text-xs text-muted-foreground mt-4">支持JPG、PNG和WebP格式，最大5MB</p>
                 </>
               )}
               <input 
@@ -945,186 +919,183 @@ export default function ProtectedPage() {
               />
             </CardContent>
           </Card>
-          
-          {/* 输入区 */}
-          <div className="md:col-span-4 flex flex-col">
-            <Card>
-              <CardContent className="p-4">
-                <textarea
-                  placeholder="描述你想要的图像，或给出编辑指令..."
-                  className="w-full px-3 py-2 bg-background border-input rounded-md text-sm resize-none min-h-[80px] focus:outline-none focus:ring-1 focus:ring-ring"
-                  value={prompt}
-                  onChange={(e) => setPrompt(e.target.value)}
-                  disabled={isGenerating}
-                />
-                <div className="flex items-center justify-end pt-3 border-t mt-3 border-border">
-                  <div className="flex items-center gap-3">
-                    <div className="text-muted-foreground text-sm">
-                      <span className="font-medium">
-                        {isLoadingCredits ? (
-                          <Loader2 className="inline h-3 w-3 animate-spin mr-1" />
-                        ) : (
-                          userCredits ?? '...'
-                        )}点
-                      </span>
-                      <Button 
-                        variant="ghost" 
-                        size="icon" 
-                        className="h-6 w-6 ml-1" 
-                        title="充值点数"
-                        onClick={() => setShowCreditRechargeDialog(true)}
-                      >
-                        <PlusCircle className="h-3 w-3" />
-                      </Button>
-                    </div>
-                    <Button 
-                      size="sm" 
-                      className="h-8"
-                      onClick={generateImage}
-                      disabled={isGenerating || 
-                        ((!prompt.trim() && !(uploadedImage && activeStyle !== "自定义"))) || 
-                        (userCredits !== null && userCredits <= 0)}
-                    >
-                      {isGenerating ? (
-                        <Loader2 className="mr-1 h-4 w-4 animate-spin" />
-                      ) : (
-                        <SendHorizontal className="mr-1 h-4 w-4" />
-                      )}
-                      <span>{isGenerating ? "生成中..." : "生成"}</span>
-                    </Button>
-                  </div>
+
+          {/* 2. 风格选择 */}
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium flex items-center gap-2">
+                <div className="w-5 h-5 rounded-full bg-muted flex items-center justify-center">
+                  <span className="text-xs">🎨</span>
                 </div>
-              </CardContent>
-            </Card>
-            {renderActionButtons()}
-          </div>
-        </div>
-        
-        {/* 图片展示区 */}
-        <Card>
-          <CardHeader className="pb-2">
-            <div className="flex justify-between items-center">
-              <CardTitle className="text-sm font-medium">生成结果</CardTitle>
-              {generatedImages.length > 0 && (
-                <span className="text-xs text-muted-foreground">
-                  共 {generatedImages.length} 张图片
-                </span>
-              )}
-            </div>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-4">
-              {generatedImages.length > 0 ? (
-                // 显示生成的图片
-                generatedImages.map((image, index) => (
-                  <div 
-                    key={`img-${index}`}
-                    className="flex flex-col border border-border rounded-xl overflow-hidden"
-                  >
-                    {imageLoadRetries[image] > MAX_RETRIES - 1 ? (
-                      <div className="h-full w-full aspect-square bg-muted animate-pulse flex flex-col items-center justify-center">
-                        <AlertCircle className="h-8 w-8 text-destructive mb-2" />
-                        <p className="text-xs text-muted-foreground text-center px-2">加载失败</p>
-                        <p className="text-[8px] text-muted-foreground line-clamp-1 px-1 mt-1">{image.substring(0, 30)}...</p>
-                        <Button 
-                          variant="outline" 
-                          size="sm" 
-                          className="mt-2"
-                          onClick={() => retryImage(image)}
-                        >
-                          重试
-                        </Button>
-                      </div>
-                    ) : generationStatus === "loading" && index === 0 ? (
-                      <div className="h-full aspect-square w-full bg-muted animate-pulse flex flex-col items-center justify-center">
-                        <Loader2 className="h-8 w-8 text-primary animate-spin" />
-                        <p className="text-xs text-muted-foreground mt-2">加载中...</p>
-                      </div>
-                    ) : (
-                      <>
-                        {/* 图片区域 - 点击直接预览 */}
-                        <div 
-                          className="cursor-pointer"
-                          onClick={() => setPreviewImage(image)}
-                        >
-                          <img
-                            src={image}
-                            alt={`生成的图片 ${index + 1}`}
-                            className="w-full aspect-square object-cover"
-                            loading="lazy"
-                            crossOrigin="anonymous"
-                            onLoad={(e) => handleImageLoad(image, e)}
-                            onError={(e) => handleImageError(image, e)}
-                          />
-                        </div>
-                        
-                        {/* 底部信息栏 */}
-                        <div className="p-2 bg-muted flex justify-between items-center">
-                          <div className="text-xs font-medium">
-                            图片 {index + 1}
-                          </div>
-                          <div className="flex gap-2">
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                downloadImage(image);
-                              }}
-                              className="bg-primary/10 hover:bg-primary/20 rounded p-1.5 transition-colors"
-                              title="下载图片"
-                            >
-                              <Download className="h-4 w-4 text-primary" />
-                            </button>
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleDeleteImage(image);
-                              }}
-                              className="bg-destructive/10 hover:bg-destructive/20 rounded p-1.5 transition-colors"
-                              title="删除图片"
-                            >
-                              <Trash2 className="h-4 w-4 text-destructive" />
-                            </button>
-                          </div>
-                        </div>
-                      </>
-                    )}
-                  </div>
-                ))
-              ) : isInitializing || isLoadingHistory ? (
-                // 初始化加载中状态或加载历史记录中 - 显示加载中骨架屏
-                <div className="col-span-2 md:col-span-4 h-60 flex flex-col items-center justify-center text-center p-6">
-                  <Loader2 className="h-6 w-6 text-primary animate-spin mb-4" />
-                  <p className="text-sm text-muted-foreground">正在加载历史记录...</p>
-                </div>
-              ) : !isGenerating ? (
-                // 空状态提示 - 已完成初始化且没有生成图片且不在生成中
-                <div className="col-span-2 md:col-span-4 h-60 flex flex-col items-center justify-center text-center p-6">
-                  <div className="w-14 h-14 rounded-full bg-muted flex items-center justify-center mb-4">
-                    <ImageIcon className="h-6 w-6 text-muted-foreground" />
-                  </div>
-                  <h3 className="text-base font-medium text-foreground mb-2">还没有生成图片</h3>
-                  <p className="text-sm text-muted-foreground max-w-md">
-                    尝试输入描述或上传图片并选择风格，点击"生成"按钮创建您的第一张AI图像
-                  </p>
-                </div>
+                选择艺术风格
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="py-2 px-4">
+              <div className="flex flex-row gap-3 overflow-x-auto pb-2">
+                {STYLE_EXAMPLES.map((style) => (
+                  <StyleCard
+                    key={style.id}
+                    style={style}
+                    isActive={activeStyle === style.id}
+                    onClick={() => setActiveStyle(style.id)}
+                  />
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* 3. 提示词输入区 - 减小高度 */}
+          <Card>
+            <CardContent className="p-4">
+              <textarea
+                placeholder="描述你想要的图像，或给出编辑指令..."
+                className="w-full px-3 py-2 bg-background border-input rounded-md text-sm resize-none min-h-[50px] focus:outline-none focus:ring-1 focus:ring-ring"
+                value={prompt}
+                onChange={(e) => setPrompt(e.target.value)}
+                disabled={isGenerating}
+              />
+            </CardContent>
+          </Card>
+
+          {/* 4. 生成按钮 - 更大更醒目 */}
+          <div className="mt-2">
+            <Button 
+              className="w-full py-6 text-lg transition-all shadow-md hover:shadow-lg" 
+              onClick={generateImage}
+              disabled={isGenerating || 
+                ((!prompt.trim() && !(uploadedImage && activeStyle !== "自定义"))) || 
+                (userCredits !== null && userCredits <= 0)}
+            >
+              {isGenerating ? (
+                <>
+                  <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+                  <span>正在生成中...</span>
+                </>
               ) : (
-                // 生成中状态 - 显示生成中骨架屏
-                <div className="col-span-2 md:col-span-4 h-60 flex flex-col items-center justify-center text-center p-6">
-                  <Loader2 className="h-6 w-6 text-primary animate-spin mb-4" />
-                  <p className="text-sm text-muted-foreground">
-                    正在为您生成图像，请稍候...
-                  </p>
-                </div>
+                <>
+                  <span>开始生成图片</span>
+                  <SendHorizontal className="ml-2 h-5 w-5" />
+                </>
               )}
-            </div>
-          </CardContent>
-          <CardFooter className="text-center border-t pt-4">
-            <p className="text-muted-foreground text-xs w-full">提示：尝试详细描述您想要的图像，包含更多细节可以获得更好的结果</p>
-          </CardFooter>
-        </Card>
+            </Button>
+            {userCredits !== null && userCredits <= 0 && (
+              <p className="text-xs text-destructive mt-2 text-center">点数不足，请先充值</p>
+            )}
+          </div>
+
+          {/* 生成的图片展示区 */}
+          <Card className="mt-4">
+            <CardHeader className="pb-2">
+              <div className="flex justify-between items-center">
+                <CardTitle className="text-sm font-medium">生成结果</CardTitle>
+                {generatedImages.length > 0 && (
+                  <span className="text-xs text-muted-foreground">
+                    共 {generatedImages.length} 张图片
+                  </span>
+                )}
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-2">
+                {generatedImages.length > 0 ? (
+                  // 显示生成的图片
+                  generatedImages.map((image, index) => (
+                    <div 
+                      key={`img-${index}`}
+                      className="flex flex-col border border-border rounded-xl overflow-hidden"
+                    >
+                      {imageLoadRetries[image] > MAX_RETRIES - 1 ? (
+                        <div className="h-full w-full aspect-square bg-muted animate-pulse flex flex-col items-center justify-center">
+                          <AlertCircle className="h-8 w-8 text-destructive mb-2" />
+                          <p className="text-xs text-muted-foreground text-center px-2">加载失败</p>
+                          <p className="text-[8px] text-muted-foreground line-clamp-1 px-1 mt-1">{image.substring(0, 30)}...</p>
+                          <Button 
+                            variant="outline" 
+                            size="sm" 
+                            className="mt-2"
+                            onClick={() => retryImage(image)}
+                          >
+                            重试
+                          </Button>
+                        </div>
+                      ) : generationStatus === "loading" && index === 0 ? (
+                        <div className="h-full aspect-square w-full bg-muted animate-pulse flex flex-col items-center justify-center">
+                          <Loader2 className="h-8 w-8 text-primary animate-spin" />
+                          <p className="text-xs text-muted-foreground mt-2">加载中...</p>
+                        </div>
+                      ) : (
+                        <>
+                          {/* 图片区域 - 点击直接预览 */}
+                          <div 
+                            className="cursor-pointer"
+                            onClick={() => setPreviewImage(image)}
+                          >
+                            <img
+                              src={image}
+                              alt={`生成的图片 ${index + 1}`} 
+                              className="w-full aspect-square object-cover"
+                              loading="lazy"
+                              crossOrigin="anonymous"
+                              onLoad={(e) => handleImageLoad(image, e)}
+                              onError={(e) => handleImageError(image, e)}
+                            />
+                          </div>
+                          
+                          {/* 底部信息栏 */}
+                          <div className="p-2 bg-muted flex justify-between items-center">
+                            <div className="text-xs font-medium">
+                              图片 {index + 1}
+                            </div>
+                            <div>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  downloadImage(image);
+                                }}
+                                className="bg-primary/10 hover:bg-primary/20 rounded p-1.5 transition-colors"
+                                title="下载图片"
+                              >
+                                <Download className="h-4 w-4 text-primary" />
+                              </button>
+                            </div>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  ))
+                ) : isInitializing || isLoadingHistory ? (
+                  // 初始化加载中状态或加载历史记录中 - 显示加载中骨架屏
+                  <div className="col-span-2 md:col-span-4 h-60 flex flex-col items-center justify-center text-center p-6">
+                    <Loader2 className="h-6 w-6 text-primary animate-spin mb-4" />
+                    <p className="text-sm text-muted-foreground">正在加载历史记录...</p>
+                  </div>
+                ) : !isGenerating ? (
+                  // 空状态提示 - 已完成初始化且没有生成图片且不在生成中
+                  <div className="col-span-2 md:col-span-4 h-60 flex flex-col items-center justify-center text-center p-6">
+                    <div className="w-14 h-14 rounded-full bg-muted flex items-center justify-center mb-4">
+                      <ImageIcon className="h-6 w-6 text-muted-foreground" />
+                    </div>
+                    <h3 className="text-base font-medium text-foreground mb-2">还没有生成图片</h3>
+                    <p className="text-sm text-muted-foreground max-w-md">
+                      尝试输入描述或上传图片并选择风格，点击"生成"按钮创建您的第一张AI图像
+                    </p>
+                  </div>
+                ) : (
+                  // 生成中状态 - 显示生成中骨架屏
+                  <div className="col-span-2 md:col-span-4 h-60 flex flex-col items-center justify-center text-center p-6">
+                    <Loader2 className="h-6 w-6 text-primary animate-spin mb-4" />
+                    <p className="text-sm text-muted-foreground">
+                      正在为您生成图像，请稍候...
+                    </p>
+                  </div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        </div>
       </div>
       
-      {/* 图片预览模态框 */}
+      {/* 图片预览模态框 - 保持不变 */}
       {previewImage && (
         <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4">
           <div className="relative max-w-4xl max-h-[90vh] w-full">
@@ -1152,22 +1123,36 @@ export default function ProtectedPage() {
                   <span className="text-muted-foreground">图片地址: </span>
                   <span className="text-xs text-muted-foreground/70 truncate max-w-xs">{previewImage}</span>
                 </div>
-                <Button 
-                  variant="outline" 
-                  size="sm" 
-                  className="ml-2 flex-shrink-0"
-                  onClick={() => window.open(previewImage, '_blank')}
-                >
-                  <Download className="h-4 w-4 mr-1" />
-                  <span>在新窗口打开</span>
-                </Button>
+                <div className="flex gap-2">
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    className="flex-shrink-0"
+                    onClick={() => window.open(previewImage, '_blank')}
+                  >
+                    <Download className="h-4 w-4 mr-1" />
+                    <span>在新窗口打开</span>
+                  </Button>
+                  <Button 
+                    variant="destructive" 
+                    size="sm" 
+                    className="flex-shrink-0"
+                    onClick={() => {
+                      setPreviewImage(null); // 先关闭预览模态框
+                      handleDeleteImage(previewImage); // 再删除图片
+                    }}
+                  >
+                    <Trash2 className="h-4 w-4 mr-1" />
+                    <span>删除图片</span>
+                  </Button>
+                </div>
               </div>
             </div>
           </div>
         </div>
       )}
       
-      {/* 充值弹窗 */}
+      {/* 充值弹窗 - 保持不变 */}
       <CreditRechargeDialog
         isOpen={showCreditRechargeDialog}
         onClose={() => setShowCreditRechargeDialog(false)}

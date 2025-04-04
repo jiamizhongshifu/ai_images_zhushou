@@ -1,14 +1,16 @@
 "use client";
 
 import { useState, useEffect } from 'react';
-import { Coins, RefreshCw, Loader2 } from 'lucide-react';
+import { Coins, PlusCircle, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { authService } from '@/utils/auth-service';
+import CreditRechargeDialog from "@/components/payment/credit-recharge-dialog";
 
 export default function UserCreditDisplay() {
   const [credits, setCredits] = useState<number | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [showCreditRechargeDialog, setShowCreditRechargeDialog] = useState(false);
   
   // 获取用户点数的函数
   const fetchCredits = async () => {
@@ -78,6 +80,11 @@ export default function UserCreditDisplay() {
     };
   }, []);
   
+  // 处理充值按钮点击
+  const handleRecharge = () => {
+    setShowCreditRechargeDialog(true);
+  };
+  
   // 渲染组件
   return (
     <div className="flex items-center gap-2">
@@ -98,13 +105,19 @@ export default function UserCreditDisplay() {
       <Button
         variant="ghost"
         size="icon"
-        className={`h-6 w-6 ${isRefreshing ? 'animate-spin' : ''}`}
-        onClick={fetchCredits}
-        disabled={isRefreshing}
-        title="刷新点数"
+        className="h-6 w-6"
+        onClick={handleRecharge}
+        title="充值点数"
       >
-        <RefreshCw className="h-3 w-3" />
+        <PlusCircle className="h-3 w-3" />
       </Button>
+      
+      {/* 充值弹窗 */}
+      <CreditRechargeDialog
+        isOpen={showCreditRechargeDialog}
+        onClose={() => setShowCreditRechargeDialog(false)}
+        onSuccess={() => fetchCredits()}
+      />
     </div>
   );
 }
