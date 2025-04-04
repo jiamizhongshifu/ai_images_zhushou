@@ -5,7 +5,7 @@ import { createClient } from '@/utils/supabase/server';
  * 获取用户图片生成历史记录
  * 
  * GET 参数:
- * - limit: 可选，限制返回记录数量，默认10条
+ * - limit: 可选，限制返回记录数量，默认100条
  * - offset: 可选，分页偏移量，默认0
  * 
  * 返回:
@@ -27,7 +27,7 @@ export async function GET(request: NextRequest) {
   try {
     // 获取请求参数
     const { searchParams } = new URL(request.url);
-    const limit = parseInt(searchParams.get('limit') || '10');
+    const limit = parseInt(searchParams.get('limit') || '100');
     const offset = parseInt(searchParams.get('offset') || '0');
     
     console.log(`获取历史记录，限制: ${limit}条，偏移: ${offset}`);

@@ -9,6 +9,9 @@ CREATE TABLE IF NOT EXISTS ai_images_creator_history (
   
   -- 可选：添加其他相关字段
   model_used TEXT,
+  style TEXT,
+  aspect_ratio TEXT,
+  standard_aspect_ratio TEXT,
   generation_settings JSONB,
   status TEXT DEFAULT 'completed',
   

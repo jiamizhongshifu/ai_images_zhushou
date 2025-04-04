@@ -110,7 +110,7 @@ export default function ProtectedPage() {
   const fetchImageHistory = async () => {
     try {
       setIsLoadingHistory(true);
-      const response = await fetch('/api/history/get?limit=4');
+      const response = await fetch('/api/history/get');
       
       if (!response.ok) {
         if (response.status === 401) {
@@ -597,7 +597,7 @@ export default function ProtectedPage() {
   // 更新图片生成骨架元素
   const renderGeneratingImageSkeleton = () => {
     return (
-      <div className="w-[calc(50%-8px)] md:w-[calc(25%-12px)] aspect-square bg-muted rounded-md relative overflow-hidden group hover:shadow transition-all">
+      <div className="aspect-square bg-muted rounded-md relative overflow-hidden group hover:shadow transition-all">
         <div className="absolute inset-0 bg-gradient-to-br from-muted to-muted/70"></div>
         {/* 扫光动画效果 */}
         <div className="absolute inset-0 before:absolute before:inset-0 before:-translate-x-full before:animate-shimmer before:bg-gradient-to-r before:from-transparent before:via-white/20 before:to-transparent"></div>
@@ -763,7 +763,7 @@ export default function ProtectedPage() {
             </div>
           </CardHeader>
           <CardContent>
-            <div className="flex flex-wrap gap-4 w-full overflow-y-auto max-h-[800px]">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 w-full overflow-y-auto max-h-[800px]">
               {isGenerating && renderGeneratingImageSkeleton()}
                       
               {/* 显示已生成的图片 */}
@@ -771,7 +771,7 @@ export default function ProtectedPage() {
                 generatedImages.map((imageUrl, index) => (
                   <div 
                     key={`img-${index}-${imageUrl.substring(imageUrl.lastIndexOf('/') + 1, imageUrl.length)}`}
-                    className="w-[calc(50%-8px)] md:w-[calc(25%-12px)] aspect-square bg-muted rounded-md relative overflow-hidden group hover:shadow transition-all cursor-pointer"
+                    className="aspect-square bg-muted rounded-md relative overflow-hidden group hover:shadow transition-all cursor-pointer"
                     onClick={() => setPreviewImage(imageUrl)}
                   >
                     <div className="relative w-full h-full">
@@ -818,7 +818,7 @@ export default function ProtectedPage() {
               ) : !isGenerating ? (
                 // 示例图片 - 只在没有生成图片且不在生成中时显示
                 Array.from({ length: 4 }).map((_, index) => (
-                  <div key={index} className="w-[calc(50%-8px)] md:w-[calc(25%-12px)] aspect-square bg-muted rounded-md relative overflow-hidden group hover:shadow transition-all">
+                  <div key={index} className="aspect-square bg-muted rounded-md relative overflow-hidden group hover:shadow transition-all">
                     <div className="absolute inset-0 flex items-center justify-center">
                       <div className="w-full h-full bg-gradient-to-br from-primary/5 to-secondary/10 flex items-center justify-center">
                         <p className="text-muted-foreground text-sm">示例图片 {index + 1}</p>
