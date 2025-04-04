@@ -22,6 +22,18 @@ export default function UserNav() {
       try {
         console.log('[UserNav] 开始获取用户信息');
         
+        // 检查是否有登出标记，如果有则跳过获取用户信息
+        const forceLoggedOut = localStorage.getItem('force_logged_out');
+        const isLoggedOut = sessionStorage.getItem('isLoggedOut');
+        
+        if (forceLoggedOut === 'true' || isLoggedOut === 'true') {
+          console.log('[UserNav] 检测到登出标记，跳过获取用户信息');
+          setUser(null);
+          setForceShowUser(false);
+          setIsLoading(false);
+          return;
+        }
+        
         // 检查认证状态
         if (authService.isAuthenticated()) {
           console.log('[UserNav] 认证服务检测到有效认证');
@@ -82,6 +94,17 @@ export default function UserNav() {
     const unsubscribe = authService.subscribe((authState) => {
       console.log(`[UserNav] 认证状态更新: isAuthenticated=${authState.isAuthenticated}`);
       
+      // 检查是否有登出标记
+      const forceLoggedOut = localStorage.getItem('force_logged_out');
+      const isLoggedOut = sessionStorage.getItem('isLoggedOut');
+      
+      if (forceLoggedOut === 'true' || isLoggedOut === 'true') {
+        console.log('[UserNav] 认证回调中检测到登出标记，强制设置为未登录状态');
+        setUser(null);
+        setForceShowUser(false);
+        return;
+      }
+      
       if (authState.isAuthenticated) {
         // 当认证状态更新为已认证，尝试获取用户信息
         authService.getUserInfo().then(userInfo => {
@@ -105,19 +128,61 @@ export default function UserNav() {
   
   const handleLogout = async () => {
     try {
-      // 先清除认证状态
+      setIsSigningOut(true);
+      
+      // 记录登出意图到localStorage，使其在页面跳转后仍然有效
+      localStorage.setItem('force_logged_out', 'true');
+      
+      // 先执行Supabase API登出
+      const { error } = await supabase.auth.signOut();
+      if (error) {
+        console.error('Supabase API登出错误:', error);
+      }
+      
+      // 清除认证服务状态
       authService.clearAuthState();
+      
+      // 手动清除所有可能的Cookie
+      const cookieNames = ['sb-access-token', 'sb-refresh-token', '__session', 'sb-refresh-token-nonce'];
+      const commonOptions = '; path=/; max-age=0; expires=Thu, 01 Jan 1970 00:00:00 GMT';
+      
+      cookieNames.forEach(cookieName => {
+        // 清除默认域下的cookie
+        document.cookie = `${cookieName}=${commonOptions}`;
+        // 清除当前域下的cookie
+        document.cookie = `${cookieName}=${commonOptions}; domain=${window.location.hostname}`;
+        
+        // 尝试在根域上清除
+        const domainParts = window.location.hostname.split('.');
+        if (domainParts.length > 1) {
+          const rootDomain = domainParts.slice(domainParts.length - 2).join('.');
+          document.cookie = `${cookieName}=${commonOptions}; domain=.${rootDomain}`;
+        }
+      });
+      
+      // 清除localStorage中所有可能的认证数据
+      const keysToRemove = [
+        'supabase.auth.token',
+        'supabase.auth.expires_at',
+        'auth_state',
+        'auth_valid',
+        'auth_time',
+        'wasAuthenticated'
+      ];
+      keysToRemove.forEach(key => localStorage.removeItem(key));
       
       // 将登出状态保存到sessionStorage
       sessionStorage.setItem('isLoggedOut', 'true');
       
       // 添加特殊参数防止中间件重定向
-      window.location.href = '/sign-in?force_logout=true';
+      window.location.href = '/?force_logout=true';
       
-      console.log('登出操作完成, 页面将重定向到登录页');
+      console.log('登出操作完成, 页面将重定向到首页');
     } catch (error) {
       console.error('登出过程中发生错误:', error);
       alert("退出登录时发生错误");
+    } finally {
+      setIsSigningOut(false);
     }
   };
   
@@ -146,6 +211,18 @@ export default function UserNav() {
     console.log('[UserNav] 手动设置认证状态');
     authService.manualAuthenticate();
     setForceShowUser(true);
+  };
+  
+  // 清除登出标记，用于登录按钮点击时
+  const clearLogoutFlags = () => {
+    console.log('[UserNav] 清除登出标记');
+    localStorage.removeItem('force_logged_out');
+    sessionStorage.removeItem('isLoggedOut');
+    
+    // 清除登出cookie通过添加特定参数
+    const currentUrl = new URL('/sign-in', window.location.origin);
+    currentUrl.searchParams.set('clear_logout_flags', 'true');
+    window.location.href = currentUrl.toString();
   };
   
   if (isLoading) {
@@ -177,13 +254,13 @@ export default function UserNav() {
       ) : (
         <div className="flex items-center gap-2">
           <Button
-            asChild
             className="rounded-full bg-white/80 dark:bg-black/80 backdrop-blur-md shadow-lg border border-gray-200 dark:border-gray-800"
+            onClick={clearLogoutFlags}
           >
-            <Link href="/sign-in" className="gap-2">
+            <div className="flex items-center gap-2">
               <LogIn className="h-4 w-4" />
               <span>登录</span>
-            </Link>
+            </div>
           </Button>
         </div>
       )}

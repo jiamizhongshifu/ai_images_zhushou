@@ -32,12 +32,62 @@ export default function LoginForm({ message }: LoginFormProps) {
   // 处理登录成功后的重定向
   const redirectToProtected = () => {
     const loginTime = Date.now();
-    // 在本地存储中设置认证信息
-    localStorage.setItem('auth_valid', 'true');
-    localStorage.setItem('auth_time', loginTime.toString());
     
-    // 使用window.location进行完全页面刷新，避免Next.js客户端路由可能的问题
-    window.location.href = `/protected?just_logged_in=true&login_time=${loginTime}`;
+    // 清除所有登出标记
+    try {
+      console.log('[登录表单] 清除登出标记');
+      localStorage.removeItem('force_logged_out');
+      sessionStorage.removeItem('isLoggedOut');
+      
+      // 在本地存储中设置认证信息
+      localStorage.setItem('auth_valid', 'true');
+      localStorage.setItem('auth_time', loginTime.toString());
+      
+      // 直接在客户端删除登出cookie
+      document.cookie = 'logged_out=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
+      
+      // 尝试在根域名上也清除cookie
+      try {
+        const domainParts = window.location.hostname.split('.');
+        if (domainParts.length > 1) {
+          const rootDomain = domainParts.slice(-2).join('.');
+          document.cookie = `logged_out=; path=/; domain=.${rootDomain}; expires=Thu, 01 Jan 1970 00:00:00 GMT`;
+        }
+      } catch (e) {
+        console.warn('[登录表单] 清除根域名cookie出错:', e);
+      }
+      
+      // 设置强制登录标记cookie
+      document.cookie = `force_login=true; path=/; max-age=${60 * 60}; SameSite=Lax`;
+      
+      // 使用完整URL调用API清除服务器端登出标记
+      const apiBaseUrl = window.location.origin;
+      fetch(`${apiBaseUrl}/api/auth/clear-logout-flags`, {
+        method: 'GET',
+        headers: {
+          'Cache-Control': 'no-cache, no-store',
+          'Pragma': 'no-cache'
+        },
+        credentials: 'include' // 确保包含cookie
+      }).then(response => {
+        if (response.ok) {
+          console.log('[登录表单] 服务器端登出标记清除成功');
+        } else {
+          console.warn('[登录表单] 服务器端登出标记清除失败');
+        }
+      }).catch(error => {
+        console.error('[登录表单] 清除服务器端登出标记出错:', error);
+      });
+    } catch (error) {
+      console.warn('[登录表单] 清除登出标记失败:', error);
+    }
+    
+    // 等待较长时间确保清除操作完成
+    setTimeout(() => {
+      // 使用window.location进行完全页面刷新，避免Next.js客户端路由可能的问题
+      // 添加force_login=true参数确保中间件识别为强制登录状态
+      window.location.href = `/protected?just_logged_in=true&login_time=${loginTime}&clear_logout_flags=true&force_login=true`;
+    }, 800); // 增加等待时间到800ms
   };
 
   // 处理表单提交

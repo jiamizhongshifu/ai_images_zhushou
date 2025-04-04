@@ -111,6 +111,12 @@ export const signInAction = async (formData: FormData) => {
       }
     }
     
+    // 直接在这里清除登出标记cookie
+    console.log("[登录] 服务端清除登出标记");
+    
+    // 设置force_login标记，它会覆盖任何登出标记
+    // 注意：这些操作效果会通过重定向参数传递，因为服务器端actions无法直接修改响应cookie
+    
     // 确保cookies已正确设置
     console.log("[登录] 会话验证通过，准备重定向");
   } catch (error) {
@@ -122,8 +128,10 @@ export const signInAction = async (formData: FormData) => {
   await new Promise(resolve => setTimeout(resolve, 300));
   console.log("[登录] 重定向到受保护页面");
   // 添加just_logged_in标记和登录时间戳，帮助客户端识别刚登录的状态
+  // 添加clear_logout_flags=true确保中间件清除所有登出标记
+  // 添加force_login=true强制清除所有登出状态
   const loginTime = Date.now();
-  return redirect(`/protected?just_logged_in=true&login_time=${loginTime}`);
+  return redirect(`/protected?just_logged_in=true&login_time=${loginTime}&clear_logout_flags=true&force_login=true`);
 };
 
 export const forgotPasswordAction = async (formData: FormData) => {
