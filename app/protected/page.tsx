@@ -2,10 +2,11 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { Upload, SendHorizontal, PlusCircle, RefreshCw, Image as ImageIcon, Loader2, Download, X, AlertCircle } from "lucide-react";
+import { Upload, SendHorizontal, PlusCircle, RefreshCw, Image as ImageIcon, Loader2, Download, X, AlertCircle, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import Image from "next/image";
+import CreditRechargeDialog from "@/components/payment/credit-recharge-dialog";
 
 export default function ProtectedPage() {
   const router = useRouter();
@@ -23,6 +24,9 @@ export default function ProtectedPage() {
   // 添加用户点数状态
   const [userCredits, setUserCredits] = useState<number | null>(null);
   const [isLoadingCredits, setIsLoadingCredits] = useState(false);
+  
+  // 添加充值弹窗状态
+  const [showCreditRechargeDialog, setShowCreditRechargeDialog] = useState(false);
   
   // 添加历史记录状态
   const [imageHistory, setImageHistory] = useState<any[]>([]);
@@ -85,6 +89,7 @@ export default function ProtectedPage() {
       try {
         // 标记初始化正在进行
         setIsInitializing(true);
+        console.log('开始初始化加载数据...');
         
         // 并行请求用户点数和历史记录
         const [creditsResponse, historyResponse] = await Promise.all([
@@ -97,6 +102,7 @@ export default function ProtectedPage() {
           const creditsData = await creditsResponse.json();
           if (creditsData.success) {
             setUserCredits(creditsData.credits);
+            console.log('成功加载用户点数:', creditsData.credits);
           }
         } else if (creditsResponse.status === 401) {
           router.push('/login');
@@ -109,36 +115,46 @@ export default function ProtectedPage() {
         if (historyResponse.ok) {
           const historyData = await historyResponse.json();
           if (historyData.success) {
-            console.log('获取到历史记录数据:', historyData.history);
+            console.log('初始化时获取到历史记录数据:', historyData.history?.length || 0, '条');
             
-            // 验证并处理图片URL
-            const validImages = historyData.history
-              .filter((item: any) => item.image_url)
-              .map((item: any) => ({
-                ...item,
-                image_url: validateImageUrl(item.image_url)
-              }))
-              .filter((item: any) => item.image_url); // 过滤掉无效的URL
-            
-            console.log('处理后的有效图片数据:', validImages.length, '条');
-            setImageHistory(validImages);
-            
-            // 如果有有效图片，设置到生成图片数组
-            if (validImages.length > 0) {
-              console.log('从历史记录加载图片到展示区域');
-              // 提取图片URL数组
-              const imageUrls = validImages.map((item: any) => item.image_url);
-              setGeneratedImages(imageUrls);
-              validImagesLoaded = true;
+            if (Array.isArray(historyData.history) && historyData.history.length > 0) {
+              // 验证并处理图片URL
+              const validImages = historyData.history
+                .filter((item: any) => item && item.image_url)
+                .map((item: any) => ({
+                  ...item,
+                  image_url: validateImageUrl(item.image_url)
+                }))
+                .filter((item: any) => item.image_url); // 过滤掉无效的URL
+              
+              console.log('初始化处理后的有效图片数据:', validImages.length, '条');
+              setImageHistory(validImages);
+              
+              // 如果有有效图片，设置到生成图片数组
+              if (validImages.length > 0) {
+                console.log('初始化时从历史记录加载图片到展示区域');
+                // 提取图片URL数组
+                const imageUrls = validImages.map((item: any) => item.image_url);
+                setGeneratedImages(imageUrls);
+                validImagesLoaded = true;
+                console.log('成功设置', imageUrls.length, '张图片到展示区域');
+              }
+            } else {
+              console.log('初始化时未获取到历史记录或记录为空');
             }
+          } else {
+            console.error('初始化时获取历史记录失败:', historyData.error || '未知错误');
           }
+        } else {
+          console.error('初始化时历史记录请求失败:', historyResponse.status);
         }
         
         // 等待状态更新完成再结束初始化
         // 使用短暂延时确保状态已更新
         setTimeout(() => {
           setIsInitializing(false);
-        }, 100);
+          console.log('初始化加载完成, 图片加载状态:', validImagesLoaded ? '成功' : '无图片');
+        }, 500);
       } catch (error) {
         console.error('初始化加载数据失败:', error);
         // 静默失败，不显示错误给用户
@@ -184,29 +200,60 @@ export default function ProtectedPage() {
   // 增强fetchImageHistory处理函数
   const fetchImageHistory = async () => {
     try {
+      console.log('开始获取历史记录');
+      
+      // 设置加载状态
       setIsLoadingHistory(true);
+      
+      // 确保不是服务端渲染
+      if (typeof window === 'undefined') {
+        console.log('服务端渲染，跳过获取历史记录');
+        setIsLoadingHistory(false);
+        return;
+      }
+      
+      // 强制清空重试计数
+      setImageLoadRetries({});
+      
       const response = await fetch('/api/history/get');
       
       if (!response.ok) {
         if (response.status === 401) {
+          console.log('未授权，跳转到登录页');
           router.push('/login');
           return;
         }
         throw new Error(`获取历史记录失败: HTTP ${response.status}`);
       }
       
-      const data = await response.json().catch(err => {
+      let data;
+      try {
+        data = await response.json();
+      } catch (err) {
         console.error('解析历史记录响应失败:', err);
-        return { success: false, error: '解析响应数据失败' };
-      });
+        throw new Error('解析响应数据失败');
+      }
       
       if (data.success) {
         // 直接打印历史记录，帮助调试
         console.log('获取到历史记录数据:', data.history.length, '条');
         
+        if (!Array.isArray(data.history)) {
+          console.error('历史记录不是数组格式:', data.history);
+          setIsLoadingHistory(false);
+          return;
+        }
+        
+        if (data.history.length === 0) {
+          console.log('历史记录为空');
+          setImageHistory([]);
+          setIsLoadingHistory(false);
+          return;
+        }
+        
         // 验证并处理图片URL
         const validImages = data.history
-          .filter((item: any) => item.image_url)
+          .filter((item: any) => item && item.image_url)
           .map((item: any) => ({
             ...item,
             image_url: validateImageUrl(item.image_url)
@@ -214,17 +261,27 @@ export default function ProtectedPage() {
           .filter((item: any) => item.image_url); // 过滤掉无效的URL
         
         console.log('处理后的有效图片数据:', validImages.length, '条');
+        
+        // 先更新历史记录状态
         setImageHistory(validImages);
         
-        // 将有效图片设置到生成图片数组，确保结果可见
+        // 确保有历史记录时更新生成图片状态
         if (validImages.length > 0) {
           console.log('从历史记录加载图片到展示区域');
-          // 如果没有手动生成的图片或强制刷新，则从历史加载
-          if (generatedImages.length === 0 || isLoadingHistory) {
-            const imageUrls = validImages.map((item: any) => item.image_url);
-            setGeneratedImages(imageUrls);
-            console.log('已设置', imageUrls.length, '张图片到展示区域');
-          }
+          const imageUrls = validImages.map((item: any) => item.image_url);
+          
+          // 防止出现重复URL
+          const uniqueUrls = Array.from(new Set(imageUrls)) as string[];
+          console.log('处理后的唯一URL数量:', uniqueUrls.length);
+          
+          // 清空当前重试记录
+          setImageLoadRetries({});
+          
+          // 设置生成图片状态
+          setGeneratedImages(uniqueUrls);
+          console.log('成功设置历史图片到展示区');
+        } else {
+          console.warn('处理后没有有效的图片URL');
         }
       } else {
         console.error('获取历史记录失败:', data.error || '未知错误');
@@ -233,73 +290,62 @@ export default function ProtectedPage() {
       const errorMessage = error instanceof Error ? error.message : String(error);
       console.error('获取历史记录出错:', errorMessage);
     } finally {
-      // 等待DOM刷新
+      // 短延时确保DOM更新
       setTimeout(() => {
         setIsLoadingHistory(false);
         console.log('历史记录加载完成');
-      }, 100);
+      }, 500);
     }
   };
   
   // 增强的图片URL验证与清理
   const validateImageUrl = (url: string): string | null => {
+    if (!url) return null;
+    
     try {
-      if (!url) return null;
+      // 1. 清理URL中的问题
+      let cleanUrl = url.trim();
       
-      // 清理URL中可能出现的问题
-      let cleanUrl = url;
-      
-      // 1. 删除URL末尾的右括号(如果没有对应的左括号)
-      if (cleanUrl.endsWith(')') && !cleanUrl.includes('(')) {
-        cleanUrl = cleanUrl.slice(0, -1);
+      // 2. 检查是否是相对URL
+      if (cleanUrl.startsWith('/')) {
+        // 将相对URL转换为绝对URL
+        cleanUrl = `${window.location.origin}${cleanUrl}`;
+        console.log('转换相对URL为绝对URL:', cleanUrl);
+        return cleanUrl;
       }
       
-      // 2. 删除末尾的特殊字符
-      cleanUrl = cleanUrl.replace(/[.,;:!?)]$/, '');
+      // 3. 检查URL是否包含http协议
+      if (!cleanUrl.startsWith('http://') && !cleanUrl.startsWith('https://')) {
+        console.log('URL缺少协议，添加https://', cleanUrl);
+        cleanUrl = `https://${cleanUrl}`;
+      }
       
-      // 3. 删除多余的引号
+      // 4. 清理URL末尾的特殊字符和引号
+      cleanUrl = cleanUrl.replace(/[.,;:!?)"']+$/, '');
+      
+      // 5. 移除两端的引号
       if ((cleanUrl.startsWith('"') && cleanUrl.endsWith('"')) || 
           (cleanUrl.startsWith("'") && cleanUrl.endsWith("'"))) {
         cleanUrl = cleanUrl.slice(1, -1);
       }
       
-      // 对于filesystem.site的图片URL进行特殊处理
-      if (cleanUrl.includes('filesystem.site/cdn')) {
+      // 6. 特殊处理常见的图片服务源
+      // filesystem.site的图片URL特殊处理
+      if (cleanUrl.includes('filesystem.site')) {
         // 确保没有多余的括号
         cleanUrl = cleanUrl.replace(/\)+$/, '');
       }
       
-      // 对于OpenAI生成的URL，进行特殊处理
-      if (cleanUrl.includes('oaiusercontent.com')) {
-        return cleanUrl; // 直接返回清理后的URL
-      }
-      
-      // 尝试解析URL以验证其有效性
+      // 7. 验证是否为合法URL
       try {
-        if (typeof window !== 'undefined') {
-          // 浏览器环境
-          const parsedUrl = new URL(cleanUrl);
-          
-          // 如果是相对路径，转换为绝对路径
-          if (!parsedUrl.protocol) {
-            return new URL(cleanUrl, window.location.origin).toString();
-          }
-        }
-        
+        new URL(cleanUrl);
         return cleanUrl;
       } catch (parseError) {
-        console.warn('URL解析失败，尝试添加协议:', cleanUrl);
-        
-        // 尝试添加协议前缀
-        if (!cleanUrl.startsWith('http')) {
-          return validateImageUrl(`https://${cleanUrl}`);
-        }
-        
-        console.error('无效的图片URL:', cleanUrl, parseError);
+        console.error('URL格式无效:', cleanUrl, parseError);
         return null;
       }
     } catch (error) {
-      console.error('URL验证过程中出错:', url, error);
+      console.error('验证URL过程中出错:', url, error);
       return null;
     }
   };
@@ -383,7 +429,7 @@ export default function ProtectedPage() {
         setUploadedImage(dataUrl);
         
         // 创建Image对象以获取图片的宽高
-        const img = new Image();
+        const img = new (window.Image || Image)();
         img.onload = () => {
           const width = img.width;
           const height = img.height;
@@ -554,80 +600,35 @@ export default function ProtectedPage() {
 
   const handleImageError = (imageUrl: string, e: React.SyntheticEvent<HTMLImageElement>) => {
     try {
+      console.error(`图片加载失败: ${imageUrl}`);
       const target = e.target as HTMLImageElement;
       const currentRetries = imageLoadRetries[imageUrl] || 0;
       
-      console.warn(`图片加载失败 (尝试 ${currentRetries + 1}/${MAX_RETRIES}): ${imageUrl}`);
+      // 更新重试次数
+      setImageLoadRetries(prev => ({
+        ...prev,
+        [imageUrl]: currentRetries + 1
+      }));
       
+      // 设置占位图
+      target.src = `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='100' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' fill='%23f3f4f6'/%3E%3Cpath d='M50 30c-11.046 0-20 8.954-20 20s8.954 20 20 20 20-8.954 20-20-8.954-20-20-20z' fill='%23ef4444' fill-opacity='0.2'/%3E%3Cpath d='M45 45l10 10M55 45l-10 10' stroke='%23ef4444' stroke-width='3'/%3E%3C/svg%3E`;
+      target.classList.add('opacity-50');
+      
+      // 如果未超过最大重试次数，尝试清理和验证URL
       if (currentRetries < MAX_RETRIES) {
-        // 更新重试次数
-        setImageLoadRetries(prev => ({
-          ...prev,
-          [imageUrl]: currentRetries + 1
-        }));
-        
-        // 设置占位图
-        target.src = `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='100' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' fill='%23f3f4f6'/%3E%3Cpath d='M50 40c-5.523 0-10 4.477-10 10s4.477 10 10 10 10-4.477 10-10-4.477-10-10-10zm0 18c-4.418 0-8-3.582-8-8s3.582-8 8-8 8 3.582 8 8-3.582 8-8 8z' fill='%239ca3af'/%3E%3Cpath d='M50 30c-11.046 0-20 8.954-20 20s8.954 20 20 20 20-8.954 20-20-8.954-20-20-20zm0 36c-8.837 0-16-7.163-16-16s7.163-16 16-16 16 7.163 16 16-7.163 16-16 16z' fill='%239ca3af'/%3E%3C/svg%3E`;
-        target.classList.add('opacity-50');
-        
-        // 尝试清理和验证URL
-        let cleanedUrl = imageUrl;
-        
-        // 如果URL末尾有右括号但不是有效的URL组成部分，尝试移除
-        if (cleanedUrl.endsWith(')') && !cleanedUrl.includes('(')) {
-          cleanedUrl = cleanedUrl.slice(0, -1);
-          console.log('清理URL中的右括号:', cleanedUrl);
-        }
-        
-        // 移除URL末尾可能的特殊字符
-        if (/[.,;:!?)]$/.test(cleanedUrl)) {
-          cleanedUrl = cleanedUrl.replace(/[.,;:!?)]$/, '');
-          console.log('清理URL中的特殊字符:', cleanedUrl);
-        }
-        
-        // 验证清理后的URL
-        const validatedUrl = validateImageUrl(cleanedUrl);
-        
-        // 创建一个延时重试的定时器
+        // 延时后重试
         setTimeout(() => {
-          try {
-            if (validatedUrl && validatedUrl !== imageUrl) {
-              // 如果URL需要更新，使用新的URL重试
-              console.log('使用清理后的URL重试:', validatedUrl);
-              target.src = validatedUrl;
-              
-              // 如果URL变化了，更新生成的图片数组
-              if (cleanedUrl !== imageUrl) {
-                setGeneratedImages(prev => 
-                  prev.map(url => url === imageUrl ? cleanedUrl : url)
-                );
-              }
-            } else {
-              // 使用原始URL重试
-              target.src = imageUrl;
-            }
-          } catch (innerError) {
-            console.error('图片重试加载失败:', innerError);
+          if (target && document.body.contains(target)) {
+            console.log(`尝试重新加载图片 (${currentRetries + 1}/${MAX_RETRIES}): ${imageUrl}`);
+            target.src = imageUrl;
           }
-        }, RETRY_DELAY);
+        }, RETRY_DELAY * (currentRetries + 1)); // 递增重试延迟
       } else {
-        // 超过最大重试次数，显示永久占位图
-        target.src = `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='100' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' fill='%23fee2e2'/%3E%3Cpath d='M50 40c-5.523 0-10 4.477-10 10s4.477 10 10 10 10-4.477 10-10-4.477-10-10-10zm0 18c-4.418 0-8-3.582-8-8s3.582-8 8-8 8 3.582 8 8-3.582 8-8 8z' fill='%23ef4444'/%3E%3Cpath d='M50 30c-11.046 0-20 8.954-20 20s8.954 20 20 20 20-8.954 20-20-8.954-20-20-20zm0 36c-8.837 0-16-7.163-16-16s7.163-16 16-16 16 7.163 16 16-7.163 16-16 16z' fill='%23ef4444'/%3E%3C/svg%3E`;
-        target.classList.add('opacity-75');
+        // 超过最大重试次数，显示永久失败状态
         console.error(`图片加载失败，已达到最大重试次数: ${imageUrl}`);
-        
-        // 从历史记录中移除失败的图片
-        setImageHistory(prev => prev.filter(item => item.image_url !== imageUrl));
-        setGeneratedImages(prev => prev.filter(url => url !== imageUrl));
-        
-        // 尝试重新获取历史记录
-        fetchImageHistory().catch(err => {
-          console.error('重新获取历史记录失败:', err);
-        });
       }
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      console.error('处理图片加载失败时出错:', errorMessage);
+      console.error('处理图片加载失败时出错:', error);
     }
   };
 
@@ -641,6 +642,13 @@ export default function ProtectedPage() {
         delete newRetries[imageUrl];
         return newRetries;
       });
+      
+      // 如果有事件对象，设置图片样式
+      if (e && e.target) {
+        const target = e.target as HTMLImageElement;
+        target.classList.remove('opacity-50');
+        target.classList.add('opacity-100');
+      }
     } catch (error) {
       console.error('处理图片加载成功事件出错:', error);
     }
@@ -655,6 +663,9 @@ export default function ProtectedPage() {
         ...prev,
         [imageUrl]: 0
       }));
+      
+      // 强制刷新状态，触发重新渲染
+      setGeneratedImages(prev => [...prev]);
     } catch (error) {
       console.error('重试加载图片失败:', error);
     }
@@ -692,6 +703,68 @@ export default function ProtectedPage() {
         </div>
       </div>
     );
+  };
+
+  // 改进删除图片的处理逻辑
+  const handleDeleteImage = async (imageToDelete: string) => {
+    // 确认是否删除
+    if (!confirm('确定要删除这张图片吗？删除后不可恢复。')) {
+      return;
+    }
+    
+    try {
+      console.log('开始删除图片:', imageToDelete);
+      
+      // 立即从UI中移除图片，提供即时反馈
+      setGeneratedImages(prevImages => prevImages.filter(img => img !== imageToDelete));
+      
+      // 也从历史记录中移除，确保一致性
+      setImageHistory(prev => prev.filter(item => item.image_url !== imageToDelete));
+      
+      // 清除重试计数和任何缓存
+      setImageLoadRetries(prev => {
+        const newRetries = {...prev};
+        delete newRetries[imageToDelete];
+        return newRetries;
+      });
+      
+      // 调用强化的删除API
+      const response = await fetch('/api/history/delete', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Cache-Control': 'no-cache, no-store'
+        },
+        body: JSON.stringify({ 
+          imageUrl: imageToDelete,
+          timestamp: new Date().getTime() // 添加时间戳避免缓存
+        })
+      });
+      
+      const result = await response.json();
+      console.log('删除结果:', result);
+
+      if (!response.ok) {
+        console.error('删除请求失败:', response.status, result.error);
+      }
+
+      // 不论结果如何，确保本地UI与删除操作保持一致
+      // 图片已从UI移除，保持这个状态
+      
+      // 可选：在短暂延时后刷新历史记录，确保与服务器同步
+      // 此步骤通常不需要，因为我们已经在本地维护了一致的状态
+      setTimeout(() => {
+        // 静默刷新历史记录，但不影响用户体验
+        fetchImageHistory().catch(e => {
+          // 忽略错误，不影响用户体验
+          console.log('后台刷新历史记录时出错 (忽略):', e);
+        });
+      }, 2000);
+      
+    } catch (error) {
+      console.error('删除图片处理过程中出错:', error);
+      // 即使发生错误，也保持UI上已经删除的状态，提供一致的用户体验
+    }
   };
 
   return (
@@ -808,7 +881,13 @@ export default function ProtectedPage() {
                           userCredits ?? '...'
                         )}点
                       </span>
-                      <Button variant="ghost" size="icon" className="h-6 w-6 ml-1" title="充值点数">
+                      <Button 
+                        variant="ghost" 
+                        size="icon" 
+                        className="h-6 w-6 ml-1" 
+                        title="充值点数"
+                        onClick={() => setShowCreditRechargeDialog(true)}
+                      >
                         <PlusCircle className="h-3 w-3" />
                       </Button>
                     </div>
@@ -853,40 +932,75 @@ export default function ProtectedPage() {
                 // 显示生成的图片
                 generatedImages.map((image, index) => (
                   <div 
-                    key={index} 
-                    className="rounded-xl overflow-hidden aspect-square relative group"
-                    onClick={() => setPreviewImage(image)}
+                    key={`img-${index}`}
+                    className="flex flex-col border border-border rounded-xl overflow-hidden"
                   >
-                    {imageLoadRetries[image] ? (
-                      <div className="h-full w-full bg-muted animate-pulse flex flex-col items-center justify-center">
+                    {imageLoadRetries[image] > MAX_RETRIES - 1 ? (
+                      <div className="h-full w-full aspect-square bg-muted animate-pulse flex flex-col items-center justify-center">
                         <AlertCircle className="h-8 w-8 text-destructive mb-2" />
                         <p className="text-xs text-muted-foreground text-center px-2">加载失败</p>
+                        <p className="text-[8px] text-muted-foreground line-clamp-1 px-1 mt-1">{image.substring(0, 30)}...</p>
                         <Button 
                           variant="outline" 
                           size="sm" 
                           className="mt-2"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            retryImage(image);
-                          }}
+                          onClick={() => retryImage(image)}
                         >
                           重试
                         </Button>
                       </div>
                     ) : generationStatus === "loading" && index === 0 ? (
-                      <div className="h-full w-full bg-muted animate-pulse flex flex-col items-center justify-center">
+                      <div className="h-full aspect-square w-full bg-muted animate-pulse flex flex-col items-center justify-center">
                         <Loader2 className="h-8 w-8 text-primary animate-spin" />
                         <p className="text-xs text-muted-foreground mt-2">加载中...</p>
                       </div>
                     ) : (
-                      <img
-                        src={image}
-                        alt="生成的图片"
-                        className="object-cover w-full h-full transition-all group-hover:scale-105"
-                        loading="lazy"
-                        onLoad={() => handleImageLoad(image, undefined)}
-                        onError={(e) => handleImageError(image, e)}
-                      />
+                      <>
+                        {/* 图片区域 - 点击直接预览 */}
+                        <div 
+                          className="cursor-pointer"
+                          onClick={() => setPreviewImage(image)}
+                        >
+                          <img
+                            src={image}
+                            alt={`生成的图片 ${index + 1}`}
+                            className="w-full aspect-square object-cover"
+                            loading="lazy"
+                            crossOrigin="anonymous"
+                            onLoad={(e) => handleImageLoad(image, e)}
+                            onError={(e) => handleImageError(image, e)}
+                          />
+                        </div>
+                        
+                        {/* 底部信息栏 */}
+                        <div className="p-2 bg-muted flex justify-between items-center">
+                          <div className="text-xs font-medium">
+                            图片 {index + 1}
+                          </div>
+                          <div className="flex gap-2">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                downloadImage(image);
+                              }}
+                              className="bg-primary/10 hover:bg-primary/20 rounded p-1.5 transition-colors"
+                              title="下载图片"
+                            >
+                              <Download className="h-4 w-4 text-primary" />
+                            </button>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDeleteImage(image);
+                              }}
+                              className="bg-destructive/10 hover:bg-destructive/20 rounded p-1.5 transition-colors"
+                              title="删除图片"
+                            >
+                              <Trash2 className="h-4 w-4 text-destructive" />
+                            </button>
+                          </div>
+                        </div>
+                      </>
                     )}
                   </div>
                 ))
@@ -944,12 +1058,35 @@ export default function ProtectedPage() {
                   src={previewImage} 
                   alt="预览图片" 
                   className="w-full h-full object-contain"
+                  crossOrigin="anonymous"
                 />
+              </div>
+              <div className="p-4 text-sm flex justify-between items-center">
+                <div className="truncate">
+                  <span className="text-muted-foreground">图片地址: </span>
+                  <span className="text-xs text-muted-foreground/70 truncate max-w-xs">{previewImage}</span>
+                </div>
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  className="ml-2 flex-shrink-0"
+                  onClick={() => window.open(previewImage, '_blank')}
+                >
+                  <Download className="h-4 w-4 mr-1" />
+                  <span>在新窗口打开</span>
+                </Button>
               </div>
             </div>
           </div>
         </div>
       )}
+      
+      {/* 充值弹窗 */}
+      <CreditRechargeDialog
+        isOpen={showCreditRechargeDialog}
+        onClose={() => setShowCreditRechargeDialog(false)}
+        onSuccess={() => fetchUserCredits()}
+      />
     </div>
   );
 }

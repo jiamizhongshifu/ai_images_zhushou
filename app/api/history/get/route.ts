@@ -70,17 +70,45 @@ export async function GET(request: NextRequest) {
       });
     }
     
+    // 处理URL格式，确保所有URL都是完整正确的格式
+    const processedData = data.map(item => {
+      // 确保URL格式正确
+      if (item.image_url && typeof item.image_url === 'string') {
+        let imageUrl = item.image_url.trim();
+        
+        // 移除URL两端的引号
+        if ((imageUrl.startsWith('"') && imageUrl.endsWith('"')) || 
+            (imageUrl.startsWith("'") && imageUrl.endsWith("'"))) {
+          imageUrl = imageUrl.slice(1, -1);
+        }
+        
+        // 确保URL包含协议
+        if (!imageUrl.startsWith('http://') && !imageUrl.startsWith('https://')) {
+          imageUrl = `https://${imageUrl}`;
+        }
+        
+        // 确保filesystem.site域名正确
+        if (imageUrl.includes('filesystem.site')) {
+          // 移除URL末尾可能的多余字符
+          imageUrl = imageUrl.replace(/[.,;:!?)]$/, '');
+        }
+        
+        item.image_url = imageUrl;
+      }
+      return item;
+    });
+    
     // 返回结果
-    console.log(`成功获取${data.length}条历史记录`);
-    console.log('首条记录示例:', data.length > 0 ? {
-      id: data[0].id,
-      image_url: data[0].image_url,
-      prompt: data[0].prompt?.substring(0, 30) + '...'
+    console.log(`成功获取${processedData.length}条历史记录`);
+    console.log('首条记录示例:', processedData.length > 0 ? {
+      id: processedData[0].id,
+      image_url: processedData[0].image_url,
+      prompt: processedData[0].prompt?.substring(0, 30) + '...'
     } : 'No records');
     
     return new Response(JSON.stringify({ 
       success: true, 
-      history: data
+      history: processedData
     }), {
       status: 200,
       headers: {

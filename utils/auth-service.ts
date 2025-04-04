@@ -11,6 +11,8 @@ export interface AuthState {
   expiresAt?: number;
   userId?: string;
   sessionId?: string;
+  email?: string;
+  lastVerified?: number;
 }
 
 // 存储类型枚举
@@ -148,9 +150,22 @@ class AuthService {
   }
 
   /**
+   * 安全检查客户端环境
+   * 防止在服务器端执行时出错
+   */
+  private isClientSide(): boolean {
+    return typeof window !== 'undefined' && typeof localStorage !== 'undefined' && typeof document !== 'undefined';
+  }
+
+  /**
    * 检查传统认证方式
    */
   private checkLegacyAuth(): boolean {
+    // 服务器端直接返回false
+    if (!this.isClientSide()) {
+      return false;
+    }
+    
     try {
       // 尝试读取localStorage中的旧格式认证信息
       let localAuth;
@@ -240,6 +255,10 @@ class AuthService {
    * 更新传统认证状态
    */
   private updateLegacyAuth(isAuthenticated: boolean): void {
+    if (!this.isClientSide()) {
+      return;
+    }
+    
     try {
       if (isAuthenticated) {
         // 设置传统认证标记
@@ -280,6 +299,10 @@ class AuthService {
    * 清除Supabase认证相关的Cookie和localStorage
    */
   private clearSupabaseAuth(): void {
+    if (!this.isClientSide()) {
+      return;
+    }
+    
     try {
       // 清除localStorage中的Supabase认证数据
       localStorage.removeItem('supabase.auth.token');
@@ -299,6 +322,10 @@ class AuthService {
    * 清除指定的Cookie
    */
   private clearCookies(cookieNames: string[]): void {
+    if (!this.isClientSide()) {
+      return;
+    }
+    
     try {
       const commonOptions = '; path=/; max-age=0; expires=Thu, 01 Jan 1970 00:00:00 GMT';
       
@@ -325,6 +352,11 @@ class AuthService {
    * 从存储中读取认证状态
    */
   private getStoredAuthState(): AuthState | null {
+    // 服务器端直接返回null
+    if (!this.isClientSide()) {
+      return null;
+    }
+    
     // 优先从localStorage读取
     try {
       const stateStr = localStorage.getItem(AUTH_STATE_KEY);
@@ -359,6 +391,10 @@ class AuthService {
    * 保存认证状态到存储
    */
   private saveAuthState(state: AuthState): void {
+    if (!this.isClientSide()) {
+      return;
+    }
+    
     try {
       // 保存到localStorage
       this.setStorage(StorageType.LOCAL_STORAGE, AUTH_STATE_KEY, JSON.stringify(state));
@@ -371,6 +407,10 @@ class AuthService {
    * 设置存储键值对
    */
   private setStorage(type: StorageType, key: string, value: string): void {
+    if (!this.isClientSide()) {
+      return;
+    }
+    
     try {
       switch (type) {
         case StorageType.LOCAL_STORAGE:
@@ -391,6 +431,10 @@ class AuthService {
    * 从存储中移除键
    */
   private removeStorage(type: StorageType, key: string): void {
+    if (!this.isClientSide()) {
+      return;
+    }
+    
     try {
       switch (type) {
         case StorageType.LOCAL_STORAGE:
@@ -408,28 +452,95 @@ class AuthService {
   }
 
   /**
-   * 刷新认证会话
+   * 刷新会话
+   * 尝试多种方式恢复用户会话
    */
   public async refreshSession(): Promise<boolean> {
+    console.log('[AuthService] 开始刷新会话');
+    
+    // 记录开始时间，用于计算耗时
+    const startTime = Date.now();
+    
     try {
-      console.log('[AuthService] 尝试刷新会话');
-      
-      const { data, error } = await this.supabase.auth.refreshSession();
-      
-      if (error) {
-        console.error('[AuthService] 刷新会话出错:', error);
-        return false;
-      }
-      
-      if (data.session) {
-        console.log('[AuthService] 会话刷新成功');
-        // 自动通过onAuthStateChange处理
+      // 首先检查内存中的认证状态
+      if (this.isAuthenticated()) {
+        console.log('[AuthService] 内存中已有有效认证状态');
         return true;
       }
       
-      return false;
+      // 尝试从存储中恢复状态
+      const storedState = this.getStoredAuthState();
+      if (storedState && storedState.isAuthenticated && storedState.userId) {
+        console.log('[AuthService] 从本地存储恢复成功');
+        memoryAuthState = storedState;
+        this.notifySubscribers();
+        return true;
+      }
+      
+      // 尝试直接从Supabase刷新会话
+      let result = false;
+      
+      // 实现指数退避重试 - 最多尝试3次
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          console.log(`[AuthService] 尝试刷新Supabase会话 (尝试 ${attempt + 1}/3)`);
+          const { data, error } = await this.supabase.auth.refreshSession();
+          
+          if (error) {
+            console.warn(`[AuthService] 刷新会话失败 (尝试 ${attempt + 1}/3):`, error.message);
+            
+            // 检查是否是会话不存在的错误
+            if (error.message.includes('not found') || error.message.includes('expired')) {
+              console.log('[AuthService] 会话不存在或已过期，停止重试');
+              break;
+            }
+            
+            // 如果不是最后一次尝试，等待后重试
+            if (attempt < 2) {
+              const delay = Math.pow(2, attempt) * 1000; // 指数退避: 1s, 2s, 4s
+              console.log(`[AuthService] 等待 ${delay}ms 后重试`);
+              await new Promise(resolve => setTimeout(resolve, delay));
+            }
+            continue;
+          }
+          
+          // 获取到会话信息
+          if (data.session) {
+            console.log('[AuthService] Supabase会话刷新成功:', data.session.expires_at);
+            
+            // 更新内存中的认证状态
+            this.setAuthState({
+              isAuthenticated: true,
+              lastAuthTime: Date.now(),
+              userId: data.session.user.id,
+              email: data.session.user.email || '',
+              sessionId: data.session.user.id,
+              expiresAt: new Date(data.session.expires_at || '').getTime()
+            });
+            
+            result = true;
+            break; // 成功，退出重试循环
+          } else {
+            console.warn('[AuthService] Supabase返回了空会话');
+          }
+        } catch (err) {
+          console.error(`[AuthService] 刷新会话过程中出错 (尝试 ${attempt + 1}/3):`, err);
+          
+          // 如果不是最后一次尝试，等待后重试
+          if (attempt < 2) {
+            const delay = Math.pow(2, attempt) * 1000;
+            await new Promise(resolve => setTimeout(resolve, delay));
+          }
+        }
+      }
+      
+      // 记录耗时
+      const duration = Date.now() - startTime;
+      console.log(`[AuthService] 会话刷新${result ? '成功' : '失败'}, 耗时 ${duration}ms`);
+      
+      return result;
     } catch (error) {
-      console.error('[AuthService] 刷新会话异常:', error);
+      console.error('[AuthService] 刷新会话过程中发生异常:', error);
       return false;
     }
   }

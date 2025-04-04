@@ -17,7 +17,45 @@ export default function ProtectedLayout({
   // 添加加载状态
   const [loading, setLoading] = useState(false); // 默认不显示加载状态
 
-  // 验证用户是否已登录，未登录则重定向到登录页
+  // 改进会话验证逻辑，使用多级恢复策略
+  const validateSession = async () => {
+    try {
+      console.log("[受保护页面] 开始验证用户会话");
+      
+      // 1. 快速检查 - 使用认证服务中内存状态
+      if (authService.isAuthenticated()) {
+        console.log("[受保护页面] 认证服务报告用户已登录");
+        return true;
+      }
+      
+      // 2. 尝试自动恢复会话
+      console.log("[受保护页面] 尝试自动恢复会话");
+      const refreshResult = await authService.refreshSession();
+      
+      if (refreshResult) {
+        console.log("[受保护页面] 会话恢复成功");
+        return true;
+      }
+      
+      // 3. 尝试获取用户信息，作为最后努力
+      console.log("[受保护页面] 尝试获取用户信息");
+      const userInfo = await authService.getUserInfo();
+      
+      if (userInfo) {
+        console.log("[受保护页面] 成功获取用户信息，自动认证");
+        authService.manualAuthenticate();
+        return true;
+      }
+      
+      console.log("[受保护页面] 所有验证方法失败，用户未认证");
+      return false;
+    } catch (error) {
+      console.error("[受保护页面] 验证会话时出错:", error);
+      return false;
+    }
+  };
+
+  // 页面挂载时使用改进的验证逻辑
   useEffect(() => {
     let mounted = true;
     
@@ -45,74 +83,29 @@ export default function ProtectedLayout({
       return;
     }
     
-    // 快速检查认证状态
-    const quickCheck = () => {
-      // 使用认证服务检查认证状态
-      if (authService.isAuthenticated()) {
-        console.log("[受保护页面] 认证服务检测到有效认证");
-        return true;
-      }
-      
-      return false;
-    };
-    
-    // 如果快速检查通过，直接显示内容
-    if (quickCheck()) {
-      return;
-    }
-    
-    // 否则进行详细API验证，此时设置loading状态
-    const fullCheck = async () => {
-      if (mounted) setLoading(true); // 显示加载状态
-      
+    // 快速验证流程
+    const quickCheck = async () => {
       try {
-        // 在控制台打印当前验证状态
-        console.log("[受保护页面] 开始API验证用户会话");
+        // 使用提升的验证逻辑，避免不必要的API调用
+        const isAuthenticated = await validateSession();
         
-        // 首先检查URL参数，如果有登录标记，直接显示内容
-        const urlParams = new URLSearchParams(window.location.search);
-        const justLoggedIn = urlParams.get('just_logged_in');
-        
-        if (justLoggedIn) {
-          console.log("[受保护页面] 检测到刚刚登录的标记，跳过会话验证");
-          authService.manualAuthenticate(); // 手动设置认证状态
-          if (mounted) setLoading(false);
-          return;
-        }
-        
-        // 尝试刷新会话
-        console.log("[受保护页面] 尝试刷新会话");
-        const refreshResult = await authService.refreshSession();
-        
-        if (refreshResult) {
-          console.log("[受保护页面] 会话刷新成功");
-          if (mounted) setLoading(false);
-        } else {
-          // 尝试获取用户信息
-          console.log("[受保护页面] 会话刷新失败，尝试获取用户信息");
-          const userInfo = await authService.getUserInfo();
-          
-          if (userInfo) {
-            console.log(`[受保护页面] 获取用户信息成功，用户ID: ${userInfo.id.substring(0, 8)}...`);
-            if (mounted) setLoading(false);
-          } else {
-            // 所有尝试都失败
-            console.log("[受保护页面] API验证失败，重定向到登录页");
-            if (mounted) {
-              router.push("/sign-in");
-            }
-          }
+        if (!isAuthenticated && mounted) {
+          console.log("[受保护页面] 验证失败，重定向到登录页");
+          router.push("/sign-in");
+        } else if (mounted) {
+          console.log("[受保护页面] 验证成功，用户可访问");
+          setLoading(false);
         }
       } catch (error) {
-        console.error("[受保护页面] 验证会话时出错:", error);
+        console.error("[受保护页面] 验证过程中出错:", error);
         if (mounted) {
           router.push("/sign-in");
         }
       }
     };
-
-    // 执行完整检查
-    fullCheck();
+    
+    // 执行验证
+    quickCheck();
     
     // 清理函数
     return () => {
