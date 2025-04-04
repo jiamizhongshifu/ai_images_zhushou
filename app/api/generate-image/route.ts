@@ -507,6 +507,16 @@ export async function POST(request: NextRequest) {
         maxRetries: MAX_RETRIES
       };
       
+      // 记录代理设置
+      console.log(`[${requestType}] 当前代理设置: HTTP_PROXY=${process.env.HTTP_PROXY || '未设置'}, HTTPS_PROXY=${process.env.HTTPS_PROXY || '未设置'}`);
+      // 确保代理设置有效 
+      if (!process.env.HTTP_PROXY && !process.env.HTTPS_PROXY) {
+        console.log(`[${requestType}] 未检测到代理设置，将尝试使用默认代理`);
+        // 设置默认代理（如果没有配置代理环境变量）
+        process.env.HTTP_PROXY = 'http://127.0.0.1:7890';
+        process.env.HTTPS_PROXY = 'http://127.0.0.1:7890';
+      }
+
       // 创建OpenAI客户端
       const openai = new OpenAI(openaiOptions);
       

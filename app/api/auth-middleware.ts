@@ -2,6 +2,48 @@ import { NextResponse } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 
+// 设置日志级别常量
+const LOG_LEVELS = {
+  ERROR: 0,    // 只显示错误
+  WARN: 1,     // 显示警告和错误
+  INFO: 2,     // 显示信息、警告和错误
+  DEBUG: 3     // 显示所有日志
+};
+
+// 获取环境变量中的日志级别，默认为INFO
+const currentLogLevel = (() => {
+  const level = process.env.LOG_LEVEL || 'INFO';
+  switch (level.toUpperCase()) {
+    case 'ERROR': return LOG_LEVELS.ERROR;
+    case 'WARN': return LOG_LEVELS.WARN;
+    case 'INFO': return LOG_LEVELS.INFO;
+    case 'DEBUG': return LOG_LEVELS.DEBUG;
+    default: return LOG_LEVELS.INFO;
+  }
+})();
+
+// 日志工具函数
+const logger = {
+  error: (message: string) => {
+    console.error(`[API中间件错误] ${message}`);
+  },
+  warn: (message: string) => {
+    if (currentLogLevel >= LOG_LEVELS.WARN) {
+      console.warn(`[API中间件警告] ${message}`);
+    }
+  },
+  info: (message: string) => {
+    if (currentLogLevel >= LOG_LEVELS.INFO) {
+      console.log(`[API中间件] ${message}`);
+    }
+  },
+  debug: (message: string) => {
+    if (currentLogLevel >= LOG_LEVELS.DEBUG) {
+      console.log(`[API中间件调试] ${message}`);
+    }
+  }
+};
+
 export async function withApiAuth(
   req: Request, 
   handler: (user: any, supabase: any) => Promise<Response>
@@ -38,14 +80,14 @@ export async function withApiAuth(
             try {
               cookieStore.set(name, value, options);
             } catch (e) {
-              console.warn('[API中间件] Cookie设置错误，这在路由处理程序中是正常的', e);
+              logger.debug(`Cookie设置错误，这在路由处理程序中是正常的: ${e instanceof Error ? e.message : String(e)}`);
             }
           },
           remove(name: string, options: any) {
             try {
               cookieStore.delete(name, options);
             } catch (e) {
-              console.warn('[API中间件] Cookie删除错误，这在路由处理程序中是正常的', e);
+              logger.debug(`Cookie删除错误，这在路由处理程序中是正常的: ${e instanceof Error ? e.message : String(e)}`);
             }
           },
         },
@@ -58,18 +100,18 @@ export async function withApiAuth(
     const hasConfirmedSession = cookieStore.get('sb-session-confirmed');
     
     if (hasAccessToken && hasRefreshToken) {
-      console.log('[API中间件] 检测到认证Cookie:', req.url);
+      logger.debug(`检测到认证Cookie: ${new URL(req.url).pathname}`);
     }
     
     // 获取会话信息
     const { data: { user }, error } = await supabase.auth.getUser();
 
     if (error || !user) {
-      console.log('[API中间件] 未授权访问:', req.url, '错误:', error?.message);
+      logger.warn(`未授权访问: ${new URL(req.url).pathname}, 错误: ${error?.message || '无用户'}`);
       
       // 如果有会话确认Cookie但获取用户失败，尝试使用手动认证
       if (hasConfirmedSession?.value === 'true' && (hasAccessToken || hasRefreshToken)) {
-        console.log('[API中间件] 检测到会话确认Cookie，尝试使用localStorage中的令牌');
+        logger.debug('检测到会话确认Cookie，尝试使用localStorage中的令牌');
         
         // 返回特殊状态码让客户端知道需要使用localStorage中的令牌
         return new Response(JSON.stringify({
@@ -95,7 +137,7 @@ export async function withApiAuth(
     // 检查会话是否有效
     const { data: session } = await supabase.auth.getSession();
     if (!session?.session) {
-      console.log('[API中间件] 会话无效或已过期:', req.url);
+      logger.warn(`会话无效或已过期: ${new URL(req.url).pathname}`);
       return new Response(JSON.stringify({ 
         success: false, 
         error: '会话已过期，请重新登录' 
@@ -106,10 +148,10 @@ export async function withApiAuth(
     }
 
     // 用户已认证，调用处理程序
-    console.log('[API中间件] 用户已认证，处理请求:', req.url, 'userId:', user.id);
+    logger.debug(`用户已认证，处理请求: ${new URL(req.url).pathname}, userId: ${user.id}`);
     return await handler(user, supabase);
   } catch (error: any) {
-    console.error('[API中间件] 处理请求出错:', error.message || error);
+    logger.error(`处理请求出错: ${error.message || error}`);
     
     // 返回500错误
     return new Response(JSON.stringify({ 

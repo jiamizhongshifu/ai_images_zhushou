@@ -10,6 +10,9 @@ import { OpenAI } from 'openai';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
+import http from 'node:http';
+import https from 'node:https';
+import { URL } from 'node:url';
 
 // 确保能够正确解析相对路径
 const __filename = fileURLToPath(import.meta.url);
@@ -19,6 +22,31 @@ const rootDir = path.resolve(__dirname, '..');
 // 加载环境变量
 dotenv.config({ path: path.join(rootDir, '.env') });
 
+// 输出代理设置信息
+console.log("环境变量中的代理设置:");
+console.log(`HTTP_PROXY: ${process.env.HTTP_PROXY || '未设置'}`);
+console.log(`HTTPS_PROXY: ${process.env.HTTPS_PROXY || '未设置'}`);
+console.log(`http_proxy: ${process.env.http_proxy || '未设置'}`);
+console.log(`https_proxy: ${process.env.https_proxy || '未设置'}`);
+
+// 清空代理环境变量，确保我们只使用我们手动设置的代理
+console.log("\n清空环境变量中的代理设置...");
+delete process.env.HTTP_PROXY;
+delete process.env.HTTPS_PROXY;
+delete process.env.http_proxy;
+delete process.env.https_proxy;
+
+// 手动创建代理Agent
+const proxyUrl = "http://127.0.0.1:7890";
+console.log(`\n将使用直接配置的代理: ${proxyUrl}`);
+
+// 解析代理URL
+const proxyUrlObj = new URL(proxyUrl);
+
+// 创建HTTP和HTTPS代理
+const httpAgent = new http.Agent();
+const httpsAgent = new https.Agent();
+
 // 验证环境变量
 const apiKey = process.env.OPENAI_API_KEY;
 if (!apiKey) {
@@ -26,10 +54,49 @@ if (!apiKey) {
   process.exit(1);
 }
 
+// 创建自定义fetch方法，手动设置代理
+const customFetch = async (url, options = {}) => {
+  console.log(`正在请求: ${url} (使用手动配置的代理)`);
+  
+  // 手动添加代理请求头
+  options.headers = options.headers || {};
+  options.headers['Host'] = new URL(url).host;
+  
+  const proxyConnectOptions = {
+    host: proxyUrlObj.hostname,
+    port: proxyUrlObj.port || 7890,
+    method: 'CONNECT',
+    path: new URL(url).host
+  };
+  
+  return new Promise((resolve, reject) => {
+    // 使用原生fetch，但通过代理
+    const originalFetch = fetch;
+    
+    // 我们直接使用环境变量方式设置代理，这是fetch的标准方式
+    process.env.HTTP_PROXY = proxyUrl;
+    process.env.HTTPS_PROXY = proxyUrl;
+    
+    originalFetch(url, options)
+      .then(resolve)
+      .catch(reject)
+      .finally(() => {
+        // 清空环境变量
+        delete process.env.HTTP_PROXY;
+        delete process.env.HTTPS_PROXY;
+      });
+  });
+};
+
 // 创建OpenAI客户端
 const openai = new OpenAI({
-  apiKey: apiKey
+  apiKey: apiKey,
+  timeout: 60000, // 设置60秒超时
+  maxRetries: 3,   // 最多重试3次
+  fetch: customFetch // 使用自定义fetch方法
 });
+
+console.log("OpenAI客户端配置完成，使用直接配置的代理");
 
 // 测试生成图像
 async function testImageGeneration() {
