@@ -38,6 +38,42 @@ export default function ProtectedPage() {
   // CSS动画类名引用
   const skeletonAnimationClass = "animate-shimmer relative overflow-hidden before:absolute before:inset-0 before:-translate-x-full before:animate-[shimmer_2s_infinite] before:bg-gradient-to-r before:from-transparent before:via-white/30 before:to-transparent";
   
+  // 添加图片比例状态
+  const [imageAspectRatio, setImageAspectRatio] = useState<string | null>(null);
+  const [standardAspectRatio, setStandardAspectRatio] = useState<string | null>(null);
+  
+  // 将任意比例转换为最接近的标准比例
+  const convertToStandardRatio = (width: number, height: number): string => {
+    // 计算宽高比
+    const ratio = width / height;
+    
+    // 定义标准比例及其对应的数值
+    const standardRatios = [
+      { name: "16:9", value: 16/9 },
+      { name: "4:3", value: 4/3 },
+      { name: "3:2", value: 3/2 },
+      { name: "1:1", value: 1 },
+      { name: "2:3", value: 2/3 },
+      { name: "3:4", value: 3/4 },
+      { name: "9:16", value: 9/16 }
+    ];
+    
+    // 找到最接近的标准比例
+    let closestRatio = standardRatios[0];
+    let minDiff = Math.abs(ratio - standardRatios[0].value);
+    
+    for (let i = 1; i < standardRatios.length; i++) {
+      const diff = Math.abs(ratio - standardRatios[i].value);
+      if (diff < minDiff) {
+        minDiff = diff;
+        closestRatio = standardRatios[i];
+      }
+    }
+    
+    console.log(`原始比例 ${width}:${height} (${ratio.toFixed(2)}) 最接近 ${closestRatio.name} (${closestRatio.value.toFixed(2)})`);
+    return closestRatio.name;
+  };
+  
   // 获取用户点数
   const fetchUserCredits = async () => {
     try {
@@ -272,7 +308,24 @@ export default function ProtectedPage() {
       // 读取并显示处理后的图片
       const reader = new FileReader();
       reader.onload = (event) => {
-        setUploadedImage(event.target?.result as string);
+        const dataUrl = event.target?.result as string;
+        setUploadedImage(dataUrl);
+        
+        // 创建Image对象以获取图片的宽高
+        const img = new Image();
+        img.onload = () => {
+          const width = img.width;
+          const height = img.height;
+          const ratio = `${width}:${height}`;
+          console.log(`检测到上传图片比例: ${ratio}`);
+          setImageAspectRatio(ratio);
+          
+          // 计算并设置标准比例
+          const standardRatio = convertToStandardRatio(width, height);
+          setStandardAspectRatio(standardRatio);
+          console.log(`标准化为: ${standardRatio}`);
+        };
+        img.src = dataUrl;
       };
       reader.readAsDataURL(file);
       
@@ -332,7 +385,9 @@ export default function ProtectedPage() {
       const requestData = {
         prompt: fullPrompt,
         image: uploadedImage || undefined,
-        style: activeStyle !== "无风格" ? activeStyle : undefined
+        style: activeStyle !== "无风格" ? activeStyle : undefined,
+        aspectRatio: imageAspectRatio,
+        standardAspectRatio: standardAspectRatio
       };
       
       // 直接调用新API端点生成图片
@@ -542,7 +597,7 @@ export default function ProtectedPage() {
   // 更新图片生成骨架元素
   const renderGeneratingImageSkeleton = () => {
     return (
-      <div className="aspect-square bg-muted rounded-md relative overflow-hidden group hover:shadow transition-all">
+      <div className="w-[calc(50%-8px)] md:w-[calc(25%-12px)] aspect-square bg-muted rounded-md relative overflow-hidden group hover:shadow transition-all">
         <div className="absolute inset-0 bg-gradient-to-br from-muted to-muted/70"></div>
         {/* 扫光动画效果 */}
         <div className="absolute inset-0 before:absolute before:inset-0 before:-translate-x-full before:animate-shimmer before:bg-gradient-to-r before:from-transparent before:via-white/20 before:to-transparent"></div>
@@ -708,7 +763,7 @@ export default function ProtectedPage() {
             </div>
           </CardHeader>
           <CardContent>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 grid-flow-row auto-rows-max w-full overflow-y-auto max-h-[800px]">
+            <div className="flex flex-wrap gap-4 w-full overflow-y-auto max-h-[800px]">
               {isGenerating && renderGeneratingImageSkeleton()}
                       
               {/* 显示已生成的图片 */}
@@ -716,7 +771,7 @@ export default function ProtectedPage() {
                 generatedImages.map((imageUrl, index) => (
                   <div 
                     key={`img-${index}-${imageUrl.substring(imageUrl.lastIndexOf('/') + 1, imageUrl.length)}`}
-                    className="aspect-square bg-muted rounded-md relative overflow-hidden group hover:shadow transition-all cursor-pointer"
+                    className="w-[calc(50%-8px)] md:w-[calc(25%-12px)] aspect-square bg-muted rounded-md relative overflow-hidden group hover:shadow transition-all cursor-pointer"
                     onClick={() => setPreviewImage(imageUrl)}
                   >
                     <div className="relative w-full h-full">
@@ -763,7 +818,7 @@ export default function ProtectedPage() {
               ) : !isGenerating ? (
                 // 示例图片 - 只在没有生成图片且不在生成中时显示
                 Array.from({ length: 4 }).map((_, index) => (
-                  <div key={index} className="aspect-square bg-muted rounded-md relative overflow-hidden group hover:shadow transition-all">
+                  <div key={index} className="w-[calc(50%-8px)] md:w-[calc(25%-12px)] aspect-square bg-muted rounded-md relative overflow-hidden group hover:shadow transition-all">
                     <div className="absolute inset-0 flex items-center justify-center">
                       <div className="w-full h-full bg-gradient-to-br from-primary/5 to-secondary/10 flex items-center justify-center">
                         <p className="text-muted-foreground text-sm">示例图片 {index + 1}</p>

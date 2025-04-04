@@ -81,178 +81,6 @@ function createTuziClient() {
   });
 }
 
-// 内容政策违规检测结果类型
-interface ContentPolicyViolation {
-  detected: boolean;  // 是否检测到违规
-  reason: string;     // 具体原因（用于日志）
-  userMessage: string; // 给用户的友好提示
-}
-
-// 检查内容是否违反内容政策
-function checkContentPolicyViolation(content: string): ContentPolicyViolation | null {
-  // 常见的内容政策违规关键词
-  const violationPatterns = [
-    {
-      pattern: /violates our content policies/i,
-      reason: "内容政策违规",
-      userMessage: "您的提示词可能含有不适当内容，请尝试更换描述方式"
-    },
-    {
-      pattern: /unable to generate the image.*because/i,
-      reason: "生成被拒绝",
-      userMessage: "系统无法生成您请求的图像，请调整您的提示词"
-    },
-    {
-      pattern: /sorry.*can't generate/i,
-      reason: "拒绝生成",
-      userMessage: "很抱歉，系统无法生成符合您描述的图像，请尝试更换描述"
-    },
-    {
-      pattern: /not allowed to generate/i,
-      reason: "不允许生成",
-      userMessage: "您请求的图像类型不被允许生成，请尝试其他描述"
-    },
-    {
-      pattern: /against our policy/i,
-      reason: "违反政策",
-      userMessage: "您的请求违反了内容政策，请避免敏感内容"
-    },
-    {
-      pattern: /inappropriate content/i,
-      reason: "不适当内容",
-      userMessage: "您的提示词可能包含不适当内容，请修改"
-    },
-    {
-      pattern: /我无法生成|无法为您生成|违反内容政策|内容审核|不适宜|不适合/,
-      reason: "中文内容审核拒绝",
-      userMessage: "您的提示词未通过内容审核，请尝试更换描述方式"
-    }
-  ];
-
-  // 检查每个模式
-  for (const { pattern, reason, userMessage } of violationPatterns) {
-    if (pattern.test(content)) {
-      return {
-        detected: true,
-        reason,
-        userMessage
-      };
-    }
-  }
-
-  // 未检测到明确的违规内容
-  return null;
-}
-
-// 提供提示词优化建议
-function getSuggestionForPrompt(promptText: string, styleText: string | null): string {
-  let suggestions: string[] = [];
-
-  // 基于风格的特定建议
-  if (styleText) {
-    switch (styleText) {
-      case "皮克斯":
-        suggestions.push("尝试描述卡通场景或物体，而非真实人物");
-        break;
-      case "新海诚":
-        suggestions.push("专注于风景和自然元素描述，避免详细的人物刻画");
-        break;
-      case "宫崎骏":
-      case "吉卜力":
-        suggestions.push("可以描述奇幻元素和自然风景，避免现实人物的详细描述");
-        break;
-      default:
-        suggestions.push("尝试使用更抽象、艺术性的描述");
-    }
-  }
-
-  // 针对可能的敏感词的建议
-  if (/人物|男|女|儿童|父|母|男孩|女孩/.test(promptText)) {
-    suggestions.push("避免详细描述真实人物特征，可以使用'卡通角色'或'动画形象'替代");
-  }
-
-  if (/武器|枪|刀|剑/.test(promptText)) {
-    suggestions.push("避免描述武器，可以使用'奇幻道具'或'魔法物品'代替");
-  }
-
-  // 如果没有具体建议，提供通用建议
-  if (suggestions.length === 0) {
-    suggestions = [
-      "使用更艺术化的描述",
-      "专注于风景、自然或抽象概念",
-      "使用更少的具体人物描述",
-      "尝试描述情境或氛围，而非具体对象"
-    ];
-  }
-
-  // 随机选择最多3条建议
-  if (suggestions.length > 3) {
-    const randomSuggestions: string[] = [];
-    const indices = new Set<number>();
-    while (indices.size < 3) {
-      indices.add(Math.floor(Math.random() * suggestions.length));
-    }
-    indices.forEach(index => randomSuggestions.push(suggestions[index]));
-    suggestions = randomSuggestions;
-  }
-
-  return `建议: ${suggestions.join("; ")}`;
-}
-
-// 从API响应内容中提取URL
-function extractUrlFromContent(content: string): string | null {
-  try {
-    // 尝试匹配常见URL模式
-    const urlPatterns = [
-      /(https?:\/\/[^\s'"()<>]+)/, // 基本URL
-      /(https?:\/\/[^\s'"]+)/, // 更宽松的URL
-      /\b(https?:\/\/\S+)/, // 非空格的URL
-      /\[(https?:\/\/[^\]]+)\]/, // 方括号中的URL
-      /"(https?:\/\/[^"]+)"/, // 双引号中的URL
-      /'(https?:\/\/[^']+)'/, // 单引号中的URL
-      /链接[:：]\s*(https?:\/\/\S+)/, // 中文标记的URL
-      /URL[:：]\s*(https?:\/\/\S+)/, // URL标记
-      /image:?\s*(https?:\/\/\S+)/, // image标记
-      /源文件[地址链接]?[为是:：]\s*(https?:\/\/\S+)/ // 中文描述的图片URL
-    ];
-    
-    // 尝试所有模式
-    for (const pattern of urlPatterns) {
-      const match = content.match(pattern);
-      if (match && match[1]) {
-        let extractedUrl = match[1].trim();
-        
-        // 记录匹配的模式和原始URL
-        logger.info(`匹配到URL模式: ${pattern}, 原始URL: ${extractedUrl}`);
-        
-        // 清理URL
-        if (extractedUrl.endsWith(')') && !extractedUrl.includes('(')) {
-          extractedUrl = extractedUrl.slice(0, -1);
-        }
-        
-        // 删除尾部特殊字符
-        extractedUrl = extractedUrl.replace(/[.,;:!?)]$/, '');
-        
-        // 删除其他可能的无效字符
-        extractedUrl = extractedUrl.replace(/["'<>{}]/, '');
-        
-        // 日志记录清理后的URL
-        logger.info(`提取到URL: ${extractedUrl}`);
-        
-        // 返回清理后的URL
-        return extractedUrl;
-      }
-    }
-    
-    // 如果没有找到URL，记录整个内容以便分析
-    logger.warn(`无法从内容中提取URL，完整内容: ${content.substring(0, 500)}...`);
-    return null;
-  } catch (error) {
-    logger.error(`URL提取过程中出错: ${error instanceof Error ? error.message : String(error)}`);
-    return null;
-  }
-}
-
 // 直接生成图像API - 按照tuzi-openai.md重写
 export async function POST(request: NextRequest) {
   // 防止并发请求
@@ -520,9 +348,88 @@ export async function POST(request: NextRequest) {
       
       // 收集图片URL
       let imageUrl = '';
-      const chunks: string[] = [];
+      const chunks = [];
       
-      // 处理流数据 - 只使用一个循环
+      // 处理流数据
+      for await (const chunk of stream) {
+        const content = chunk.choices[0]?.delta?.content || '';
+        if (content) {
+          chunks.push(content);
+          
+          // 尝试从内容中提取URL
+          const urlMatch = content.match(/(https?:\/\/[^\s'"()<>]+)/);
+          if (urlMatch) {
+            let extractedUrl = urlMatch[1].trim();
+            
+            // 检查并清理URL
+            if (extractedUrl.endsWith(')') && !extractedUrl.includes('(')) {
+              extractedUrl = extractedUrl.slice(0, -1);
+            }
+            
+            // 删除尾部特殊字符
+            extractedUrl = extractedUrl.replace(/[.,;:!?)]$/, '');
+            
+            imageUrl = extractedUrl;
+            logger.info(`从流中提取到图片URL: ${imageUrl}`);
+          }
+        }
+      }
+      
+      // 处理流数据
+      for await (const chunk of stream) {
+        const content = chunk.choices[0]?.delta?.content || '';
+        if (content) {
+          chunks.push(content);
+          
+          // 尝试从内容中提取图片URL
+          if (!imageUrl && content.includes('http')) {
+            // 使用增强的URL提取函数
+            const extractedUrl = extractUrlFromContent(content);
+            if (extractedUrl) {
+              imageUrl = extractedUrl;
+              logger.info(`从流中提取到图片URL: ${imageUrl}`);
+            }
+          }
+        }
+      }
+      
+      // 处理流数据
+      for await (const chunk of stream) {
+        const content = chunk.choices[0]?.delta?.content || '';
+        if (content) {
+          chunks.push(content);
+          
+          // 尝试从内容中提取图片URL
+          if (!imageUrl && content.includes('http')) {
+            // 使用增强的URL提取函数
+            const extractedUrl = extractUrlFromContent(content);
+            if (extractedUrl) {
+              imageUrl = extractedUrl;
+              logger.info(`从流中提取到图片URL: ${imageUrl}`);
+            }
+          }
+        }
+      }
+      
+      // 处理流数据 - 使用增强的URL提取
+      for await (const chunk of stream) {
+        const content = chunk.choices[0]?.delta?.content || '';
+        if (content) {
+          chunks.push(content);
+          
+          // 尝试从内容中提取图片URL
+          if (!imageUrl && content.includes('http')) {
+            // 使用增强的URL提取函数
+            const extractedUrl = extractUrlFromContent(content);
+            if (extractedUrl) {
+              imageUrl = extractedUrl;
+              logger.info(`从流中提取到图片URL: ${imageUrl}`);
+            }
+          }
+        }
+      }
+      
+      // 处理流数据 - 使用增强的URL提取函数
       for await (const chunk of stream) {
         const content = chunk.choices[0]?.delta?.content || '';
         if (content) {
@@ -543,18 +450,6 @@ export async function POST(request: NextRequest) {
       // 如果没有从流中提取到URL，尝试从完整响应中提取
       if (!imageUrl) {
         const fullContent = chunks.join('');
-        
-        // 检查是否包含内容政策违规信息
-        const contentPolicyViolation = checkContentPolicyViolation(fullContent);
-        if (contentPolicyViolation) {
-          logger.warn(`检测到内容政策违规: ${contentPolicyViolation.reason}`);
-          
-          // 获取提示词建议
-          const suggestions = getSuggestionForPrompt(prompt || "", style || null);
-          
-          throw new Error(`内容审核未通过: ${contentPolicyViolation.userMessage}。${suggestions}`);
-        }
-        
         const extractedUrl = extractUrlFromContent(fullContent);
         if (extractedUrl) {
           imageUrl = extractedUrl;
@@ -563,12 +458,12 @@ export async function POST(request: NextRequest) {
           // 记录完整响应内容，帮助调试
           logger.warn(`未能从响应中提取图片URL，完整响应:`);
           logger.warn(fullContent.substring(0, 1000) + (fullContent.length > 1000 ? '...(已截断)' : ''));
-          throw new Error('未能提取图片URL，请检查您的提示词是否合适');
+          throw new Error('未能提取图片URL');
         }
       }
       
       // 保存历史记录
-      saveGenerationHistory(user.id, prompt, imageUrl, style || null, originalAspectRatio || null, useStandardRatio || null);
+      saveGenerationHistory(user.id, prompt, imageUrl, style || null, originalAspectRatio || null, standardAspectRatio || null);
       
       const endTime = Date.now();
       const duration = endTime - startTime;
@@ -636,18 +531,9 @@ export async function POST(request: NextRequest) {
       }
     }
     
-    // 提取提示建议，如果错误信息中已包含则不重复添加
-    let suggestion = '';
-    if (!errorMessage.includes('建议:')) {
-      // 尝试从URL查询参数获取prompt和style
-      const { prompt = '', style = null } = (request as any).query || {}; 
-      suggestion = getSuggestionForPrompt(prompt, style);
-    }
-    
     return new Response(JSON.stringify({ 
       success: false, 
       error: errorMessage,
-      suggestion: suggestion || undefined, // 只在有建议时添加
       duration: duration
     }), {
       status: 500,
@@ -687,5 +573,59 @@ async function saveGenerationHistory(userId: string, prompt: string, imageUrl: s
   } catch (error) {
     logger.warn(`保存历史记录过程中出错: ${error instanceof Error ? error.message : String(error)}`);
     // 不抛出错误，保证主流程不受影响
+  }
+}
+
+// 从API响应内容中提取URL
+function extractUrlFromContent(content: string): string | null {
+  try {
+    // 尝试匹配常见URL模式
+    const urlPatterns = [
+      /(https?:\/\/[^\s'"()<>]+)/, // 基本URL
+      /(https?:\/\/[^\s'"]+)/, // 更宽松的URL
+      /\b(https?:\/\/\S+)/, // 非空格的URL
+      /\[(https?:\/\/[^\]]+)\]/, // 方括号中的URL
+      /"(https?:\/\/[^"]+)"/, // 双引号中的URL
+      /'(https?:\/\/[^']+)'/, // 单引号中的URL
+      /链接[:：]\s*(https?:\/\/\S+)/, // 中文标记的URL
+      /URL[:：]\s*(https?:\/\/\S+)/, // URL标记
+      /image:?\s*(https?:\/\/\S+)/, // image标记
+      /源文件[地址链接]?[为是:：]\s*(https?:\/\/\S+)/ // 中文描述的图片URL
+    ];
+    
+    // 尝试所有模式
+    for (const pattern of urlPatterns) {
+      const match = content.match(pattern);
+      if (match && match[1]) {
+        let extractedUrl = match[1].trim();
+        
+        // 记录匹配的模式和原始URL
+        logger.info(`匹配到URL模式: ${pattern}, 原始URL: ${extractedUrl}`);
+        
+        // 清理URL
+        if (extractedUrl.endsWith(')') && !extractedUrl.includes('(')) {
+          extractedUrl = extractedUrl.slice(0, -1);
+        }
+        
+        // 删除尾部特殊字符
+        extractedUrl = extractedUrl.replace(/[.,;:!?)]$/, '');
+        
+        // 删除其他可能的无效字符
+        extractedUrl = extractedUrl.replace(/["'<>{}]/, '');
+        
+        // 日志记录清理后的URL
+        logger.info(`提取到URL: ${extractedUrl}`);
+        
+        // 返回清理后的URL
+        return extractedUrl;
+      }
+    }
+    
+    // 如果没有找到URL，记录整个内容以便分析
+    logger.warn(`无法从内容中提取URL，完整内容: ${content.substring(0, 500)}...`);
+    return null;
+  } catch (error) {
+    logger.error(`URL提取过程中出错: ${error instanceof Error ? error.message : String(error)}`);
+    return null;
   }
 } 
