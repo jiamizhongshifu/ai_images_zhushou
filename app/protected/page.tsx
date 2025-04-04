@@ -2,9 +2,10 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { Upload, SendHorizontal, PlusCircle, RefreshCw, Image as ImageIcon, Loader2, Download, X } from "lucide-react";
+import { Upload, SendHorizontal, PlusCircle, RefreshCw, Image as ImageIcon, Loader2, Download, X, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import Image from "next/image";
 
 export default function ProtectedPage() {
   const router = useRouter();
@@ -34,6 +35,9 @@ export default function ProtectedPage() {
   
   // 添加生成状态跟踪
   const [generationStatus, setGenerationStatus] = useState<"idle" | "loading" | "success" | "error">("idle");
+  
+  // 添加初始化状态跟踪
+  const [isInitializing, setIsInitializing] = useState(true);
   
   // CSS动画类名引用
   const skeletonAnimationClass = "animate-shimmer relative overflow-hidden before:absolute before:inset-0 before:-translate-x-full before:animate-[shimmer_2s_infinite] before:bg-gradient-to-r before:from-transparent before:via-white/30 before:to-transparent";
@@ -74,7 +78,78 @@ export default function ProtectedPage() {
     return closestRatio.name;
   };
   
-  // 获取用户点数
+  // 初始化加载
+  useEffect(() => {
+    // 静默获取用户点数和历史记录，不设置loading状态
+    const fetchInitialData = async () => {
+      try {
+        // 标记初始化正在进行
+        setIsInitializing(true);
+        
+        // 并行请求用户点数和历史记录
+        const [creditsResponse, historyResponse] = await Promise.all([
+          fetch('/api/credits/get'),
+          fetch('/api/history/get')
+        ]);
+        
+        // 处理用户点数响应
+        if (creditsResponse.ok) {
+          const creditsData = await creditsResponse.json();
+          if (creditsData.success) {
+            setUserCredits(creditsData.credits);
+          }
+        } else if (creditsResponse.status === 401) {
+          router.push('/login');
+          return;
+        }
+        
+        let validImagesLoaded = false;
+        
+        // 处理历史记录响应
+        if (historyResponse.ok) {
+          const historyData = await historyResponse.json();
+          if (historyData.success) {
+            console.log('获取到历史记录数据:', historyData.history);
+            
+            // 验证并处理图片URL
+            const validImages = historyData.history
+              .filter((item: any) => item.image_url)
+              .map((item: any) => ({
+                ...item,
+                image_url: validateImageUrl(item.image_url)
+              }))
+              .filter((item: any) => item.image_url); // 过滤掉无效的URL
+            
+            console.log('处理后的有效图片数据:', validImages.length, '条');
+            setImageHistory(validImages);
+            
+            // 如果有有效图片，设置到生成图片数组
+            if (validImages.length > 0) {
+              console.log('从历史记录加载图片到展示区域');
+              // 提取图片URL数组
+              const imageUrls = validImages.map((item: any) => item.image_url);
+              setGeneratedImages(imageUrls);
+              validImagesLoaded = true;
+            }
+          }
+        }
+        
+        // 等待状态更新完成再结束初始化
+        // 使用短暂延时确保状态已更新
+        setTimeout(() => {
+          setIsInitializing(false);
+        }, 100);
+      } catch (error) {
+        console.error('初始化加载数据失败:', error);
+        // 静默失败，不显示错误给用户
+        setIsInitializing(false);
+      }
+    };
+    
+    fetchInitialData();
+  }, [router]);
+  
+  // 获取用户点数 - 用于主动刷新时显示loading状态
   const fetchUserCredits = async () => {
     try {
       setIsLoadingCredits(true);
@@ -106,7 +181,7 @@ export default function ProtectedPage() {
     }
   };
   
-  // 获取历史记录
+  // 增强fetchImageHistory处理函数
   const fetchImageHistory = async () => {
     try {
       setIsLoadingHistory(true);
@@ -127,7 +202,7 @@ export default function ProtectedPage() {
       
       if (data.success) {
         // 直接打印历史记录，帮助调试
-        console.log('获取到历史记录数据:', data.history);
+        console.log('获取到历史记录数据:', data.history.length, '条');
         
         // 验证并处理图片URL
         const validImages = data.history
@@ -141,10 +216,15 @@ export default function ProtectedPage() {
         console.log('处理后的有效图片数据:', validImages.length, '条');
         setImageHistory(validImages);
         
-        // 如果没有手动生成的图片，从历史记录中加载
-        if (generatedImages.length === 0 && validImages.length > 0) {
+        // 将有效图片设置到生成图片数组，确保结果可见
+        if (validImages.length > 0) {
           console.log('从历史记录加载图片到展示区域');
-          setGeneratedImages(validImages.map((item: any) => item.image_url));
+          // 如果没有手动生成的图片或强制刷新，则从历史加载
+          if (generatedImages.length === 0 || isLoadingHistory) {
+            const imageUrls = validImages.map((item: any) => item.image_url);
+            setGeneratedImages(imageUrls);
+            console.log('已设置', imageUrls.length, '张图片到展示区域');
+          }
         }
       } else {
         console.error('获取历史记录失败:', data.error || '未知错误');
@@ -153,7 +233,11 @@ export default function ProtectedPage() {
       const errorMessage = error instanceof Error ? error.message : String(error);
       console.error('获取历史记录出错:', errorMessage);
     } finally {
-      setIsLoadingHistory(false);
+      // 等待DOM刷新
+      setTimeout(() => {
+        setIsLoadingHistory(false);
+        console.log('历史记录加载完成');
+      }, 100);
     }
   };
   
@@ -192,11 +276,14 @@ export default function ProtectedPage() {
       
       // 尝试解析URL以验证其有效性
       try {
-        const parsedUrl = new URL(cleanUrl);
-        
-        // 如果是相对路径，转换为绝对路径
-        if (!parsedUrl.protocol) {
-          return new URL(cleanUrl, window.location.origin).toString();
+        if (typeof window !== 'undefined') {
+          // 浏览器环境
+          const parsedUrl = new URL(cleanUrl);
+          
+          // 如果是相对路径，转换为绝对路径
+          if (!parsedUrl.protocol) {
+            return new URL(cleanUrl, window.location.origin).toString();
+          }
         }
         
         return cleanUrl;
@@ -279,22 +366,6 @@ export default function ProtectedPage() {
       }, 300);
     }, 3000);
   };
-  
-  // 初始化加载
-  useEffect(() => {
-    fetchUserCredits();
-    fetchImageHistory();
-    
-    // 添加检查: 如果历史加载成功但图片显示区域为空，尝试再次加载
-    const checkTimer = setTimeout(() => {
-      if (generatedImages.length === 0 && imageHistory.length > 0) {
-        console.log('检测到历史记录未正确加载到显示区域，尝试重新加载');
-        setGeneratedImages(imageHistory.map((item: any) => item.image_url));
-      }
-    }, 2000);
-    
-    return () => clearTimeout(checkTimer);
-  }, []);
   
   // 处理图片上传
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -561,7 +632,7 @@ export default function ProtectedPage() {
   };
 
   // 改进图片加载处理函数
-  const handleImageLoad = (imageUrl: string, e: React.SyntheticEvent<HTMLImageElement>) => {
+  const handleImageLoad = (imageUrl: string, e: React.SyntheticEvent<HTMLImageElement> | undefined) => {
     try {
       console.log('图片加载成功:', imageUrl);
       // 移除重试记录，清理状态
@@ -572,6 +643,20 @@ export default function ProtectedPage() {
       });
     } catch (error) {
       console.error('处理图片加载成功事件出错:', error);
+    }
+  };
+
+  // 添加重试加载图片函数
+  const retryImage = (imageUrl: string) => {
+    try {
+      console.log('手动重试加载图片:', imageUrl);
+      // 重置重试记录
+      setImageLoadRetries(prev => ({
+        ...prev,
+        [imageUrl]: 0
+      }));
+    } catch (error) {
+      console.error('重试加载图片失败:', error);
     }
   };
 
@@ -763,70 +848,74 @@ export default function ProtectedPage() {
             </div>
           </CardHeader>
           <CardContent>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 w-full overflow-y-auto max-h-[800px]">
-              {isGenerating && renderGeneratingImageSkeleton()}
-                      
-              {/* 显示已生成的图片 */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-4">
               {generatedImages.length > 0 ? (
-                generatedImages.map((imageUrl, index) => (
+                // 显示生成的图片
+                generatedImages.map((image, index) => (
                   <div 
-                    key={`img-${index}-${imageUrl.substring(imageUrl.lastIndexOf('/') + 1, imageUrl.length)}`}
-                    className="aspect-square bg-muted rounded-md relative overflow-hidden group hover:shadow transition-all cursor-pointer"
-                    onClick={() => setPreviewImage(imageUrl)}
+                    key={index} 
+                    className="rounded-xl overflow-hidden aspect-square relative group"
+                    onClick={() => setPreviewImage(image)}
                   >
-                    <div className="relative w-full h-full">
-                      <img 
-                        src={imageUrl} 
-                        alt={`生成的图片 ${index + 1}`} 
-                        className="w-full h-full object-cover"
-                        onError={(e) => handleImageError(imageUrl, e)}
-                        onLoad={(e) => handleImageLoad(imageUrl, e)}
+                    {imageLoadRetries[image] ? (
+                      <div className="h-full w-full bg-muted animate-pulse flex flex-col items-center justify-center">
+                        <AlertCircle className="h-8 w-8 text-destructive mb-2" />
+                        <p className="text-xs text-muted-foreground text-center px-2">加载失败</p>
+                        <Button 
+                          variant="outline" 
+                          size="sm" 
+                          className="mt-2"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            retryImage(image);
+                          }}
+                        >
+                          重试
+                        </Button>
+                      </div>
+                    ) : generationStatus === "loading" && index === 0 ? (
+                      <div className="h-full w-full bg-muted animate-pulse flex flex-col items-center justify-center">
+                        <Loader2 className="h-8 w-8 text-primary animate-spin" />
+                        <p className="text-xs text-muted-foreground mt-2">加载中...</p>
+                      </div>
+                    ) : (
+                      <img
+                        src={image}
+                        alt="生成的图片"
+                        className="object-cover w-full h-full transition-all group-hover:scale-105"
                         loading="lazy"
+                        onLoad={() => handleImageLoad(image, undefined)}
+                        onError={(e) => handleImageError(image, e)}
                       />
-                      <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors" />
-                    </div>
-                    <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-background/80 to-transparent p-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <div className="flex justify-center items-center gap-2">
-                        <Button 
-                          variant="secondary" 
-                          size="sm" 
-                          className="h-7 text-xs flex items-center gap-1"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            downloadImage(imageUrl);
-                          }}
-                        >
-                          <Download className="h-3 w-3" />
-                          查看原图
-                        </Button>
-                        <Button 
-                          variant="secondary" 
-                          size="sm" 
-                          className="h-7 text-xs flex items-center gap-1"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setPreviewImage(imageUrl);
-                          }}
-                        >
-                          <ImageIcon className="h-3 w-3" />
-                          预览
-                        </Button>
-                      </div>
-                    </div>
+                    )}
                   </div>
                 ))
+              ) : isInitializing || isLoadingHistory ? (
+                // 初始化加载中状态或加载历史记录中 - 显示加载中骨架屏
+                <div className="col-span-2 md:col-span-4 h-60 flex flex-col items-center justify-center text-center p-6">
+                  <Loader2 className="h-6 w-6 text-primary animate-spin mb-4" />
+                  <p className="text-sm text-muted-foreground">正在加载历史记录...</p>
+                </div>
               ) : !isGenerating ? (
-                // 示例图片 - 只在没有生成图片且不在生成中时显示
-                Array.from({ length: 4 }).map((_, index) => (
-                  <div key={index} className="aspect-square bg-muted rounded-md relative overflow-hidden group hover:shadow transition-all">
-                    <div className="absolute inset-0 flex items-center justify-center">
-                      <div className="w-full h-full bg-gradient-to-br from-primary/5 to-secondary/10 flex items-center justify-center">
-                        <p className="text-muted-foreground text-sm">示例图片 {index + 1}</p>
-                      </div>
-                    </div>
+                // 空状态提示 - 已完成初始化且没有生成图片且不在生成中
+                <div className="col-span-2 md:col-span-4 h-60 flex flex-col items-center justify-center text-center p-6">
+                  <div className="w-14 h-14 rounded-full bg-muted flex items-center justify-center mb-4">
+                    <ImageIcon className="h-6 w-6 text-muted-foreground" />
                   </div>
-                ))
-              ) : null}
+                  <h3 className="text-base font-medium text-foreground mb-2">还没有生成图片</h3>
+                  <p className="text-sm text-muted-foreground max-w-md">
+                    尝试输入描述或上传图片并选择风格，点击"生成"按钮创建您的第一张AI图像
+                  </p>
+                </div>
+              ) : (
+                // 生成中状态 - 显示生成中骨架屏
+                <div className="col-span-2 md:col-span-4 h-60 flex flex-col items-center justify-center text-center p-6">
+                  <Loader2 className="h-6 w-6 text-primary animate-spin mb-4" />
+                  <p className="text-sm text-muted-foreground">
+                    正在为您生成图像，请稍候...
+                  </p>
+                </div>
+              )}
             </div>
           </CardContent>
           <CardFooter className="text-center border-t pt-4">

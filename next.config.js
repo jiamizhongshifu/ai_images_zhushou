@@ -16,6 +16,10 @@ const nextConfig = {
       bodySizeLimit: '2mb'
     },
   },
+  // 配置允许的图片域名
+  images: {
+    domains: ['filesystem.site', 'oaiusercontent.com'],
+  },
 }
 
 module.exports = nextConfig 

@@ -7,6 +7,7 @@ import { createClient } from '@/utils/supabase/client';
 import { Button } from '@/components/ui/button';
 import { User, LogOut, LogIn } from 'lucide-react';
 import UserCreditDisplay from '@/components/user-credit-display';
+import { authService } from '@/utils/auth-service';
 
 export default function UserNav() {
   const router = useRouter();
@@ -21,10 +22,9 @@ export default function UserNav() {
       try {
         console.log('[UserNav] 开始获取用户信息');
         
-        // 首先检查localStorage中是否有认证标记
-        const localAuth = localStorage.getItem('auth_valid');
-        if (localAuth === 'true') {
-          console.log('[UserNav] 本地存储中发现认证标记，尝试强制显示用户界面');
+        // 检查认证状态
+        if (authService.isAuthenticated()) {
+          console.log('[UserNav] 认证服务检测到有效认证');
           setForceShowUser(true);
         }
         
@@ -37,37 +37,36 @@ export default function UserNav() {
           console.log('[UserNav] 未检测到认证cookie');
         }
         
-        const { data: { user }, error } = await supabase.auth.getUser();
-        if (error) {
-          console.error('[UserNav] 获取用户信息出错:', error);
-        }
+        // 尝试获取用户信息
+        const userInfo = await authService.getUserInfo();
         
-        if (user) {
-          console.log(`[UserNav] 成功获取用户信息，ID: ${user.id.substring(0, 8)}...`);
-          setUser(user);
+        if (userInfo) {
+          console.log(`[UserNav] 成功获取用户信息，ID: ${userInfo.id.substring(0, 8)}...`);
+          setUser(userInfo);
         } else {
           console.log('[UserNav] 未获取到用户信息');
-          if (hasSBCookie || localAuth === 'true') {
-            // 存在cookie但获取不到用户，等待一会儿后重试
-            console.log('[UserNav] 检测到认证状态但API未返回用户，等待后重试');
-            setTimeout(async () => {
-              try {
-                const retryResult = await supabase.auth.getUser();
-                if (retryResult.data.user) {
-                  console.log('[UserNav] 重试成功获取到用户');
-                  setUser(retryResult.data.user);
-                } else if (localAuth === 'true') {
-                  // 如果重试后仍然没有获取到，但本地有认证标记，强制显示用户界面
-                  console.log('[UserNav] 重试仍未获取到用户，但本地有认证标记，强制显示用户界面');
-                  setForceShowUser(true);
-                }
-              } catch (retryErr) {
-                console.error('[UserNav] 重试获取用户信息失败:', retryErr);
-              } finally {
-                setIsLoading(false);
+          
+          // 如果认证服务认为用户已认证，但API未返回用户，尝试刷新会话
+          if (authService.isAuthenticated()) {
+            console.log('[UserNav] 检测到认证状态但API未返回用户，尝试刷新会话');
+            
+            // 尝试刷新会话
+            const refreshResult = await authService.refreshSession();
+            
+            if (refreshResult) {
+              // 重新获取用户信息
+              const retryUserInfo = await authService.getUserInfo();
+              if (retryUserInfo) {
+                console.log('[UserNav] 刷新会话后成功获取用户信息');
+                setUser(retryUserInfo);
+              } else {
+                console.log('[UserNav] 刷新会话后仍未获取到用户信息，但认证状态有效，强制显示用户界面');
+                setForceShowUser(true);
               }
-            }, 1000);
-            return; // 等待异步重试，不要设置isLoading=false
+            } else {
+              console.log('[UserNav] 会话刷新失败，但认证状态有效，强制显示用户界面');
+              setForceShowUser(true);
+            }
           }
         }
       } catch (err) {
@@ -79,62 +78,46 @@ export default function UserNav() {
     
     getUser();
     
-    const { data: authListener } = supabase.auth.onAuthStateChange(
-      (event, session) => {
-        console.log(`[UserNav] 认证状态变化: ${event}`);
-        if (session?.user) {
-          console.log(`[UserNav] 新会话用户: ${session.user.id.substring(0, 8)}...`);
-          setUser(session.user);
-          // 更新本地存储
-          localStorage.setItem('auth_valid', 'true');
-          localStorage.setItem('auth_time', Date.now().toString());
-        } else {
-          console.log('[UserNav] 会话中没有用户');
-          setUser(null);
-          if (event === 'SIGNED_OUT') {
-            localStorage.removeItem('auth_valid');
-            localStorage.removeItem('auth_time');
+    // 订阅认证状态变化
+    const unsubscribe = authService.subscribe((authState) => {
+      console.log(`[UserNav] 认证状态更新: isAuthenticated=${authState.isAuthenticated}`);
+      
+      if (authState.isAuthenticated) {
+        // 当认证状态更新为已认证，尝试获取用户信息
+        authService.getUserInfo().then(userInfo => {
+          if (userInfo) {
+            setUser(userInfo);
+          } else {
+            setForceShowUser(true);
           }
-        }
+        });
+      } else {
+        // 当认证状态更新为未认证，清除用户信息
+        setUser(null);
+        setForceShowUser(false);
       }
-    );
+    });
     
     return () => {
-      authListener?.subscription.unsubscribe();
+      unsubscribe(); // 清理订阅
     };
-  }, [supabase.auth]);
+  }, []);
   
-  const handleSignOut = async () => {
-    if (isSigningOut) return; // 防止重复点击
-    
+  const handleLogout = async () => {
     try {
-      setIsSigningOut(true);
-      console.log('[UserNav] 开始登出操作');
+      // 先清除认证状态
+      authService.clearAuthState();
       
-      // 清除本地存储的认证信息
-      localStorage.removeItem('auth_valid');
-      localStorage.removeItem('auth_time');
-      setForceShowUser(false);
+      // 将登出状态保存到sessionStorage
+      sessionStorage.setItem('isLoggedOut', 'true');
       
-      // 执行客户端登出
-      await supabase.auth.signOut();
-      console.log('[UserNav] 客户端登出成功');
+      // 添加特殊参数防止中间件重定向
+      window.location.href = '/sign-in?force_logout=true';
       
-      // 简单方式：直接重新加载页面
-      window.location.href = '/sign-in';
+      console.log('登出操作完成, 页面将重定向到登录页');
     } catch (error) {
-      console.error('[UserNav] 登出过程中出错:', error);
-      setIsSigningOut(false);
-      
-      // 出错时仍然尝试清除状态并重定向
-      try {
-        localStorage.removeItem('auth_valid');
-        localStorage.removeItem('auth_time');
-        setForceShowUser(false);
-        window.location.href = '/sign-in';
-      } catch (e) {
-        alert('登出失败，请刷新页面重试');
-      }
+      console.error('登出过程中发生错误:', error);
+      alert("退出登录时发生错误");
     }
   };
   
@@ -142,16 +125,27 @@ export default function UserNav() {
   const refreshSession = async () => {
     try {
       console.log('[UserNav] 尝试刷新会话');
-      const { data, error } = await supabase.auth.refreshSession();
-      if (error) {
-        console.error('[UserNav] 刷新会话出错:', error);
-      } else if (data.session) {
+      const result = await authService.refreshSession();
+      
+      if (result) {
         console.log('[UserNav] 会话刷新成功');
-        setUser(data.session.user);
+        // 重新获取用户信息
+        const userInfo = await authService.getUserInfo();
+        if (userInfo) {
+          setUser(userInfo);
+        }
+      } else {
+        console.log('[UserNav] 会话刷新失败');
       }
     } catch (error) {
       console.error('[UserNav] 刷新会话异常:', error);
     }
+  };
+  
+  const handleManualAuth = () => {
+    console.log('[UserNav] 手动设置认证状态');
+    authService.manualAuthenticate();
+    setForceShowUser(true);
   };
   
   if (isLoading) {
@@ -173,7 +167,7 @@ export default function UserNav() {
             variant="ghost"
             size="sm"
             className="gap-2"
-            onClick={handleSignOut}
+            onClick={handleLogout}
             disabled={isSigningOut}
           >
             <LogOut className="h-4 w-4" />
@@ -182,16 +176,6 @@ export default function UserNav() {
         </div>
       ) : (
         <div className="flex items-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={refreshSession}
-            className="rounded-full"
-          >
-            <User className="h-4 w-4 mr-2" />
-            <span>刷新</span>
-          </Button>
-          
           <Button
             asChild
             className="rounded-full bg-white/80 dark:bg-black/80 backdrop-blur-md shadow-lg border border-gray-200 dark:border-gray-800"

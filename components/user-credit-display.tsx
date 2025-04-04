@@ -1,150 +1,110 @@
+"use client";
+
 import { useState, useEffect } from 'react';
-import { CreditCard, Loader2, RefreshCw } from 'lucide-react';
+import { Coins, RefreshCw, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import CreditRechargeDialog from '@/components/payment/credit-recharge-dialog';
-import { createClient } from '@/utils/supabase/client';
+import { authService } from '@/utils/auth-service';
 
 export default function UserCreditDisplay() {
   const [credits, setCredits] = useState<number | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [isRechargeOpen, setIsRechargeOpen] = useState(false);
-  const [retryCount, setRetryCount] = useState(0);
+  const [isLoading, setIsLoading] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   
-  const fetchUserCredits = async () => {
+  // 获取用户点数的函数
+  const fetchCredits = async () => {
     try {
-      if (retryCount > 3) {
-        console.log('[UserCredit] 达到最大重试次数，使用缓存数据');
-        const cachedCredits = localStorage.getItem('user_credits');
-        if (cachedCredits) {
-          setCredits(parseInt(cachedCredits, 10));
-          setIsLoading(false);
-          return;
-        }
+      // 正在更新时不重复获取
+      if (isRefreshing) return;
+      
+      // 设置加载状态
+      setIsRefreshing(true);
+      console.log('[UserCredit] 开始获取用户点数');
+      
+      // 检查认证状态
+      if (!authService.isAuthenticated()) {
+        console.log('[UserCredit] 用户未认证，跳过获取点数');
+        setIsRefreshing(false);
+        return;
       }
       
-      setIsLoading(true);
-      setError(null);
-      
-      console.log('[UserCredit] 开始获取用户点数');
+      // 获取用户点数
       const response = await fetch('/api/credits/get');
       
       if (!response.ok) {
-        throw new Error('获取点数失败');
+        throw new Error(`获取点数失败: HTTP ${response.status}`);
       }
       
       const data = await response.json();
       
       if (data.success) {
-        console.log(`[UserCredit] 成功获取用户点数: ${data.credits}`);
+        console.log('[UserCredit] 成功获取用户点数:', data.credits);
         setCredits(data.credits);
-        // 缓存数据到本地存储
-        localStorage.setItem('user_credits', data.credits.toString());
       } else {
-        console.error(`[UserCredit] 获取点数响应错误: ${data.error}`);
-        setError(data.error || '获取点数失败');
-        
-        // 尝试使用缓存数据
-        const cachedCredits = localStorage.getItem('user_credits');
-        if (cachedCredits) {
-          console.log(`[UserCredit] 使用缓存点数: ${cachedCredits}`);
-          setCredits(parseInt(cachedCredits, 10));
-        }
+        console.error('[UserCredit] 获取点数失败:', data.error);
       }
-    } catch (error: any) {
-      console.error('[UserCredit] 获取用户点数出错:', error);
-      setError(error.message || '获取点数出错');
-      
-      // 当API请求失败时，尝试从localStorage获取缓存的积分
-      const cachedCredits = localStorage.getItem('user_credits');
-      if (cachedCredits) {
-        console.log(`[UserCredit] 使用缓存点数: ${cachedCredits}`);
-        setCredits(parseInt(cachedCredits, 10));
-      }
-      
-      // 如果登录状态异常，尝试刷新
-      if (retryCount < 3) {
-        const authValid = localStorage.getItem('auth_valid');
-        if (authValid === 'true') {
-          console.log(`[UserCredit] 检测到认证状态，但获取点数失败，尝试刷新会话 (重试 ${retryCount + 1}/3)`);
-          try {
-            const supabase = createClient();
-            await supabase.auth.refreshSession();
-            console.log('[UserCredit] 会话刷新成功，重试获取点数');
-            setRetryCount(retryCount + 1);
-            // 等待一段时间后重试
-            setTimeout(() => {
-              fetchUserCredits();
-            }, 1000);
-            return; // 防止设置isLoading = false
-          } catch (refreshError) {
-            console.error('[UserCredit] 刷新会话失败:', refreshError);
-          }
-        }
-      }
+    } catch (error) {
+      console.error('[UserCredit] 获取点数出错:', error);
     } finally {
-      setIsLoading(false);
+      // 无论结果如何，都取消加载状态
+      setIsRefreshing(false);
     }
   };
   
+  // 初始化加载
   useEffect(() => {
-    fetchUserCredits();
+    const loadData = async () => {
+      setIsLoading(true);
+      await fetchCredits();
+      setIsLoading(false);
+    };
     
-    // 每60秒刷新一次积分
-    const intervalId = setInterval(() => {
-      fetchUserCredits();
-    }, 60000);
+    if (authService.isAuthenticated()) {
+      loadData();
+    }
     
-    return () => clearInterval(intervalId);
+    // 订阅认证状态变化
+    const unsubscribe = authService.subscribe((authState) => {
+      // 当认证状态发生变化且为已认证时，获取点数
+      if (authState.isAuthenticated) {
+        loadData();
+      } else {
+        // 未认证时清空点数
+        setCredits(null);
+      }
+    });
+    
+    return () => {
+      unsubscribe();
+    };
   }, []);
   
-  // 手动刷新积分
-  const refreshCredits = () => {
-    setRetryCount(0); // 重置重试计数
-    fetchUserCredits();
-  };
-  
+  // 渲染组件
   return (
-    <>
-      <div className="flex items-center gap-2">
+    <div className="flex items-center gap-2">
+      <div className="flex items-center gap-1 text-sm">
+        <Coins className="text-primary h-4 w-4" />
+        
         {isLoading ? (
           <Loader2 className="h-4 w-4 animate-spin" />
         ) : (
-          <>
-            <span className="text-sm font-medium">
-              {credits !== null ? `${credits}点` : '获取点数中'}
-            </span>
-            <div className="flex items-center gap-1">
-              <Button 
-                variant="ghost" 
-                size="icon" 
-                className="h-6 w-6 rounded-full"
-                onClick={refreshCredits}
-                title="刷新点数"
-              >
-                <RefreshCw className="h-3 w-3" />
-                <span className="sr-only">刷新点数</span>
-              </Button>
-              <Button 
-                variant="outline" 
-                size="icon" 
-                className="h-8 w-8 rounded-full"
-                onClick={() => setIsRechargeOpen(true)}
-                title="充值点数"
-              >
-                <CreditCard className="h-4 w-4" />
-                <span className="sr-only">充值点数</span>
-              </Button>
-            </div>
-          </>
+          <span className="font-medium">
+            {credits !== null ? credits : '-'}
+          </span>
         )}
+        
+        <span className="text-muted-foreground">点</span>
       </div>
       
-      <CreditRechargeDialog
-        isOpen={isRechargeOpen}
-        onClose={() => setIsRechargeOpen(false)}
-        onSuccess={() => fetchUserCredits()}
-      />
-    </>
+      <Button
+        variant="ghost"
+        size="icon"
+        className={`h-6 w-6 ${isRefreshing ? 'animate-spin' : ''}`}
+        onClick={fetchCredits}
+        disabled={isRefreshing}
+        title="刷新点数"
+      >
+        <RefreshCw className="h-3 w-3" />
+      </Button>
+    </div>
   );
 }

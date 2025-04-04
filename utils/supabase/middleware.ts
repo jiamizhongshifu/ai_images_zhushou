@@ -156,6 +156,14 @@ export const updateSession = async (request: NextRequest) => {
     
     // 如果用户在登录页但已经登录了，自动重定向到受保护页面
     if (request.nextUrl.pathname === "/sign-in" && user) {
+      // 检查是否有强制登出参数
+      const forceLogout = request.nextUrl.searchParams.get('force_logout');
+      if (forceLogout === 'true') {
+        logger.info('检测到强制登出参数，跳过重定向到受保护页面');
+        // 在这种情况下，不进行重定向，允许访问登录页
+        return response;
+      }
+      
       // 记录本次重定向
       lastRedirectInfo = { url: '/protected', timestamp: currentTime };
       logger.info('用户已登录但在登录页面，重定向到受保护页面');
