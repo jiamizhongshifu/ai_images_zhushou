@@ -2,11 +2,102 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { Upload, SendHorizontal, PlusCircle, RefreshCw, Image as ImageIcon, Loader2, Download, X, AlertCircle, Trash2 } from "lucide-react";
+import { Upload, SendHorizontal, PlusCircle, RefreshCw, Image as ImageIcon, Loader2, Download, X, AlertCircle, Check, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import Image from "next/image";
 import CreditRechargeDialog from "@/components/payment/credit-recharge-dialog";
+
+// 艺术风格示例数据
+const STYLE_EXAMPLES = [
+  {
+    id: "自定义",
+    name: "自定义",
+    description: "使用您的提示词自由定义风格，不应用预设效果",
+    imageUrl: "/examples/custom.webp"
+  },
+  {
+    id: "吉卜力",
+    name: "吉卜力",
+    description: "细腻精致、充满幻想的日式动画风格",
+    imageUrl: "/examples/ghibli.webp"
+  },
+  {
+    id: "乐高",
+    name: "乐高",
+    description: "积木拼搭风格，充满趣味性",
+    imageUrl: "/examples/lego.webp"
+  },
+  {
+    id: "皮克斯",
+    name: "皮克斯",
+    description: "3D卡通风格，生动活泼",
+    imageUrl: "/examples/pixar.webp"
+  },
+  {
+    id: "新海诚",
+    name: "新海诚",
+    description: "唯美光影、细腻情感表达",
+    imageUrl: "/examples/shinkai.webp"
+  },
+  {
+    id: "迪士尼",
+    name: "迪士尼",
+    description: "经典美式动画风格",
+    imageUrl: "/examples/disney.webp"
+  }
+];
+
+// 风格卡片组件
+function StyleCard({ 
+  style, 
+  isActive = false, 
+  onClick 
+}: { 
+  style: typeof STYLE_EXAMPLES[0];
+  isActive: boolean; 
+  onClick: () => void;
+}) {
+  return (
+    <div 
+      className={`relative rounded-lg overflow-hidden cursor-pointer transition-colors ${
+        isActive 
+          ? "shadow-[0_0_0_2px_var(--primary)] border-transparent" 
+          : "border border-border hover:border-primary/50"
+      }`}
+      onClick={onClick}
+    >
+      {/* 图片预览 */}
+      <div className="aspect-square bg-muted relative h-20 w-20 sm:h-22 sm:w-22">
+        <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-b from-muted/30 to-muted/10 z-0">
+          <ImageIcon className="w-5 h-5 text-muted-foreground/30" />
+        </div>
+        <img
+          src={style.imageUrl || `/examples/placeholder.jpg`}
+          alt={`${style.name}风格示例`}
+          className="w-full h-full object-cover relative z-10"
+          loading="lazy"
+          onError={(e) => {
+            e.currentTarget.style.opacity = "0.3";
+            e.currentTarget.style.zIndex = "0";
+          }}
+        />
+        
+        {/* 选中指示 */}
+        {isActive && (
+          <div className="absolute top-1.5 right-1.5 bg-primary text-primary-foreground rounded-full p-1 z-20">
+            <Check className="h-3 w-3" />
+          </div>
+        )}
+      </div>
+      
+      {/* 风格名称和描述 */}
+      <div className="p-1.5 bg-card">
+        <h3 className="text-xs font-medium text-center">{style.name}</h3>
+      </div>
+    </div>
+  );
+}
 
 export default function ProtectedPage() {
   const router = useRouter();
@@ -15,7 +106,7 @@ export default function ProtectedPage() {
   const [error, setError] = useState("");
   const [generatedImages, setGeneratedImages] = useState<string[]>([]);
   const [uploadedImage, setUploadedImage] = useState<string | null>(null);
-  const [activeStyle, setActiveStyle] = useState("无风格");
+  const [activeStyle, setActiveStyle] = useState("自定义");
   const fileInputRef = useRef<HTMLInputElement>(null);
   
   // 添加预览状态
@@ -454,13 +545,14 @@ export default function ProtectedPage() {
   
   // 生成图片
   const generateImage = async () => {
-    // 检查是否有上传图片和选择风格的情况下可以不需要输入文本
+    // 检查是否有上传图片和选择风格
     const hasUploadedImage = !!uploadedImage;
-    const hasSelectedStyle = activeStyle !== "无风格";
+    // 自定义风格需要提示词
+    const needsPrompt = activeStyle === "自定义";
     
     // 当没有输入提示词时，检查是否可以继续
-    if (!prompt.trim() && !(hasUploadedImage && hasSelectedStyle)) {
-      setError("请输入提示词，或上传图片并选择风格");
+    if (!prompt.trim() && (needsPrompt || !hasUploadedImage)) {
+      setError("请输入提示词，或上传图片并选择艺术风格");
       return;
     }
     
@@ -480,29 +572,26 @@ export default function ProtectedPage() {
       // 创建完整提示词，包含风格
       let fullPrompt = prompt.trim();
       
-      // 处理特殊风格
-      if (activeStyle === "吉卜力") {
-        // 如果有提示词使用提示词，否则使用默认提示
+      // 如果是自定义风格，直接使用用户输入的提示词
+      if (activeStyle === "自定义") {
+        fullPrompt = fullPrompt || "生成图像";
+      } else if (activeStyle === "吉卜力") {
+        // 处理特殊风格
         fullPrompt = fullPrompt ? 
           `${fullPrompt}，生成转换成吉普力风格风格的图像` : 
           "生成转换成吉普力风格风格的图像";
-      } else if (activeStyle !== "无风格") {
+      } else {
         // 其他风格处理
         fullPrompt = fullPrompt ? 
           `${fullPrompt}，风格：${activeStyle}` : 
           `生成${activeStyle}风格的图像`;
       }
       
-      // 如果只有图片没有文本，使用默认提示词
-      if (!fullPrompt && hasUploadedImage) {
-        fullPrompt = "请分析这张图片并生成相应风格的新图像";
-      }
-      
       // 准备API请求数据
       const requestData = {
         prompt: fullPrompt,
         image: uploadedImage || undefined,
-        style: activeStyle !== "无风格" ? activeStyle : undefined,
+        style: activeStyle !== "自定义" ? activeStyle : undefined,
         aspectRatio: imageAspectRatio,
         standardAspectRatio: standardAspectRatio
       };
@@ -790,8 +879,8 @@ export default function ProtectedPage() {
         )}
 
         {/* 风格选择 */}
-        <Card className="mb-6">
-          <CardHeader className="pb-2">
+        <Card className="mb-4">
+          <CardHeader className="py-2 px-4">
             <CardTitle className="text-sm font-medium flex items-center gap-2">
               <div className="w-5 h-5 rounded-full bg-muted flex items-center justify-center">
                 <span className="text-xs">🎨</span>
@@ -799,19 +888,16 @@ export default function ProtectedPage() {
               选择艺术风格
             </CardTitle>
           </CardHeader>
-          <CardContent>
-            <div className="flex flex-wrap gap-2">
-              {["无风格", "宫崎骏", "吉卜力", "乐高", "皮克斯", "新海诚", "迪士尼", "自定义"].map((style) => (
-                <StyleButton 
-                  key={style} 
-                  label={style} 
-                  active={activeStyle === style}
-                  onClick={() => setActiveStyle(style)} 
+          <CardContent className="py-2 px-4">
+            <div className="flex flex-row gap-3 overflow-x-auto pb-2">
+              {STYLE_EXAMPLES.map((style) => (
+                <StyleCard
+                  key={style.id}
+                  style={style}
+                  isActive={activeStyle === style.id}
+                  onClick={() => setActiveStyle(style.id)}
                 />
               ))}
-              <Button variant="outline" size="sm" className="h-8 w-8 p-0">
-                <span>...</span>
-              </Button>
             </div>
           </CardContent>
         </Card>
@@ -896,7 +982,7 @@ export default function ProtectedPage() {
                       className="h-8"
                       onClick={generateImage}
                       disabled={isGenerating || 
-                        ((!prompt.trim() && !(uploadedImage && activeStyle !== "无风格"))) || 
+                        ((!prompt.trim() && !(uploadedImage && activeStyle !== "自定义"))) || 
                         (userCredits !== null && userCredits <= 0)}
                     >
                       {isGenerating ? (
@@ -1088,27 +1174,5 @@ export default function ProtectedPage() {
         onSuccess={() => fetchUserCredits()}
       />
     </div>
-  );
-}
-
-// 风格按钮组件
-function StyleButton({ 
-  label, 
-  active = false,
-  onClick 
-}: { 
-  label: string; 
-  active?: boolean;
-  onClick?: () => void;
-}) {
-  return (
-    <Button 
-      variant={active ? "default" : "outline"} 
-      size="sm"
-      className="h-8"
-      onClick={onClick}
-    >
-      {label}
-    </Button>
   );
 }
