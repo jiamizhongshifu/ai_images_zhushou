@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient, createTransactionalAdminClient } from '@/utils/supabase/admin';
 import { PaymentStatus, parsePaymentNotification } from '@/utils/payment';
+import { handleError, ErrorLevel } from '@/utils/error-handler';
+import { getRequestInfo } from '@/utils/auth-middleware';
+import { withRateLimit, ipKeyGenerator, rateLimitPresets } from '@/utils/rate-limiter';
 
 /**
  * 处理支付平台的异步通知
@@ -10,149 +13,185 @@ import { PaymentStatus, parsePaymentNotification } from '@/utils/payment';
  * 4. 使用事务保证原子性
  * 5. 确保幂等性处理
  */
-export async function GET(request: NextRequest) {
-  try {
-    // 记录完整请求信息
-    const url = new URL(request.url);
-    const params: Record<string, any> = {};
-    url.searchParams.forEach((value, key) => {
-      params[key] = value;
-    });
-    
-    console.log("收到GET支付回调完整数据:", params);
-    
-    // 记录回调日志
-    await logPaymentCallback(params, 'GET', request.headers.get('x-forwarded-for') || 'unknown');
-    
-    return await processPaymentCallback(params);
-  } catch (error: any) {
-    console.error("处理GET支付通知时出错:", error);
-    return new Response("success", { status: 200 }); // 仍返回成功避免重复通知
+export const GET = withRateLimit(
+  async (request: NextRequest) => {
+    try {
+      // 获取请求信息，用于记录日志
+      const requestInfo = getRequestInfo(request);
+      const clientIp = requestInfo.ip || 'unknown';
+      
+      console.log(`接收到支付回调, IP: ${clientIp}`);
+      
+      // 记录完整请求信息
+      const url = new URL(request.url);
+      const params: Record<string, any> = {};
+      url.searchParams.forEach((value, key) => {
+        params[key] = value;
+      });
+      
+      console.log("收到GET支付回调完整数据:", params);
+      
+      // 记录回调日志
+      const logId = await logPaymentCallback(params, 'GET', clientIp);
+      
+      return await processPaymentCallback(params);
+    } catch (error: any) {
+      console.error("处理GET支付通知时出错:", error);
+      return new Response("success", { status: 200 }); // 仍返回成功避免重复通知
+    }
+  },
+  {
+    // 较为严格的限流规则
+    limit: 30,            // 30次/分钟
+    windowMs: 60 * 1000,  // 1分钟窗口期
+    keyGenerator: ipKeyGenerator('payment:webhook:get'),
+    message: '请求频率过高，请稍后再试'
   }
-}
+);
 
 /**
  * 处理POST方式的支付回调
  * 大多数支付网关使用POST方式发送异步通知
  */
-export async function POST(request: NextRequest) {
-  try {
-    const requestClone = request.clone();
-    const rawText = await requestClone.text();
-    console.log('原始回调数据:', rawText);
-    
-    // 尝试从请求体获取参数
-    let params: Record<string, any> = {};
-    
-    // 获取Content-Type
-    const contentType = request.headers.get('content-type') || '';
-    
-    // 尝试多种方式解析数据
-    if (contentType.includes('application/json')) {
-      try {
-        const jsonData = await request.json();
-        console.log("收到JSON格式支付回调:", jsonData);
-        params = jsonData;
-        
-        // 检查是否是微信支付通知
-        if (jsonData.id && jsonData.resource_type) {
-          // 微信支付V3通知
-          const resourceType = jsonData.resource_type;
+export const POST = withRateLimit(
+  async (request: NextRequest) => {
+    try {
+      const requestClone = request.clone();
+      const rawText = await requestClone.text();
+      console.log('原始回调数据:', rawText);
+      
+      // 尝试从请求体获取参数
+      let params: Record<string, any> = {};
+      
+      // 获取Content-Type
+      const contentType = request.headers.get('content-type') || '';
+      
+      // 尝试多种方式解析数据
+      if (contentType.includes('application/json')) {
+        try {
+          const jsonData = await request.json();
+          console.log("收到JSON格式支付回调:", jsonData);
+          params = jsonData;
           
-          // 处理微信支付通知
-          if (resourceType === 'encrypt-resource') {
-            // 这里应该有解密逻辑，但简化处理
-            // 假设已解密并获取到支付结果
-            const wechatPayInfo = jsonData.resource || {};
-            const { out_trade_no, transaction_id, trade_state, trade_state_desc } = 
-              wechatPayInfo.ciphertext || wechatPayInfo;
+          // 检查是否是微信支付通知
+          if (jsonData.id && jsonData.resource_type) {
+            // 微信支付V3通知
+            const resourceType = jsonData.resource_type;
             
-            // 记录回调日志
-            await logPaymentCallback(
-              { original: jsonData, parsed: { out_trade_no, trade_state } }, 
-              'POST-WECHAT', 
-              request.headers.get('x-forwarded-for') || 'unknown'
-            );
-            
-            // 支付成功，更新订单状态和用户点数
-            if (trade_state === 'SUCCESS') {
-              const result = await processWechatPaymentSuccess(
-                out_trade_no, 
-                transaction_id, 
-                trade_state, 
-                trade_state_desc, 
-                wechatPayInfo
+            // 处理微信支付通知
+            if (resourceType === 'encrypt-resource') {
+              // 这里应该有解密逻辑，但简化处理
+              // 假设已解密并获取到支付结果
+              const wechatPayInfo = jsonData.resource || {};
+              const { out_trade_no, transaction_id, trade_state, trade_state_desc } = 
+                wechatPayInfo.ciphertext || wechatPayInfo;
+              
+              // 记录回调日志
+              await logPaymentCallback(
+                { original: jsonData, parsed: { out_trade_no, trade_state } }, 
+                'POST-WECHAT', 
+                request.headers.get('x-forwarded-for') || 'unknown'
               );
               
-              console.log(`微信支付处理结果:`, result);
-            } else {
-              // 支付未成功，仅更新订单状态
-              await updateOrderStatusFailed(
-                out_trade_no, 
-                transaction_id, 
-                trade_state, 
-                trade_state_desc, 
-                wechatPayInfo
-              );
+              // 支付成功，更新订单状态和用户点数
+              if (trade_state === 'SUCCESS') {
+                const result = await processWechatPaymentSuccess(
+                  out_trade_no, 
+                  transaction_id, 
+                  trade_state, 
+                  trade_state_desc, 
+                  wechatPayInfo
+                );
+                
+                console.log(`微信支付处理结果:`, result);
+              } else {
+                // 支付未成功，仅更新订单状态
+                await updateOrderStatusFailed(
+                  out_trade_no, 
+                  transaction_id, 
+                  trade_state, 
+                  trade_state_desc, 
+                  wechatPayInfo
+                );
+              }
+              
+              // 返回微信支付需要的成功响应
+              return NextResponse.json({
+                code: 'SUCCESS',
+                message: '成功'
+              });
             }
             
-            // 返回微信支付需要的成功响应
-            return NextResponse.json({
-              code: 'SUCCESS',
-              message: '成功'
-            });
+            // 不是我们处理的通知类型
+            return new Response("success", { status: 200 });
           }
-          
-          // 不是我们处理的通知类型
-          return new Response("success", { status: 200 });
+        } catch (e) {
+          console.error('JSON解析失败，尝试其他格式', e);
         }
-      } catch (e) {
-        console.error('JSON解析失败，尝试其他格式', e);
+      } 
+      
+      // 如果JSON解析失败或不是JSON格式，尝试表单格式
+      if (Object.keys(params).length === 0 && contentType.includes('application/x-www-form-urlencoded')) {
+        try {
+          const formData = await request.formData();
+          formData.forEach((value, key) => {
+            params[key] = value;
+          });
+          console.log("收到表单格式支付回调:", params);
+        } catch (e) {
+          console.error('表单解析失败', e);
+        }
+      } 
+      
+      // 尝试解析为URL编码参数
+      if (Object.keys(params).length === 0) {
+        try {
+          const text = rawText;
+          const searchParams = new URLSearchParams(text);
+          searchParams.forEach((value, key) => {
+            params[key] = value;
+          });
+          console.log("收到URL编码格式支付回调:", params);
+        } catch (e) {
+          console.error('URL参数解析失败', e);
+        }
       }
-    } 
-    
-    // 如果JSON解析失败或不是JSON格式，尝试表单格式
-    if (Object.keys(params).length === 0 && contentType.includes('application/x-www-form-urlencoded')) {
-      try {
-        const formData = await request.formData();
-        formData.forEach((value, key) => {
-          params[key] = value;
-        });
-        console.log("收到表单格式支付回调:", params);
-      } catch (e) {
-        console.error('表单解析失败', e);
+      
+      // 记录回调日志
+      await logPaymentCallback(params, 'POST', request.headers.get('x-forwarded-for') || 'unknown');
+      
+      // 处理标准支付回调
+      if (Object.keys(params).length > 0) {
+        return await processPaymentCallback(params);
       }
-    } 
-    
-    // 尝试解析为URL编码参数
-    if (Object.keys(params).length === 0) {
-      try {
-        const text = rawText;
-        const searchParams = new URLSearchParams(text);
-        searchParams.forEach((value, key) => {
-          params[key] = value;
-        });
-        console.log("收到URL编码格式支付回调:", params);
-      } catch (e) {
-        console.error('URL参数解析失败', e);
-      }
+      
+      console.error("无法解析的回调格式");
+      return new Response("success", { status: 200 }); // 仍返回成功避免重复通知
+    } catch (error: any) {
+      console.error("处理POST支付通知时出错:", error);
+      return new Response("success", { status: 200 });
     }
-    
-    // 记录回调日志
-    await logPaymentCallback(params, 'POST', request.headers.get('x-forwarded-for') || 'unknown');
-    
-    // 处理标准支付回调
-    if (Object.keys(params).length > 0) {
-      return await processPaymentCallback(params);
+  },
+  {
+    // 针对支付回调的特殊限流规则，较为宽松但仍能阻止攻击
+    limit: 60,            // 60次/分钟
+    windowMs: 60 * 1000,  // 1分钟窗口期
+    keyGenerator: ipKeyGenerator('payment:webhook'),
+    skip: (req) => {
+      // 可选：白名单IP不受限制
+      const ip = req.headers.get('x-forwarded-for') || 
+                 req.headers.get('x-real-ip') || 
+                 'unknown';
+                 
+      // 白名单IP列表
+      const whitelistIps = process.env.PAYMENT_WEBHOOK_IP_WHITELIST ? 
+                          process.env.PAYMENT_WEBHOOK_IP_WHITELIST.split(',') : 
+                          [];
+                          
+      return whitelistIps.includes(ip);
     }
-    
-    console.error("无法解析的回调格式");
-    return new Response("success", { status: 200 }); // 仍返回成功避免重复通知
-  } catch (error: any) {
-    console.error("处理POST支付通知时出错:", error);
-    return new Response("success", { status: 200 });
   }
-}
+);
 
 /**
  * 记录支付回调日志

@@ -3,6 +3,7 @@ import { createTransactionalAdminClient } from '@/utils/supabase/admin';
 import { withAuth, AuthType, getRequestInfo } from '@/utils/auth-middleware';
 import { getEnv, getApiConfig } from '@/utils/env';
 import { handleError, ErrorLevel } from '@/utils/error-handler';
+import { withRateLimit, userIdKeyGenerator, rateLimitPresets } from '@/utils/rate-limiter';
 
 /**
  * 检查支付状态API
@@ -14,7 +15,7 @@ import { handleError, ErrorLevel } from '@/utils/error-handler';
  * - success: 是否成功
  * - order: 订单信息
  */
-export const GET = withAuth(async (request: NextRequest, authResult) => {
+const checkPaymentHandler = async (request: NextRequest, authResult: any) => {
   try {
     // 获取请求信息，用于日志
     const requestInfo = getRequestInfo(request);
@@ -149,7 +150,45 @@ export const GET = withAuth(async (request: NextRequest, authResult) => {
       error: errorInfo.message
     }, { status: 500 });
   }
-}, AuthType.USER);
+};
+
+// 应用认证中间件和速率限制中间件
+export const GET = withAuth(
+  withRateLimit(
+    checkPaymentHandler,
+    {
+      ...rateLimitPresets.payment, // 使用支付API的预设速率限制
+      keyGenerator: (req, context) => {
+        // 使用传递的上下文中的用户ID作为限流标识
+        // context参数会从withAuth中获取authResult
+        if (context && context.user && context.user.id) {
+          return `user:${context.user.id}:payment:check`;
+        }
+        // 回退到IP限流
+        const ip = req.headers.get('x-forwarded-for') || 
+                  req.headers.get('x-real-ip') ||
+                  'unknown';
+        return `ip:${ip}:payment:check`;
+      },
+      message: '请求支付查询过于频繁，请稍后再试',
+      // 自定义错误消息
+      skip: (req) => {
+        // 1. 跳过内部调用的速率限制
+        const url = new URL(req.url);
+        const hasAdminKey = url.searchParams.has('admin_key') && 
+                          url.searchParams.get('admin_key') === process.env.INTERNAL_API_KEY;
+        
+        // 2. 支付页面回调调用不受速率限制
+        const isPaymentCallback = url.searchParams.has('order_no') && 
+                                url.searchParams.has('trade_status');
+        
+        return hasAdminKey || isPaymentCallback;
+      }
+    }
+  ),
+  // 修改为可选认证，允许未登录用户查询订单
+  AuthType.OPTIONAL
+);
 
 /**
  * 记录支付状态查询日志

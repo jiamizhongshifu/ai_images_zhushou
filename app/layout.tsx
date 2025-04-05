@@ -6,6 +6,7 @@ import { Geist } from "next/font/google";
 import { ThemeProvider } from "next-themes";
 import Link from "next/link";
 import "./globals.css";
+import { validateRequiredEnvVars } from '@/utils/env';
 
 const defaultUrl = process.env.VERCEL_URL
   ? `https://${process.env.VERCEL_URL}`
@@ -21,6 +22,19 @@ const geistSans = Geist({
   display: "swap",
   subsets: ["latin"],
 });
+
+// 验证必要的环境变量
+// 这段代码只在服务器端执行
+try {
+  validateRequiredEnvVars();
+  console.log('✅ 环境变量验证通过');
+} catch (error) {
+  console.error('❌ 环境变量验证失败:', error);
+  // 生产环境只记录警告，开发环境会抛出错误导致应用无法启动
+  if (process.env.NODE_ENV === 'development') {
+    throw error;
+  }
+}
 
 export default function RootLayout({
   children,

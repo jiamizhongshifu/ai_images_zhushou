@@ -3,7 +3,10 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start"
+    "start": "next start",
+    "dev:cron": "node scripts/cron-task.js",
+    "fix-orders": "curl -s \"http://localhost:3000/api/cron/fix-pending-orders?key=development-key\"",
+    "fix-order": "node scripts/fix-order.js"
   },
   "dependencies": {
     "@radix-ui/react-accordion": "^1.2.3",
