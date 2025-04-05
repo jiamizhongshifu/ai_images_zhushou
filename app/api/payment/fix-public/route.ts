@@ -133,9 +133,9 @@ const handleFixPublic = async (request: NextRequest) => {
           .insert({
             user_id: order.user_id,
             operation_type: 'recharge',
-            credits: addCredits,
-            old_credits: oldCredits,
-            new_credits: newCredits,
+            credit_change: addCredits,
+            credits_before: oldCredits,
+            credits_after: newCredits,
             order_no: order.order_no,
             note: `支付成功，增加${addCredits}点`,
             created_at: new Date().toISOString()

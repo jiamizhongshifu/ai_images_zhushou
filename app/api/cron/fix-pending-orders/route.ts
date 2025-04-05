@@ -1,173 +1,201 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createTransactionalAdminClient } from '@/utils/supabase/admin';
+import { createAdminClient } from '@/utils/supabase/admin';
 import { handleError, ErrorLevel } from '@/utils/error-handler';
+import { withPaymentRetry, processBatchOrders } from '@/utils/payment-retry';
 
 /**
- * 定时任务API，用于自动检查并修复悬挂的支付订单
+ * 定时任务：自动检查并修复悬挂的支付订单
  * 
- * 查询参数:
- * - key: 安全密钥，必须匹配环境变量中的设置 (必填)
- * - hours: 查询几小时内的订单，默认24小时
- * - limit: 每次处理的订单数量，默认10条
+ * 查询参数：
+ * - key: 安全密钥，必须匹配环境变量 TASK_PROCESS_SECRET_KEY
+ * - hours: 要检查的小时数，默认为1（即检查1小时内的未完成订单）
+ * - limit: 最多处理的订单数，默认为50
  * 
- * 返回:
- * - success: 是否执行成功
- * - processed: 处理的订单数量
- * - results: 各订单处理结果
+ * 返回：
+ * - 处理结果摘要
  */
 export async function GET(request: NextRequest) {
   try {
-    // 检查密钥，确保只有授权请求可以执行
-    const url = new URL(request.url);
-    const key = url.searchParams.get('key');
+    // 验证安全密钥
+    const { searchParams } = new URL(request.url);
+    const key = searchParams.get('key');
     
-    // TASK_PROCESS_SECRET_KEY应在环境变量中设置
-    if (key !== process.env.TASK_PROCESS_SECRET_KEY) {
+    if (!key || key !== process.env.TASK_PROCESS_SECRET_KEY) {
+      console.warn('定时任务API访问：密钥验证失败');
+      
       return NextResponse.json({
         success: false,
-        error: '未授权访问'
+        error: '无效的访问密钥'
       }, { status: 403 });
     }
     
     // 获取参数
-    const hoursParam = url.searchParams.get('hours');
-    const hours = hoursParam ? parseInt(hoursParam, 10) : 24;
+    const hours = parseInt(searchParams.get('hours') || '1', 10);
+    const limit = parseInt(searchParams.get('limit') || '50', 10);
     
-    const limitParam = url.searchParams.get('limit');
-    const limit = limitParam ? parseInt(limitParam, 10) : 10;
-    
-    // 查找指定时间范围内创建的pending订单
-    const adminClient = await createTransactionalAdminClient();
+    // 获取当前时间和截止时间
     const now = new Date();
-    // 至少1小时前创建的订单
-    const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
-    // 不超过指定小时数
-    const timeAgo = new Date(now.getTime() - hours * 60 * 60 * 1000);
+    const checkBeforeTime = new Date(now.getTime() - (hours * 60 * 60 * 1000));
+    const checkBeforeTimeString = checkBeforeTime.toISOString();
     
-    // 使用事务执行查询
-    const pendingOrders = await adminClient.executeTransaction(async (client) => {
-      // 查询符合条件的pending订单
-      const { data, error } = await client
-        .from('ai_images_creator_payments')
-        .select('order_no')
-        .eq('status', 'pending')
-        .lt('created_at', oneHourAgo.toISOString()) // 至少1小时前创建
-        .gt('created_at', timeAgo.toISOString())    // 不早于指定时间
-        .limit(limit);
-      
-      if (error) {
-        throw new Error(`查询悬挂订单失败: ${error.message}`);
-      }
-      
-      return data || [];
-    });
+    console.log(`开始处理 ${checkBeforeTimeString} 后的未完成订单，最多处理 ${limit} 条`);
     
-    if (pendingOrders.length === 0) {
+    // 创建数据库管理客户端
+    const adminClient = createAdminClient();
+    
+    // 1. 查询未完成的订单
+    const { data: pendingOrders, error: queryError } = await adminClient
+      .from('ai_images_creator_payments')
+      .select('order_no, user_id, created_at, amount, credits')
+      .eq('status', 'pending')
+      .gt('created_at', checkBeforeTimeString)
+      .order('created_at', { ascending: false })
+      .limit(limit);
+    
+    if (queryError) {
+      throw new Error(`查询未完成订单失败: ${queryError.message}`);
+    }
+    
+    // 如果没有待处理的订单，直接返回
+    if (!pendingOrders || pendingOrders.length === 0) {
       return NextResponse.json({
         success: true,
         message: '没有需要处理的悬挂订单'
       });
     }
     
-    // 记录开始处理
-    console.log(`开始处理${pendingOrders.length}条悬挂订单`);
+    console.log(`找到 ${pendingOrders.length} 个未完成的订单，即将开始处理`);
     
-    // 逐个检查并尝试修复
-    const results = [];
-    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000';
+    // 提取订单号列表
+    const orderNos = pendingOrders.map(order => order.order_no);
     
-    for (const order of pendingOrders) {
-      try {
-        console.log(`处理订单 ${order.order_no}...`);
-        
-        // 调用修复接口
-        const fixResponse = await fetch(
-          `${siteUrl}/api/payment/fix-public?order_no=${order.order_no}`,
-          { 
-            method: 'GET',
-            // 增加超时设置
-            signal: AbortSignal.timeout(10000) // 10秒超时
-          }
-        );
-        
-        const responseText = await fixResponse.text();
-        console.log(`订单 ${order.order_no} 响应: ${responseText.substring(0, 100)}...`);
-        
-        let fixResult;
-        try {
-          fixResult = JSON.parse(responseText);
-        } catch (parseError) {
-          console.error(`解析订单 ${order.order_no} 响应失败:`, parseError);
-          results.push({
-            order_no: order.order_no,
-            success: false,
-            error: `解析响应失败: ${parseError.message}，原始响应: ${responseText.substring(0, 200)}`
-          });
-          continue;
-        }
-        
-        if (fixResponse.ok) {
-          results.push({
-            order_no: order.order_no,
-            success: fixResult.success,
-            result: fixResult.success ? fixResult.result : fixResult.error,
-            error: fixResult.success ? undefined : (fixResult.error || '未知错误')
-          });
-        } else {
-          results.push({
-            order_no: order.order_no,
-            success: false,
-            error: `HTTP错误: ${fixResponse.status}，响应: ${JSON.stringify(fixResult)}`
-          });
-        }
-      } catch (error) {
-        // 捕获并记录详细错误
-        const errorMessage = error instanceof Error ? error.message : '未知错误';
-        const errorStack = error instanceof Error ? error.stack : '';
-        
-        console.error(`处理订单 ${order.order_no} 时发生错误:`, errorMessage);
-        if (errorStack) {
-          console.error(`错误堆栈:`, errorStack);
-        }
-        
-        handleError(
-          error,
-          '修复悬挂订单',
-          { orderNo: order.order_no },
-          ErrorLevel.WARNING
-        );
-        
-        results.push({
-          order_no: order.order_no,
-          success: false,
-          error: `请求错误: ${errorMessage}`
-        });
+    // 记录任务开始日志
+    await logTaskExecution('fix-pending-orders', 'start', {
+      orderCount: pendingOrders.length,
+      orders: orderNos,
+      queryParams: {
+        hours,
+        limit
       }
-      
-      // 请求之间添加短暂延迟，避免过快请求
-      await new Promise(resolve => setTimeout(resolve, 500)); // 增加到500ms
-    }
+    });
     
-    // 记录处理结果
-    console.log(`悬挂订单处理完成，成功: ${results.filter(r => r.success).length}/${results.length}`);
+    // 2. 批量处理订单，使用新的批处理功能
+    const result = await processBatchOrders(
+      orderNos,
+      // 单个订单处理函数
+      async (orderNo) => {
+        console.log(`正在处理订单: ${orderNo}`);
+        const response = await fetch(
+          `${getServerBaseUrl(request)}/api/payment/fix-public?order_no=${orderNo}`,
+          { method: 'GET' }
+        );
+        
+        if (!response.ok) {
+          const errorText = await response.text();
+          throw new Error(`处理订单 ${orderNo} 失败: ${response.status} - ${errorText}`);
+        }
+        
+        const data = await response.json();
+        
+        if (!data.success) {
+          throw new Error(`处理订单 ${orderNo} 失败: ${data.error || '未知错误'}`);
+        }
+        
+        console.log(`成功处理订单 ${orderNo}: ${JSON.stringify(data.result)}`);
+        return data.result;
+      },
+      // 批处理配置
+      {
+        concurrency: 3, // 最多同时处理3个订单
+        onProgress: (orderNo, result, completed, total) => {
+          const status = result.success ? '✅ 成功' : '❌ 失败';
+          console.log(`[${completed}/${total}] 处理订单 ${orderNo} ${status}`);
+        }
+      }
+    );
     
+    // 记录任务完成日志
+    await logTaskExecution('fix-pending-orders', 'complete', {
+      orderCount: pendingOrders.length,
+      processedCount: result.successful + result.failed,
+      successfulCount: result.successful,
+      failedCount: result.failed,
+      results: result.results
+    });
+    
+    // 返回处理结果
     return NextResponse.json({
       success: true,
-      processed: results.length,
-      results
+      message: `共处理了 ${result.total} 个订单，成功 ${result.successful} 个，失败 ${result.failed} 个`,
+      processingResults: result.results
     });
   } catch (error) {
-    // 使用统一的错误处理
+    // 记录错误
+    console.error('定时任务异常:', error);
+    
+    // 使用统一的错误处理机制
     const errorInfo = handleError(
       error,
-      '定时处理悬挂订单',
-      { url: request.url },
+      '定时任务-修复未完成订单',
+      { request: request.url },
       ErrorLevel.ERROR
     );
     
+    try {
+      // 记录任务失败日志
+      await logTaskExecution('fix-pending-orders', 'error', {
+        error: errorInfo
+      });
+    } catch (logError) {
+      console.error('记录任务失败日志出错:', logError);
+    }
+    
+    // 返回错误信息
     return NextResponse.json({
       success: false,
-      error: errorInfo.message
+      error: errorInfo.message,
+      details: error instanceof Error ? error.message : '未知错误'
     }, { status: 500 });
+  }
+}
+
+/**
+ * 获取服务器基本URL
+ */
+function getServerBaseUrl(request: NextRequest): string {
+  // 生产环境使用环境变量定义的URL
+  if (process.env.NEXT_PUBLIC_SITE_URL) {
+    return process.env.NEXT_PUBLIC_SITE_URL;
+  }
+  
+  // 开发环境根据请求推断
+  const proto = request.headers.get('x-forwarded-proto') || 'http';
+  const host = request.headers.get('host') || 'localhost:3000';
+  
+  return `${proto}://${host}`;
+}
+
+/**
+ * 记录任务执行日志
+ */
+async function logTaskExecution(
+  taskName: string,
+  status: 'start' | 'complete' | 'error',
+  data: any
+): Promise<void> {
+  try {
+    const adminClient = createAdminClient();
+    
+    await adminClient
+      .from('ai_images_creator_task_logs')
+      .insert({
+        task_name: taskName,
+        status,
+        data,
+        created_at: new Date().toISOString()
+      });
+  } catch (error) {
+    console.error('记录任务执行日志失败:', error);
+    // 记录失败不影响主流程，只记录错误日志
   }
 } 

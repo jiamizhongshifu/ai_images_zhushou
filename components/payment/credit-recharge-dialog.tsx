@@ -44,32 +44,6 @@ export default function CreditRechargeDialog({ isOpen, onClose, onSuccess }: Cre
     }
   }, []);
   
-  // 添加强制刷新点数状态的函数
-  const forceRefreshCredits = async () => {
-    try {
-      console.log('手动强制刷新点数...');
-      
-      // 清除可能的缓存参数
-      const timestamp = Date.now();
-      const response = await fetch(`/api/credits/get?_t=${timestamp}`, {
-        headers: {
-          'Cache-Control': 'no-cache, no-store',
-          'Pragma': 'no-cache'
-        }
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
-        if (data.success) {
-          console.log('强制刷新点数成功:', data.credits);
-          // 这里不直接更新状态，而是通过刷新页面来获取最新状态
-        }
-      }
-    } catch (error) {
-      console.error('强制刷新点数失败:', error);
-    }
-  };
-  
   // 轮询检查支付状态
   useEffect(() => {
     if (isCheckingPayment && orderNo) {
@@ -154,34 +128,223 @@ export default function CreditRechargeDialog({ isOpen, onClose, onSuccess }: Cre
     setIsCheckingPayment(true);
   };
   
-  // 处理支付请求
-  const handlePayment = async () => {
+  // 添加强制刷新点数状态的函数
+  const forceRefreshCredits = async () => {
+    try {
+      console.log('手动强制刷新点数...');
+      
+      // 清除可能的缓存参数
+      const timestamp = Date.now();
+      const response = await fetch(`/api/credits/get?_t=${timestamp}`, {
+        headers: {
+          'Cache-Control': 'no-cache, no-store',
+          'Pragma': 'no-cache'
+        }
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        if (data.success) {
+          console.log('强制刷新点数成功:', data.credits);
+          // 这里不直接更新状态，而是通过刷新页面来获取最新状态
+        }
+      }
+    } catch (error) {
+      console.error('强制刷新点数失败:', error);
+    }
+  };
+  
+  // 添加轮询订单状态的功能，确保在用户支付后立即更新UI
+  const pollOrderStatus = async (orderNo: string, maxRetries = 5) => {
+    console.log(`开始轮询订单 ${orderNo} 状态`);
+    let retries = 0;
+    
+    // 轮询函数
+    const checkStatus = async (): Promise<boolean> => {
+      try {
+        // 先尝试使用公共修复接口，确保订单已处理
+        const fixRes = await fetch(`/api/payment/fix-public?order_no=${orderNo}`);
+        if (fixRes.ok) {
+          const fixData = await fixRes.json();
+          if (fixData.success) {
+            console.log(`订单 ${orderNo} 修复/检查成功:`, fixData.result);
+            // 如果修复成功且点数已增加
+            if (fixData.result && 
+               (fixData.result.message?.includes('点数已增加') || 
+                fixData.result.newCredits)) {
+              return true;
+            }
+            // 如果订单已处理但可能点数未增加
+            if (fixData.result && fixData.result.message?.includes('订单已处理')) {
+              // 再次尝试标准检查接口
+              const checkRes = await fetch(`/api/payment/check?order_no=${orderNo}`);
+              if (checkRes.ok) {
+                const checkData = await checkRes.json();
+                if (checkData.success && checkData.order?.status === 'success') {
+                  console.log(`订单 ${orderNo} 状态为成功`);
+                  return true;
+                }
+              }
+            }
+          }
+        }
+        
+        // 自增重试计数
+        retries++;
+        console.log(`订单 ${orderNo} 状态查询第${retries}次，未完成或失败`);
+        
+        if (retries >= maxRetries) {
+          console.log(`订单 ${orderNo} 查询达到最大次数 ${maxRetries}，停止轮询`);
+          return false;
+        }
+        
+        // 延迟后再次检查
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        return await checkStatus();
+      } catch (error) {
+        console.error(`轮询订单 ${orderNo} 状态出错:`, error);
+        
+        // 自增重试计数
+        retries++;
+        
+        if (retries >= maxRetries) {
+          console.log(`订单 ${orderNo} 查询达到最大次数 ${maxRetries}，停止轮询`);
+          return false;
+        }
+        
+        // 出错后延迟更长时间再试
+        await new Promise(resolve => setTimeout(resolve, 3000));
+        return await checkStatus();
+      }
+    };
+    
+    // 开始轮询
+    return await checkStatus();
+  };
+  
+  // 确保点数被刷新的多次尝试函数
+  const ensureCreditsRefreshed = async () => {
+    try {
+      // 刷新方法，直接请求API获取最新点数
+      const refreshCredits = async () => {
+        try {
+          const timestamp = new Date().getTime(); // 添加时间戳避免缓存
+          const response = await fetch(`/api/credits/get?t=${timestamp}`, {
+            headers: {
+              'Cache-Control': 'no-cache',
+              'Pragma': 'no-cache'
+            }
+          });
+          return response.ok;
+        } catch (e) {
+          console.error('刷新点数失败:', e);
+          return false;
+        }
+      };
+      
+      // 立即刷新一次
+      await refreshCredits();
+      
+      // 再延迟几次刷新，确保数据一致性
+      setTimeout(() => refreshCredits(), 1000);
+      setTimeout(() => refreshCredits(), 3000);
+      setTimeout(() => refreshCredits(), 6000);
+    } catch (error) {
+      console.error('刷新用户点数失败:', error);
+    }
+  };
+  
+  // 改进处理支付结果
+  const handlePaymentComplete = async (orderNo: string) => {
+    // 先设置处理中状态
     setIsLoading(true);
-    setError(null);
+    
+    try {
+      // 轮询订单状态，确保支付正确处理
+      const success = await pollOrderStatus(orderNo);
+      
+      if (success) {
+        // 确保多次刷新用户点数，防止缓存问题
+        ensureCreditsRefreshed();
+        
+        // 显示成功消息
+        setError('支付成功！点数已增加到您的账户');
+        
+        // 调用成功回调
+        if (onSuccess) {
+          onSuccess();
+        }
+      } else {
+        // 支付可能未完成，但不确定，设置提示信息
+        setError('支付状态未知，如果您已完成支付，点数将在稍后自动增加。若长时间未更新，请联系客服。');
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.error('处理支付结果失败:', errorMessage);
+      setError(`支付处理过程中出错: ${errorMessage}`);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+  
+  // 改进支付按钮点击处理
+  const handlePayment = async () => {
+    if (!selectedPackage) {
+      setError('请选择充值套餐');
+      return;
+    }
+    
+    setError('');
+    setIsLoading(true);
     
     try {
       const response = await fetch('/api/payment/url', {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
         },
         body: JSON.stringify({
           packageId: selectedPackage,
           paymentType
-        })
+        }),
       });
+      
+      if (!response.ok) {
+        throw new Error(`创建订单失败: ${response.status}`);
+      }
       
       const data = await response.json();
       
-      if (data.success && data.data.paymentUrl) {
-        // 跳转到支付URL
-        window.location.href = data.data.paymentUrl;
+      if (data.success && data.data && data.data.paymentUrl) {
+        // 保存订单号以便后续跟踪
+        const orderNo = data.data.orderNo;
+        
+        // 打开微信支付
+        if (data.data.paymentUrl) {
+          // 创建一个新窗口打开支付链接
+          const paymentWindow = window.open(data.data.paymentUrl, '_blank');
+          
+          // 如果支付窗口成功打开，设置定时器轮询订单状态
+          if (paymentWindow) {
+            // 延时5秒开始轮询，通常用户需要一些时间完成支付
+            setTimeout(() => {
+              handlePaymentComplete(orderNo);
+            }, 5000);
+          } else {
+            // 如果窗口被拦截，提示用户
+            setError('支付窗口被拦截，请允许弹出窗口或直接访问支付链接');
+            console.log('支付链接:', data.data.paymentUrl);
+          }
+        } else {
+          setError('未获取到支付链接');
+        }
       } else {
-        setError(data.error || '创建支付请求失败');
+        setError(data.error || '创建支付订单失败');
       }
-    } catch (error: any) {
-      console.error('支付请求失败:', error);
-      setError(error.message || '支付请求失败，请重试');
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.error('支付过程发生错误:', errorMessage);
+      setError(`支付过程出错: ${errorMessage}`);
     } finally {
       setIsLoading(false);
     }
