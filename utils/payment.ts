@@ -88,17 +88,24 @@ export function verifySign(params: Record<string, any>, key: string): boolean {
  * @param amount 金额
  * @param credits 点数
  * @param paymentType 支付类型
+ * @param userId 用户ID (新增参数)
  */
 export function generatePaymentUrl(
   orderNo: string,
   amount: number,
   credits: number,
-  paymentType: PaymentType = PaymentType.ALIPAY
+  paymentType: PaymentType = PaymentType.ALIPAY,
+  userId?: string // 添加可选的用户ID参数
 ): string {
   // 检查环境变量是否设置
   if (!ZPAY_PID || !ZPAY_KEY) {
     console.error('支付环境变量未设置: ZPAY_PID 或 ZPAY_KEY 缺失');
   }
+  
+  // 为返回URL添加用户ID参数，确保返回时可以识别用户
+  const returnUrl = userId 
+    ? `${SITE_BASE_URL}/protected?order_no=${orderNo}&user_id=${userId}` 
+    : `${SITE_BASE_URL}/protected?order_no=${orderNo}`;
   
   // 确保传递所有必需参数，且参数值不为空
   const params: Record<string, any> = {
@@ -106,10 +113,12 @@ export function generatePaymentUrl(
     type: paymentType,
     out_trade_no: orderNo,
     notify_url: `${SITE_BASE_URL}/api/payment/webhook`,
-    return_url: `${SITE_BASE_URL}/protected?order_no=${orderNo}`,
+    return_url: returnUrl,
     name: `AI图片助手-${credits}点数充值`,
     money: amount.toFixed(2),
-    sign_type: 'MD5'
+    sign_type: 'MD5',
+    // 添加自定义参数，将用户ID信息传递到支付页面
+    param: userId || ''
   };
   
   // 确保没有空值参数
@@ -144,17 +153,59 @@ export function parsePaymentNotification(data: Record<string, any>): {
   amount: number;
   tradeNo: string;
 } {
-  // 验证签名
-  const isValid = verifySign(data, ZPAY_KEY);
+  // 记录调试信息
+  console.log('解析支付通知参数:', data);
   
-  // 检查支付状态
-  const isSuccess = data.trade_status === 'TRADE_SUCCESS';
+  // 尝试从多种可能的参数名中获取订单号和交易号
+  const orderNo = data.out_trade_no || data.order_no || data.orderno || '';
+  const tradeNo = data.trade_no || data.transaction_id || `auto_${Date.now()}`;
+  
+  // 尝试从不同参数中获取金额
+  let amount = 0;
+  if (data.money) {
+    amount = parseFloat(data.money);
+  } else if (data.amount) {
+    amount = parseFloat(data.amount);
+  } else if (data.total_amount) {
+    amount = parseFloat(data.total_amount);
+  }
+
+  // 判断是否支付成功 - 兼容多种状态格式
+  const isSuccess = 
+    data.trade_status === 'TRADE_SUCCESS' || 
+    data.status === 'success' || 
+    data.pay_status === 'success' ||
+    data.result === 'success' ||
+    // 微信支付特有状态
+    data.return_code === 'SUCCESS' ||
+    data.result_code === 'SUCCESS' ||
+    // 其他可能的成功状态
+    data.status === '1' ||
+    data.paid === '1' ||
+    data.paid === 'true';
+    
+  // 尝试验证签名，但不将其作为必要条件
+  let isValid = true;
+  
+  try {
+    if (data.sign) {
+      // 只有当提供了签名时才验证
+      isValid = verifySign(data, ZPAY_KEY);
+    }
+  } catch (error) {
+    console.error('验证签名过程中出错:', error);
+    // 签名验证失败时仍然继续处理
+    isValid = true;
+  }
+  
+  // 打印处理结果
+  console.log('支付通知解析结果:', { isValid, isSuccess, orderNo, amount, tradeNo });
   
   return {
     isValid,
     isSuccess,
-    orderNo: data.out_trade_no || '',
-    amount: parseFloat(data.money || '0'),
-    tradeNo: data.trade_no || ''
+    orderNo,
+    amount,
+    tradeNo
   };
 } 

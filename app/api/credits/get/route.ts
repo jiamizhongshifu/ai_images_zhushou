@@ -38,7 +38,7 @@ export async function GET(request: NextRequest) {
       console.log("用户点数记录不存在或查询错误，尝试创建新记录");
       
       // 使用管理员客户端创建记录
-      const adminClient = createAdminClient();
+      const adminClient = await createAdminClient();
       const { data: newCredits, error: insertError } = await adminClient
         .from('ai_images_creator_credits')
         .insert({
@@ -55,7 +55,14 @@ export async function GET(request: NextRequest) {
         // 即使创建失败，也返回默认点数，确保前端可以显示
         return new Response(JSON.stringify({ success: true, credits: 5 }), {
           status: 200,
-          headers: { 'Content-Type': 'application/json' }
+          headers: { 
+            'Content-Type': 'application/json',
+            // 添加缓存控制头，禁止缓存
+            'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+            'Pragma': 'no-cache',
+            'Expires': '0',
+            'Surrogate-Control': 'no-store'
+          }
         });
       }
       
@@ -64,7 +71,14 @@ export async function GET(request: NextRequest) {
         credits: newCredits?.credits || 5
       }), {
         status: 200,
-        headers: { 'Content-Type': 'application/json' }
+        headers: { 
+          'Content-Type': 'application/json',
+          // 添加缓存控制头，禁止缓存
+          'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+          'Pragma': 'no-cache',
+          'Expires': '0',
+          'Surrogate-Control': 'no-store'
+        }
       });
     }
     
@@ -73,7 +87,14 @@ export async function GET(request: NextRequest) {
       credits: creditsData.credits 
     }), {
       status: 200,
-      headers: { 'Content-Type': 'application/json' }
+      headers: { 
+        'Content-Type': 'application/json',
+        // 添加缓存控制头，禁止缓存
+        'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+        'Pragma': 'no-cache',
+        'Expires': '0',
+        'Surrogate-Control': 'no-store'
+      }
     });
     
   } catch (error: any) {

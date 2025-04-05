@@ -22,17 +22,17 @@ function StyleCard({
 }) {
   return (
     <div 
-      className={`relative rounded-lg overflow-hidden cursor-pointer transition-colors ${
+      className={`relative rounded-lg overflow-hidden cursor-pointer transition-all ${
         isActive 
-          ? "shadow-[0_0_0_2px_var(--primary)] border-transparent" 
+          ? "border border-primary ring-2 ring-primary/20" 
           : "border border-border hover:border-primary/50"
       }`}
       onClick={onClick}
     >
       {/* 图片预览 */}
-      <div className="aspect-square bg-muted relative h-20 w-20 sm:h-22 sm:w-22">
+      <div className="aspect-square bg-muted relative">
         <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-b from-muted/30 to-muted/10 z-0">
-          <ImageIcon className="w-5 h-5 text-muted-foreground/30" />
+          <ImageIcon className="w-6 h-6 text-muted-foreground/30" />
         </div>
         <img
           src={style.imageUrl || `/examples/placeholder.jpg`}
@@ -47,15 +47,15 @@ function StyleCard({
         
         {/* 选中指示 */}
         {isActive && (
-          <div className="absolute top-1.5 right-1.5 bg-primary text-primary-foreground rounded-full p-1 z-20">
-            <Check className="h-3 w-3" />
+          <div className="absolute top-2 right-2 bg-primary text-primary-foreground rounded-full p-1 z-20">
+            <Check className="h-3.5 w-3.5" />
           </div>
         )}
       </div>
       
       {/* 风格名称和描述 */}
-      <div className="p-1.5 bg-card">
-        <h3 className="text-xs font-medium text-center">{style.name}</h3>
+      <div className="p-2 bg-card">
+        <h3 className="text-sm font-medium text-center">{style.name}</h3>
       </div>
     </div>
   );
@@ -878,14 +878,15 @@ export default function ProtectedPage() {
               </CardTitle>
             </CardHeader>
             <CardContent className="py-2 px-4">
-              <div className="flex flex-row gap-3 overflow-x-auto pb-2">
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 lg:grid-cols-6 gap-3 pb-2 max-h-[400px] overflow-y-auto pr-1">
                 {STYLE_CONFIGS.map((style) => (
-                  <StyleCard
-                    key={style.id}
-                    style={style}
-                    isActive={activeStyle === style.id}
-                    onClick={() => setActiveStyle(style.id)}
-                  />
+                  <div key={style.id} className="min-w-[100px]">
+                    <StyleCard
+                      style={style}
+                      isActive={activeStyle === style.id}
+                      onClick={() => setActiveStyle(style.id)}
+                    />
+                  </div>
                 ))}
               </div>
             </CardContent>

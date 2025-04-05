@@ -330,7 +330,7 @@ export async function POST(request: NextRequest) {
       
       // 如果用户没有点数记录，创建一个初始记录
       if (creditsError.code === 'PGRST116') {
-        const supabaseAdmin = createAdminClient();
+        const supabaseAdmin = await createAdminClient();
         await supabaseAdmin
           .from('ai_images_creator_credits')
           .insert({
@@ -382,7 +382,7 @@ export async function POST(request: NextRequest) {
     const tuziClient = createTuziClient();
     
     // 扣除用户点数
-    const supabaseAdmin = createAdminClient();
+    const supabaseAdmin = await createAdminClient();
     const { error: deductError } = await supabaseAdmin
       .from('ai_images_creator_credits')
       .update({
@@ -568,7 +568,7 @@ export async function POST(request: NextRequest) {
       }
       
       // 保存历史记录
-      saveGenerationHistory(user.id, prompt, imageUrl, style || null, originalAspectRatio || null, useStandardRatio || null);
+      await saveGenerationHistory(user.id, prompt, imageUrl, style || null, originalAspectRatio || null, useStandardRatio || null);
       
       const endTime = Date.now();
       const duration = endTime - startTime;
@@ -592,6 +592,7 @@ export async function POST(request: NextRequest) {
       
       // 尝试退还用户点数
       try {
+        const supabaseAdmin = await createAdminClient();
         const { data: userCredits } = await supabaseAdmin
           .from('ai_images_creator_credits')
           .select('credits')
@@ -662,7 +663,7 @@ export async function POST(request: NextRequest) {
 // 保存生成历史到数据库，捕获但不传播错误
 async function saveGenerationHistory(userId: string, prompt: string, imageUrl: string, style: string | null = null, aspectRatio: string | null = null, standardAspectRatio: string | null = null) {
   try {
-    const supabaseAdmin = createAdminClient();
+    const supabaseAdmin = await createAdminClient();
     const { error: historyError } = await supabaseAdmin
       .from('ai_images_creator_history')
       .insert({

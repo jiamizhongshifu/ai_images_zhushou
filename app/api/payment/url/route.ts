@@ -55,11 +55,12 @@ export async function POST(request: NextRequest) {
       orderNo,
       creditPackage.price,
       creditPackage.credits,
-      paymentType as PaymentType
+      paymentType as PaymentType,
+      user.id
     );
     
     // 在数据库中创建支付订单记录
-    const adminClient = createAdminClient();
+    const adminClient = await createAdminClient();
     const { error: insertError } = await adminClient
       .from('ai_images_creator_payments')
       .insert({

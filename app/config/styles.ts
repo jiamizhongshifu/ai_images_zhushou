@@ -22,7 +22,7 @@ export const STYLE_CONFIGS: StyleConfig[] = [
     name: "吉卜力",
     description: "细腻精致、充满幻想的日式动画风格",
     imageUrl: "/examples/ghibli.webp",
-    promptTemplate: "{prompt}，生成转换成吉普力风格风格的图像"
+    promptTemplate: "{prompt}，风格：吉普力"
   },
   {
     id: "乐高",
@@ -50,7 +50,35 @@ export const STYLE_CONFIGS: StyleConfig[] = [
     name: "迪士尼",
     description: "经典美式动画风格",
     imageUrl: "/examples/disney.webp",
-    promptTemplate: "{prompt}，风格：迪士尼"
+    promptTemplate: "{prompt}，风格：disney animation style,soft shading,magical atmosphere"
+  },
+  {
+    id: "拍立得",
+    name: "拍立得",
+    description: "3d q版风格，拍立得",
+    imageUrl: "/examples/pailide.webp",
+    promptTemplate: "{prompt}，风格：将场景中的角色转化为3D Q版风格，放在一张拍立得照片上，相纸被一只手拿着，照片中的角色正从拍立得照片中走出，呈现出突破二维相片边框、进入二维现实空间的视觉效果。"
+  },
+  {
+    id: "动物森友会",
+    name: "动物森友会",
+    description: "动物森友会风格",
+    imageUrl: "/examples/senyouhui.webp",
+    promptTemplate: "{prompt}，风格：3d动森风格"
+  },
+  {
+    id: "Q版3D",
+    name: "Q版3D",
+    description: "Q版3D风格",
+    imageUrl: "/examples/3d.webp",
+    promptTemplate: "{prompt}，风格：将场景中的角色转化为3D Q版风格，同时保持原本的场景布置和服装造型不变。 发丝纹理细节：头发可以加更多渐变层次或发丝线条，让质感更真实。 表情强化：增加小巧的牙齿或舌头，或在眼睛加上更多高光与反光，增强灵动感。 饰品扩展：如小耳钉、小发卡、头带等，这些能提升辨识度。 服饰图案更多层次：加入些许立体质感或印花图案（如涂鸦元素、渐变墨渍）。 配件拟真化：比如包包可以做出缝线、拉链、小徽章等细节，提升精致度。 浮空小元素：比如爱心、星星、音符、泡泡，飘在人物周围，增加动感与氛围。"
+  },
+  {
+    id: "snoopy",
+    name: "snoopy",
+    description: "与snoopy的旅行",
+    imageUrl: "/examples/snoopy.webp",
+    promptTemplate: "{prompt}，风格：请帮我把我发的照片生成 snoopy 的卡通风格的图片，并加上 snoopy 和 woodstock 两个卡通人物"
   }
 ];
 
