@@ -7,46 +7,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import Image from "next/image";
 import CreditRechargeDialog from "@/components/payment/credit-recharge-dialog";
-
-// 艺术风格示例数据
-const STYLE_EXAMPLES = [
-  {
-    id: "自定义",
-    name: "自定义",
-    description: "使用您的提示词自由定义风格，不应用预设效果",
-    imageUrl: "/examples/custom.webp"
-  },
-  {
-    id: "吉卜力",
-    name: "吉卜力",
-    description: "细腻精致、充满幻想的日式动画风格",
-    imageUrl: "/examples/ghibli.webp"
-  },
-  {
-    id: "乐高",
-    name: "乐高",
-    description: "积木拼搭风格，充满趣味性",
-    imageUrl: "/examples/lego.webp"
-  },
-  {
-    id: "皮克斯",
-    name: "皮克斯",
-    description: "3D卡通风格，生动活泼",
-    imageUrl: "/examples/pixar.webp"
-  },
-  {
-    id: "新海诚",
-    name: "新海诚",
-    description: "唯美光影、细腻情感表达",
-    imageUrl: "/examples/shinkai.webp"
-  },
-  {
-    id: "迪士尼",
-    name: "迪士尼",
-    description: "经典美式动画风格",
-    imageUrl: "/examples/disney.webp"
-  }
-];
+// 导入风格配置
+import { STYLE_CONFIGS, StyleConfig, generatePromptWithStyle } from "@/app/config/styles";
 
 // 风格卡片组件
 function StyleCard({ 
@@ -54,7 +16,7 @@ function StyleCard({
   isActive = false, 
   onClick 
 }: { 
-  style: typeof STYLE_EXAMPLES[0];
+  style: StyleConfig; // 更新类型定义
   isActive: boolean; 
   onClick: () => void;
 }) {
@@ -569,23 +531,8 @@ export default function ProtectedPage() {
         return;
       }
       
-      // 创建完整提示词，包含风格
-      let fullPrompt = prompt.trim();
-      
-      // 如果是自定义风格，直接使用用户输入的提示词
-      if (activeStyle === "自定义") {
-        fullPrompt = fullPrompt || "生成图像";
-      } else if (activeStyle === "吉卜力") {
-        // 处理特殊风格
-        fullPrompt = fullPrompt ? 
-          `${fullPrompt}，生成转换成吉普力风格风格的图像` : 
-          "生成转换成吉普力风格风格的图像";
-      } else {
-        // 其他风格处理
-        fullPrompt = fullPrompt ? 
-          `${fullPrompt}，风格：${activeStyle}` : 
-          `生成${activeStyle}风格的图像`;
-      }
+      // 使用配置文件中的辅助函数生成完整提示词
+      const fullPrompt = generatePromptWithStyle(activeStyle, prompt.trim());
       
       // 准备API请求数据
       const requestData = {
@@ -932,7 +879,7 @@ export default function ProtectedPage() {
             </CardHeader>
             <CardContent className="py-2 px-4">
               <div className="flex flex-row gap-3 overflow-x-auto pb-2">
-                {STYLE_EXAMPLES.map((style) => (
+                {STYLE_CONFIGS.map((style) => (
                   <StyleCard
                     key={style.id}
                     style={style}
