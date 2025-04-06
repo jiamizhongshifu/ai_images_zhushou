@@ -51,6 +51,11 @@ let isDegradedToApiAuth = false;
 // Cookie操作辅助函数
 const cookieHelper = {
   set: (name: string, value: string, days = 1): void => {
+    // 服务器端直接返回，不执行任何Cookie操作
+    if (typeof window === 'undefined' || typeof document === 'undefined') {
+      return;
+    }
+    
     try {
       const date = new Date();
       date.setTime(date.getTime() + (days * 24 * 60 * 60 * 1000));
@@ -62,6 +67,11 @@ const cookieHelper = {
   },
   
   get: (name: string): string | null => {
+    // 服务器端直接返回null，不执行任何Cookie操作
+    if (typeof window === 'undefined' || typeof document === 'undefined') {
+      return null;
+    }
+    
     try {
       const nameEQ = `${name}=`;
       const ca = document.cookie.split(';');
@@ -78,6 +88,11 @@ const cookieHelper = {
   },
   
   delete: (name: string): void => {
+    // 服务器端直接返回，不执行任何Cookie操作
+    if (typeof window === 'undefined' || typeof document === 'undefined') {
+      return;
+    }
+    
     try {
       document.cookie = `${name}=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/;SameSite=Lax`;
     } catch (error) {
@@ -86,9 +101,15 @@ const cookieHelper = {
   }
 };
 
-// 增强的存储访问函数，包含多级降级策略
+// 增强的存储访问函数，包含多级降级策略和服务器端安全检查
 const storage = {
   setItem: (key: string, value: string): void => {
+    // 服务器端直接返回，不执行任何存储操作
+    if (typeof window === 'undefined') {
+      console.log('[Storage] 服务器端环境，跳过存储操作');
+      return;
+    }
+    
     try {
       // 尝试localStorage
       localStorage.setItem(key, value);
@@ -105,6 +126,11 @@ const storage = {
   },
   
   getItem: (key: string): string | null => {
+    // 服务器端直接返回null，不执行任何存储操作
+    if (typeof window === 'undefined') {
+      return null;
+    }
+    
     try {
       // 尝试localStorage
       return localStorage.getItem(key);
@@ -123,6 +149,11 @@ const storage = {
   },
   
   removeItem: (key: string): void => {
+    // 服务器端直接返回，不执行任何存储操作
+    if (typeof window === 'undefined') {
+      return;
+    }
+    
     try {
       // 尝试localStorage
       localStorage.removeItem(key);

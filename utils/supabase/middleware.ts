@@ -44,8 +44,9 @@ const logger = {
 };
 
 // 保存最近的重定向记录，防止重定向循环
-let lastRedirectInfo: { url: string; timestamp: number } | null = null;
-const REDIRECT_TIMEOUT = 2000; // 2秒内不重复相同重定向
+let lastRedirectInfo: { url: string; timestamp: number; count: number } | null = null;
+const REDIRECT_TIMEOUT = 5000; // 5秒内不重复相同重定向
+const MAX_REDIRECTS = 3; // 最大重定向次数
 
 export const updateSession = async (request: NextRequest) => {
   try {
@@ -75,11 +76,43 @@ export const updateSession = async (request: NextRequest) => {
       lastRedirectInfo.url === currentUrl && 
       currentTime - lastRedirectInfo.timestamp < REDIRECT_TIMEOUT
     ) {
-      logger.warn(`检测到可能的重定向循环到 ${currentUrl}，暂停重定向`);
-      // 重置重定向记录
-      lastRedirectInfo = null;
-      // 放行请求，不再进行重定向
-      return response;
+      lastRedirectInfo.count += 1;
+      
+      // 如果重定向次数超过阈值，判定为循环
+      if (lastRedirectInfo.count >= MAX_REDIRECTS) {
+        logger.warn(`检测到重定向循环到 ${currentUrl}，已达到最大重定向次数(${MAX_REDIRECTS})，暂停重定向`);
+        
+        // 如果是受保护页面的循环，设置一个临时访问令牌
+        if (currentUrl.startsWith('/protected')) {
+          logger.info('尝试通过临时令牌允许访问受保护页面，避免循环');
+          
+          // 设置一个短期的强制登录cookie
+          response.cookies.set('force_login', 'true', {
+            path: '/',
+            maxAge: 60 * 5, // 5分钟有效
+            httpOnly: true,
+            sameSite: 'lax'
+          });
+          
+          // 删除任何可能导致循环的Cookie
+          response.cookies.delete('logged_out');
+        }
+        
+        // 重置重定向记录
+        lastRedirectInfo = null;
+        
+        // 放行请求，不再进行重定向
+        return response;
+      }
+      
+      logger.warn(`检测到潜在的重定向循环到 ${currentUrl}，当前计数: ${lastRedirectInfo.count}/${MAX_REDIRECTS}`);
+    } else {
+      // 新的重定向记录
+      lastRedirectInfo = { 
+        url: currentUrl, 
+        timestamp: currentTime,
+        count: 1
+      };
     }
     
     // 从环境变量中读取URL和ANON KEY
@@ -267,7 +300,7 @@ export const updateSession = async (request: NextRequest) => {
       
       // 对于受保护页面，重定向到登录页
       if (request.nextUrl.pathname.startsWith("/protected")) {
-        lastRedirectInfo = { url: '/sign-in', timestamp: currentTime };
+        lastRedirectInfo = { url: '/sign-in', timestamp: currentTime, count: 1 };
         logger.info('检测到强制登出且尝试访问受保护页面，重定向到登录页');
         return NextResponse.redirect(new URL("/sign-in", request.url));
       }
@@ -287,7 +320,7 @@ export const updateSession = async (request: NextRequest) => {
       
       // 如果是访问受保护页面，重定向到登录页
       if (request.nextUrl.pathname.startsWith("/protected")) {
-        lastRedirectInfo = { url: '/sign-in', timestamp: currentTime };
+        lastRedirectInfo = { url: '/sign-in', timestamp: currentTime, count: 1 };
         logger.info('检测到登出标记且尝试访问受保护页面，重定向到登录页');
         return NextResponse.redirect(new URL("/sign-in", request.url));
       }
@@ -394,7 +427,7 @@ export const updateSession = async (request: NextRequest) => {
       }
       
       // 记录本次重定向
-      lastRedirectInfo = { url: '/protected', timestamp: currentTime };
+      lastRedirectInfo = { url: '/protected', timestamp: currentTime, count: 1 };
       logger.info('用户已登录但在登录页面，重定向到受保护页面');
       return NextResponse.redirect(new URL("/protected", request.url));
     }
@@ -431,12 +464,15 @@ export const updateSession = async (request: NextRequest) => {
       }
       
       // 记录本次重定向
-      lastRedirectInfo = { url: '/sign-in', timestamp: currentTime };
+      lastRedirectInfo = { url: '/sign-in', timestamp: currentTime, count: 1 };
       logger.info('未授权访问，重定向到登录页');
       
-      // 添加redirect参数，使登录后可以返回原页面
-      const loginUrl = new URL("/sign-in", request.url);
-      loginUrl.searchParams.set('redirect', request.nextUrl.pathname);
+      // 构造登录URL，包含重定向参数
+      const loginUrl = new URL('/sign-in', request.url);
+      const returnUrl = request.nextUrl.pathname;
+      if (returnUrl && returnUrl !== '/sign-in' && returnUrl !== '/') {
+        loginUrl.searchParams.set('returnUrl', returnUrl);
+      }
       return NextResponse.redirect(loginUrl);
     }
 
@@ -449,7 +485,7 @@ export const updateSession = async (request: NextRequest) => {
       }
       
       // 注释掉原有的重定向逻辑，允许用户访问首页
-      // lastRedirectInfo = { url: '/protected', timestamp: currentTime };
+      // lastRedirectInfo = { url: '/protected', timestamp: currentTime, count: 1 };
       // return NextResponse.redirect(new URL("/protected", request.url));
       
       // 直接返回响应，允许访问首页
