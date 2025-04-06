@@ -3,8 +3,8 @@
 import React, { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/utils/supabase/client";
-import { ThemeProvider } from "next-themes";
 import { authService } from "@/utils/auth-service";
+import { ResponsiveContainer } from '@/components/ui/responsive-container';
 
 export default function ProtectedLayout({
   children,
@@ -176,7 +176,9 @@ export default function ProtectedLayout({
   return (
     <div className="relative min-h-screen">
       <main className="min-h-screen pt-6">
-        {children}
+        <ResponsiveContainer padding="md" fullWidth={true}>
+          {children}
+        </ResponsiveContainer>
       </main>
     </div>
   );

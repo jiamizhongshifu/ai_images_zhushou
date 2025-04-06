@@ -7,6 +7,7 @@ import { Loader2, AlertCircle, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { generatePromptWithStyle } from "@/app/config/styles";
+import { ResponsiveContainer, ResponsiveSection, ResponsiveGrid } from "@/components/ui/responsive-container";
 
 // 导入创作页组件
 import ImageUploader from "@/components/creation/image-uploader";
@@ -106,17 +107,17 @@ export default function ProtectedPage() {
   
   // 处理图片上传和获取尺寸
   const handleImageUpload = (dataUrl: string, width: number, height: number) => {
-    setUploadedImage(dataUrl);
-    
+        setUploadedImage(dataUrl);
+        
     // 计算图片尺寸比例
-    const ratio = `${width}:${height}`;
-    console.log(`检测到上传图片比例: ${ratio}`);
-    setImageAspectRatio(ratio);
-    
-    // 计算并设置标准比例
-    const standardRatio = convertToStandardRatio(width, height);
-    setStandardAspectRatio(standardRatio);
-    console.log(`标准化为: ${standardRatio}`);
+          const ratio = `${width}:${height}`;
+          console.log(`检测到上传图片比例: ${ratio}`);
+          setImageAspectRatio(ratio);
+          
+          // 计算并设置标准比例
+          const standardRatio = convertToStandardRatio(width, height);
+          setStandardAspectRatio(standardRatio);
+          console.log(`标准化为: ${standardRatio}`);
   };
   
   // 处理图片生成
@@ -144,7 +145,7 @@ export default function ProtectedPage() {
     setError("");
     if (generatedImages.length > 0) {
       if (confirm("确定要清空当前图片吗？这不会删除您的历史记录。")) {
-        setGeneratedImages([]);
+    setGeneratedImages([]);
       }
     }
   };
@@ -171,13 +172,11 @@ export default function ProtectedPage() {
     <div className="flex-1 w-full flex flex-col items-center">
       <div className="max-w-7xl w-full px-4 py-8">
         {/* 页面标题 */}
-        <div className="flex flex-col items-center mb-10">
-          <h1 className="text-4xl font-bold text-foreground mb-3 font-quicksand bg-gradient-to-r from-primary to-primary-700 bg-clip-text text-transparent">照片风格转换</h1>
-          <p className="text-lg text-muted-foreground text-center max-w-2xl font-nunito">
+        <div className="flex flex-col items-center mb-6 md:mb-8">
+          <h1 className="text-3xl md:text-4xl font-bold text-foreground mb-2 md:mb-3 font-quicksand bg-gradient-to-r from-primary to-primary-700 bg-clip-text text-transparent">照片风格转换</h1>
+          <p className="text-base md:text-lg text-muted-foreground text-center max-w-2xl font-nunito">
             将您的照片转化为魔幻风格的艺术作品，上传照片并选择风格，创造独特的视觉效果
           </p>
-          
-          {/* 重置按钮已移除 */}
         </div>
 
         {/* 错误信息显示 */}
@@ -190,40 +189,42 @@ export default function ProtectedPage() {
           </div>
         )}
 
-        {/* 垂直流程布局 */}
-        <div className="flex flex-col gap-6">
-          {/* 1. 上传区域 */}
-          <ImageUploader 
-            uploadedImage={uploadedImage} 
-            setUploadedImage={setUploadedImage}
-            onImageUploaded={handleImageUpload}
-          />
+        {/* 主要内容区域 */}
+        <div className="w-full flex flex-col gap-6">
+          {/* 输入区域（单列布局） */}
+          <div className="flex flex-col gap-6 p-6 rounded-xl border bg-card text-card-foreground shadow-ghibli-sm transition-all duration-300 hover:shadow-ghibli">
+            <div className="flex flex-col space-y-1.5 font-quicksand">
+              <h3 className="text-xl font-bold leading-none tracking-tight font-quicksand text-foreground">创建新图像</h3>
+              <p className="text-sm text-muted-foreground">上传参考图片并填写提示词生成新图像</p>
+            </div>
+            
+            {/* 表单内容 */}
+            <div className="w-full flex flex-col gap-6">
+              <ImageUploader 
+                uploadedImage={uploadedImage} 
+                setUploadedImage={setUploadedImage}
+                onImageUploaded={handleImageUpload}
+              />
+              <StyleSelector
+                activeStyle={activeStyle}
+                onStyleChange={handleStyleChange}
+              />
+              <PromptInput
+                prompt={prompt}
+                onPromptChange={setPrompt}
+                onGenerate={handleGenerateImage}
+                isGenerating={isGenerating}
+                canGenerate={canGenerate()}
+                hasLowCredits={credits !== null && credits <= 0}
+              />
+            </div>
+          </div>
 
-          {/* 2. 风格选择 */}
-          <Card className="p-6 bg-card/70 rounded-xl border border-border shadow-ghibli-sm hover:shadow-ghibli transition-all duration-300">
-            <StyleSelector
-              activeStyle={activeStyle}
-              onStyleChange={handleStyleChange}
-            />
-          </Card>
-
-          {/* 3. 提示词输入和生成按钮 */}
-          <Card className="p-6 bg-card/70 rounded-xl border border-border shadow-ghibli-sm hover:shadow-ghibli transition-all duration-300">
-            <PromptInput
-              prompt={prompt}
-              onPromptChange={setPrompt}
-              onGenerate={handleGenerateImage}
-              isGenerating={isGenerating}
-              canGenerate={canGenerate()}
-              hasLowCredits={credits !== null && credits <= 0}
-            />
-          </Card>
-
-          {/* 4. 生成的图片展示区 */}
-          <Card className="p-6 bg-card/70 rounded-xl border border-border shadow-ghibli-sm hover:shadow-ghibli transition-all duration-300">
-            <div className="space-y-4">
+          {/* 图片展示区域 */}
+          <div className="rounded-xl border bg-card text-card-foreground shadow-ghibli-sm transition-all duration-300 hover:shadow-ghibli">
+            <div className="flex flex-col space-y-1.5 p-6 font-quicksand">
               <div className="flex justify-between items-center">
-                <h3 className="text-lg font-medium flex items-center font-quicksand text-foreground/90">
+                <h3 className="text-xl font-bold leading-none tracking-tight font-quicksand text-foreground flex items-center">
                   生成结果
                   {isInitializing && (
                     <Loader2 className="h-4 w-4 ml-2 animate-spin text-primary" />
@@ -240,10 +241,11 @@ export default function ProtectedPage() {
                   <ChevronRight className="ml-1 h-4 w-4" />
                 </Button>
               </div>
-
+            </div>
+            <div className="p-6 pt-0 font-nunito">
               {/* 生成结果展示 */}
               <GeneratedImageGallery
-                images={generatedImages.slice(0, 4)}
+                images={generatedImages.slice(0, 8)}
                 isLoading={isGenerating}
                 onImageLoad={handleImageLoad}
                 onImageError={handleImageError}
@@ -252,18 +254,21 @@ export default function ProtectedPage() {
                 hideViewMoreButton={true}
               />
             </div>
-          </Card>
+          </div>
         </div>
-      </div>
       
-      {/* 充值弹窗 */}
-      <CreditRechargeDialog
-        isOpen={showCreditRechargeDialog}
-        onClose={() => setShowCreditRechargeDialog(false)}
-        onSuccess={async () => {
-          await refreshCredits(true, true);
-        }}
-      />
+        {/* 积分充值对话框 */}
+        {showCreditRechargeDialog && (
+          <CreditRechargeDialog
+            isOpen={showCreditRechargeDialog}
+            onClose={() => setShowCreditRechargeDialog(false)}
+            onSuccess={() => {
+              refreshCredits(true, false);
+              showNotification("充值成功，您的积分已更新");
+            }}
+          />
+        )}
+      </div>
     </div>
   );
 }
