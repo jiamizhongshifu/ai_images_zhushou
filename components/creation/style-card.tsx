@@ -15,10 +15,10 @@ export default function StyleCard({
 }) {
   return (
     <div 
-      className={`relative rounded-lg overflow-hidden cursor-pointer transition-all ${
+      className={`relative rounded-xl overflow-hidden cursor-pointer transition-all duration-300 shadow-ghibli-sm ${
         isActive 
-          ? "border border-primary ring-2 ring-primary/20" 
-          : "border border-border hover:border-primary/50"
+          ? "border-2 border-primary ring-2 ring-primary/20 transform scale-[1.02]" 
+          : "border border-border hover:border-primary/50 hover:shadow-ghibli hover:translate-y-[-2px]"
       }`}
       onClick={onClick}
     >
@@ -30,7 +30,7 @@ export default function StyleCard({
         <img
           src={style.imageUrl || `/examples/placeholder.jpg`}
           alt={`${style.name}风格示例`}
-          className="w-full h-full object-cover relative z-10"
+          className="w-full h-full object-cover relative z-10 transition-transform duration-500 hover:scale-[1.05]"
           loading="lazy"
           onError={(e) => {
             e.currentTarget.style.opacity = "0.3";
@@ -40,15 +40,15 @@ export default function StyleCard({
         
         {/* 选中指示 */}
         {isActive && (
-          <div className="absolute top-2 right-2 bg-primary text-primary-foreground rounded-full p-1 z-20">
+          <div className="absolute top-2 right-2 bg-primary text-primary-foreground rounded-full p-1 z-20 shadow-ghibli-sm animate-pulse-soft">
             <Check className="h-3.5 w-3.5" />
           </div>
         )}
       </div>
       
       {/* 风格名称和描述 */}
-      <div className="p-2 bg-card">
-        <h3 className="text-sm font-medium text-center">{style.name}</h3>
+      <div className="p-2.5 bg-card">
+        <h3 className="text-sm font-medium text-center font-quicksand">{style.name}</h3>
       </div>
     </div>
   );

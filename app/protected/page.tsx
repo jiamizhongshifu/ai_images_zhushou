@@ -171,9 +171,9 @@ export default function ProtectedPage() {
     <div className="flex-1 w-full flex flex-col items-center">
       <div className="max-w-7xl w-full px-4 py-8">
         {/* 页面标题 */}
-        <div className="flex flex-col items-center mb-8">
-          <h1 className="text-4xl font-bold text-foreground mb-3">照片风格转换</h1>
-          <p className="text-lg text-muted-foreground text-center max-w-2xl">
+        <div className="flex flex-col items-center mb-10">
+          <h1 className="text-4xl font-bold text-foreground mb-3 font-quicksand bg-gradient-to-r from-primary to-primary-700 bg-clip-text text-transparent">照片风格转换</h1>
+          <p className="text-lg text-muted-foreground text-center max-w-2xl font-nunito">
             将您的照片转化为魔幻风格的艺术作品，上传照片并选择风格，创造独特的视觉效果
           </p>
           
@@ -182,7 +182,7 @@ export default function ProtectedPage() {
 
         {/* 错误信息显示 */}
         {displayError && (
-          <div className="bg-destructive/10 text-destructive p-3 rounded-md mb-4 text-sm">
+          <div className="bg-destructive/10 text-destructive p-4 rounded-xl mb-6 text-sm font-nunito border border-destructive/20 shadow-ghibli-sm">
             <div className="flex items-center">
               <AlertCircle className="h-4 w-4 mr-2" />
               {displayError}
@@ -200,7 +200,7 @@ export default function ProtectedPage() {
           />
 
           {/* 2. 风格选择 */}
-          <Card className="p-6">
+          <Card className="p-6 bg-card/70 rounded-xl border border-border shadow-ghibli-sm hover:shadow-ghibli transition-all duration-300">
             <StyleSelector
               activeStyle={activeStyle}
               onStyleChange={handleStyleChange}
@@ -208,7 +208,7 @@ export default function ProtectedPage() {
           </Card>
 
           {/* 3. 提示词输入和生成按钮 */}
-          <Card className="p-6">
+          <Card className="p-6 bg-card/70 rounded-xl border border-border shadow-ghibli-sm hover:shadow-ghibli transition-all duration-300">
             <PromptInput
               prompt={prompt}
               onPromptChange={setPrompt}
@@ -220,13 +220,13 @@ export default function ProtectedPage() {
           </Card>
 
           {/* 4. 生成的图片展示区 */}
-          <Card className="p-6">
+          <Card className="p-6 bg-card/70 rounded-xl border border-border shadow-ghibli-sm hover:shadow-ghibli transition-all duration-300">
             <div className="space-y-4">
               <div className="flex justify-between items-center">
-                <h3 className="text-lg font-medium flex items-center">
+                <h3 className="text-lg font-medium flex items-center font-quicksand text-foreground/90">
                   生成结果
                   {isInitializing && (
-                    <Loader2 className="h-4 w-4 ml-2 animate-spin text-muted-foreground" />
+                    <Loader2 className="h-4 w-4 ml-2 animate-spin text-primary" />
                   )}
                 </h3>
                 
@@ -234,7 +234,7 @@ export default function ProtectedPage() {
                   variant="outline"
                   size="sm"
                   onClick={() => router.push("/protected/history")}
-                  className="flex items-center text-sm"
+                  className="flex items-center text-sm hover:bg-primary/10 hover:text-primary border-primary/30 font-quicksand shadow-ghibli-sm hover:shadow-ghibli transition-all duration-300 hover:translate-y-[-1px]"
                 >
                   查看更多
                   <ChevronRight className="ml-1 h-4 w-4" />

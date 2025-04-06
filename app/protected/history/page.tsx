@@ -145,16 +145,16 @@ export default function HistoryPage() {
     <div className="flex-1 w-full flex flex-col items-center">
       <div className="max-w-7xl w-full px-4 py-8">
         {/* 页面标题 */}
-        <div className="flex flex-col items-center mb-8">
-          <h1 className="text-4xl font-bold text-foreground mb-3">历史记录</h1>
-          <p className="text-lg text-muted-foreground text-center max-w-2xl">
+        <div className="flex flex-col items-center mb-10">
+          <h1 className="text-4xl font-bold mb-3 font-quicksand bg-gradient-to-r from-primary to-primary-700 bg-clip-text text-transparent">历史记录</h1>
+          <p className="text-lg text-muted-foreground text-center max-w-2xl font-nunito">
             查看您的创作历史，管理和下载您生成的图片
           </p>
         </div>
 
         {/* 错误提示 */}
         {error && (
-          <div className="bg-destructive/10 text-destructive p-3 rounded-md mb-4 text-sm">
+          <div className="bg-destructive/10 text-destructive p-4 rounded-xl mb-6 text-sm font-nunito border border-destructive/20 shadow-ghibli-sm">
             <div className="flex items-center">
               <AlertCircle className="h-4 w-4 mr-2" />
               {error}
@@ -165,17 +165,19 @@ export default function HistoryPage() {
         {/* 全页面加载状态 */}
         {(isLoading || !dataChecked) ? (
           <div className="w-full flex flex-col items-center justify-center py-20">
-            <Loader2 className="h-10 w-10 animate-spin text-primary mb-4" />
-            <p className="text-muted-foreground text-center">正在加载历史记录，请稍候...</p>
+            <div className="bg-card/60 p-8 rounded-xl border border-border shadow-ghibli flex flex-col items-center">
+              <Loader2 className="h-10 w-10 animate-spin text-primary mb-4" />
+              <p className="text-foreground/80 text-center font-quicksand">正在加载历史记录，请稍候...</p>
+            </div>
           </div>
         ) : (
           /* 数据加载完成后才显示历史记录内容 */
           <div className="flex flex-col gap-6">
             {/* 历史记录卡片 */}
-            <Card className="p-6">
+            <Card className="p-6 bg-card/70 rounded-xl border border-border shadow-ghibli-sm hover:shadow-ghibli transition-all duration-300">
               <div className="space-y-4">
                 <div className="flex justify-between items-center">
-                  <h3 className="text-lg font-medium flex items-center">
+                  <h3 className="text-lg font-medium flex items-center font-quicksand text-foreground/90">
                     历史记录
                   </h3>
                   
@@ -184,7 +186,7 @@ export default function HistoryPage() {
                     size="sm" 
                     onClick={handleRefresh} 
                     disabled={isLoading}
-                    className="flex items-center text-sm"
+                    className="flex items-center text-sm hover:bg-primary/10 hover:text-primary border-primary/30 font-quicksand shadow-ghibli-sm hover:shadow-ghibli transition-all duration-300 hover:translate-y-[-1px]"
                   >
                     {isLoading ? (
                       <>
