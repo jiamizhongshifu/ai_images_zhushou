@@ -8,33 +8,39 @@ export function TransformationExamples() {
   const examples = [
     {
       id: 1,
-      beforeImage: "/examples/disney.webp",
-      afterImage: "/examples/ghibli.webp",
+      beforeImage: "/examples/zhenren.jpg",
+      afterImage: "/examples/ghibli.jpg",
+      title: "吉卜力风格",
     },
     {
       id: 2,
-      beforeImage: "/examples/snoopy.webp",
-      afterImage: "/examples/pixar.webp",
+      beforeImage: "/examples/zhenren.jpg",
+      afterImage: "/examples/snoopy.jpg",
+      title: "史努比风格",
     },
     {
       id: 3,
-      beforeImage: "/examples/shinkai.webp",
-      afterImage: "/examples/lego.webp",
+      beforeImage: "/examples/zhenren.jpg",
+      afterImage: "/examples/lego.jpg",
+      title: "乐高风格",
     },
     {
       id: 4,
-      beforeImage: "/examples/3d.webp",
-      afterImage: "/examples/senyouhui.webp",
+      beforeImage: "/examples/zhenren.jpg",
+      afterImage: "/examples/shinkai.jpg",
+      title: "新海诚风格",
     },
     {
       id: 5,
-      beforeImage: "/examples/pailide.webp",
-      afterImage: "/examples/custom.webp",
+      beforeImage: "/examples/zhenren.jpg",
+      afterImage: "/examples/disney.jpg",
+      title: "迪士尼风格",
     },
     {
       id: 6,
-      beforeImage: "/examples/disney.webp",
-      afterImage: "/examples/shinkai.webp",
+      beforeImage: "/examples/zhenren.jpg",
+      afterImage: "/examples/senyouhui.jpg",
+      title: "动物森友会风格",
     }
   ];
 
@@ -51,13 +57,14 @@ export function TransformationExamples() {
         
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8 mb-12">
           {examples.map((example) => (
-            <div key={example.id} className="bg-card rounded-xl overflow-hidden p-3 shadow-sm">
+            <div key={example.id} className="space-y-4 bg-card rounded-xl overflow-hidden p-3 shadow-sm">
               <div className="aspect-square">
                 <ImageComparisonSlider 
                   beforeImage={example.beforeImage} 
                   afterImage={example.afterImage}
                 />
               </div>
+              <h3 className="font-medium text-center py-2">{example.title}</h3>
             </div>
           ))}
         </div>
