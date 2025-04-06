@@ -4,8 +4,16 @@ import { useState, useEffect } from 'react';
 import { Coins, PlusCircle, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { authService } from '@/utils/auth-service';
+import { cacheService } from '@/utils/cache-service';
 import CreditRechargeDialog from "@/components/payment/credit-recharge-dialog";
 import { cn } from '@/lib/utils';
+
+// 点数响应类型
+interface CreditsResponse {
+  success: boolean;
+  credits: number;
+  error?: string;
+}
 
 export default function UserCreditDisplay({ className }: { className?: string }) {
   const [credits, setCredits] = useState<number | null>(null);
@@ -14,14 +22,13 @@ export default function UserCreditDisplay({ className }: { className?: string })
   const [showCreditRechargeDialog, setShowCreditRechargeDialog] = useState(false);
   
   // 获取用户点数的函数
-  const fetchCredits = async () => {
+  const fetchCredits = async (forceRefresh: boolean = false) => {
     try {
       // 正在更新时不重复获取
       if (isRefreshing) return;
       
       // 设置加载状态
       setIsRefreshing(true);
-      console.log('[UserCredit] 开始获取用户点数');
       
       // 检查认证状态
       if (!authService.isAuthenticated()) {
@@ -30,14 +37,31 @@ export default function UserCreditDisplay({ className }: { className?: string })
         return;
       }
       
-      // 获取用户点数
-      const response = await fetch('/api/credits/get');
+      // 缓存键
+      const cacheKey = 'user-credits';
       
-      if (!response.ok) {
-        throw new Error(`获取点数失败: HTTP ${response.status}`);
+      // 强制刷新时跳过缓存
+      if (forceRefresh) {
+        cacheService.delete(cacheKey);
       }
       
-      const data = await response.json();
+      const fetchFromAPI = async (): Promise<CreditsResponse> => {
+        console.log('[UserCredit] 从API获取点数');
+        const response = await fetch('/api/credits/get');
+        
+        if (!response.ok) {
+          throw new Error(`获取点数失败: HTTP ${response.status}`);
+        }
+        
+        return await response.json();
+      };
+      
+      // 使用缓存服务获取数据（30秒内有效）
+      const data = await cacheService.getOrFetch<CreditsResponse>(
+        cacheKey,
+        fetchFromAPI,
+        30 * 1000 // 30秒缓存
+      );
       
       if (data.success) {
         console.log('[UserCredit] 成功获取用户点数:', data.credits);
@@ -86,6 +110,12 @@ export default function UserCreditDisplay({ className }: { className?: string })
     setShowCreditRechargeDialog(true);
   };
   
+  // 充值成功回调
+  const handleRechargeSuccess = async () => {
+    // 强制刷新点数
+    await fetchCredits(true);
+  };
+  
   // 渲染组件
   return (
     <div className={cn("flex items-center gap-1", className)}>
@@ -118,7 +148,7 @@ export default function UserCreditDisplay({ className }: { className?: string })
       <CreditRechargeDialog
         isOpen={showCreditRechargeDialog}
         onClose={() => setShowCreditRechargeDialog(false)}
-        onSuccess={() => fetchCredits()}
+        onSuccess={handleRechargeSuccess}
       />
     </div>
   );

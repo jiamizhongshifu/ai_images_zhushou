@@ -33,10 +33,147 @@ const AUTH_STATE_KEY = 'auth_state';
 const AUTH_VALID_KEY = 'auth_valid';
 const AUTH_TIME_KEY = 'auth_time';
 
+// 为认证状态添加缓存
+const AUTH_CACHE_KEY = 'auth_state';
+const AUTH_CACHE_VALID_KEY = 'auth_valid';
+const AUTH_CACHE_TIME_KEY = 'auth_time';
+
+// 认证状态有效期（毫秒）
+const AUTH_CACHE_TTL = 10 * 60 * 1000; // 10分钟
+
 // 内存中的认证状态缓存
 let memoryAuthState: AuthState = { ...DEFAULT_AUTH_STATE };
 // 标记是否已检查过服务器会话
 let hasCheckedServerSession = false;
+// 标记是否由于存储问题而降级到API验证
+let isDegradedToApiAuth = false;
+
+// Cookie操作辅助函数
+const cookieHelper = {
+  set: (name: string, value: string, days = 1): void => {
+    try {
+      const date = new Date();
+      date.setTime(date.getTime() + (days * 24 * 60 * 60 * 1000));
+      const expires = `expires=${date.toUTCString()}`;
+      document.cookie = `${name}=${value};${expires};path=/;SameSite=Lax`;
+    } catch (error) {
+      console.warn('[Cookie] 设置Cookie失败:', error);
+    }
+  },
+  
+  get: (name: string): string | null => {
+    try {
+      const nameEQ = `${name}=`;
+      const ca = document.cookie.split(';');
+      for (let i = 0; i < ca.length; i++) {
+        let c = ca[i];
+        while (c.charAt(0) === ' ') c = c.substring(1);
+        if (c.indexOf(nameEQ) === 0) return c.substring(nameEQ.length, c.length);
+      }
+      return null;
+    } catch (error) {
+      console.warn('[Cookie] 获取Cookie失败:', error);
+      return null;
+    }
+  },
+  
+  delete: (name: string): void => {
+    try {
+      document.cookie = `${name}=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/;SameSite=Lax`;
+    } catch (error) {
+      console.warn('[Cookie] 删除Cookie失败:', error);
+    }
+  }
+};
+
+// 增强的存储访问函数，包含多级降级策略
+const storage = {
+  setItem: (key: string, value: string): void => {
+    try {
+      // 尝试localStorage
+      localStorage.setItem(key, value);
+    } catch (error) {
+      console.warn('[Storage] localStorage访问失败，降级到Cookie:', error);
+      // 降级到Cookie
+      try {
+        cookieHelper.set(key, value);
+        isDegradedToApiAuth = true;
+      } catch (innerError) {
+        console.error('[Storage] 所有存储方法均失败:', innerError);
+      }
+    }
+  },
+  
+  getItem: (key: string): string | null => {
+    try {
+      // 尝试localStorage
+      return localStorage.getItem(key);
+    } catch (error) {
+      console.warn('[Storage] localStorage访问失败，尝试Cookie:', error);
+      // 降级到Cookie
+      try {
+        const value = cookieHelper.get(key);
+        isDegradedToApiAuth = true;
+        return value;
+      } catch (innerError) {
+        console.error('[Storage] 所有存储方法均失败:', innerError);
+        return null;
+      }
+    }
+  },
+  
+  removeItem: (key: string): void => {
+    try {
+      // 尝试localStorage
+      localStorage.removeItem(key);
+    } catch (error) {
+      console.warn('[Storage] localStorage访问失败，尝试删除Cookie:', error);
+      // 降级到Cookie
+      try {
+        cookieHelper.delete(key);
+      } catch (innerError) {
+        console.error('[Storage] 所有存储方法均失败:', innerError);
+      }
+    }
+  }
+};
+
+// 增强的缓存有效性检查
+const isAuthCacheValid = (): boolean => {
+  if (typeof window === 'undefined') return false;
+  
+  try {
+    // 优先检查内存状态
+    if (memoryAuthState.isAuthenticated && 
+        memoryAuthState.lastAuthTime && 
+        Date.now() - memoryAuthState.lastAuthTime < AUTH_CACHE_TTL) {
+      return true;
+    }
+    
+    // 然后检查持久化存储
+    const isValid = storage.getItem(AUTH_CACHE_VALID_KEY) === 'true';
+    if (!isValid) return false;
+    
+    const timestamp = parseInt(storage.getItem(AUTH_CACHE_TIME_KEY) || '0', 10);
+    const now = Date.now();
+    
+    // 检查缓存是否过期
+    if (now - timestamp > AUTH_CACHE_TTL) {
+      console.log('[AuthService] 认证缓存已过期');
+      return false;
+    }
+    
+    return true;
+  } catch (error) {
+    console.error('[AuthService] 检查认证缓存时出错:', error);
+    isDegradedToApiAuth = true;
+    return false;
+  }
+};
+
+// 延迟标记，用于控制并发会话刷新请求
+let isRefreshingSession = false;
+let refreshPromise: Promise<boolean> | null = null;
 
 /**
  * 认证服务类 - 提供统一的认证状态管理
@@ -46,6 +183,8 @@ class AuthService {
   private subscribers: Array<(state: AuthState) => void> = [];
   private supabase = createClient();
   private isInitializing = false;
+  private lastApiAuthCheck = 0;
+  private apiAuthTTL = 60 * 1000; // 1分钟的API认证检查间隔
 
   // 私有构造函数，确保单例
   private constructor() {
@@ -79,10 +218,10 @@ class AuthService {
         console.log('[AuthService] 未找到存储的认证状态，使用默认状态');
       }
 
-      // 新增：主动检查 Supabase 会话状态
+      // 主动检查 Supabase 会话状态
       if (this.isClientSide() && !hasCheckedServerSession) {
         console.log('[AuthService] 主动检查 Supabase 会话状态');
-        this.checkServerSession();
+        await this.checkServerSession();
       }
     } catch (error) {
       console.error('[AuthService] 初始化认证状态时出错:', error);
@@ -94,13 +233,13 @@ class AuthService {
   /**
    * 主动检查服务器会话状态
    */
-  private async checkServerSession(): Promise<void> {
+  private async checkServerSession(): Promise<boolean> {
     try {
       const { data, error } = await this.supabase.auth.getSession();
       
       if (error) {
         console.error('[AuthService] 获取会话失败:', error.message);
-        return;
+        return false;
       }
       
       hasCheckedServerSession = true;
@@ -120,12 +259,14 @@ class AuthService {
           lastVerified: Date.now()
         });
         
-        return;
+        return true;
       }
       
       console.log('[AuthService] 无有效会话');
+      return false;
     } catch (error) {
       console.error('[AuthService] 检查服务器会话时出错:', error);
+      return false;
     }
   }
 
@@ -171,456 +312,275 @@ class AuthService {
   }
 
   /**
-   * 检查用户是否已认证
+   * 从各种存储中读取认证状态
    */
-  public isAuthenticated(): boolean {
-    // 如果正在初始化，等待初始化完成
-    if (this.isInitializing) {
-      console.log('[AuthService] 正在初始化，暂时返回当前状态');
-      return memoryAuthState.isAuthenticated;
-    }
-
-    // 检查内存中的状态
-    if (memoryAuthState.isAuthenticated) {
-      // 如果设置了过期时间，检查是否已过期
-      if (memoryAuthState.expiresAt && Date.now() > memoryAuthState.expiresAt) {
-        console.log('[AuthService] 认证已过期');
-        this.clearAuthState();
-        return false;
-      }
-      
-      // 如果最后验证时间超过30分钟，尝试刷新会话
-      const thirtyMinutes = 30 * 60 * 1000;
-      if (memoryAuthState.lastVerified && (Date.now() - memoryAuthState.lastVerified > thirtyMinutes)) {
-        console.log('[AuthService] 最后验证时间已超过30分钟，尝试刷新会话');
-        // 异步刷新会话，不阻塞当前请求
-        this.refreshSession().catch(err => {
-          console.warn('[AuthService] 刷新会话失败:', err);
-        });
-      }
-      
-      return true;
-    }
-    
-    // 如果没有检查过服务器会话，主动检查
-    if (this.isClientSide() && !hasCheckedServerSession) {
-      console.log('[AuthService] 未检查过服务器会话，主动检查');
-      // 异步检查会话，不阻塞当前请求
-      this.checkServerSession().catch(err => {
-        console.warn('[AuthService] 检查服务器会话失败:', err);
-      });
-    }
-    
-    // 尝试从传统存储中读取
+  private getStoredAuthState(): AuthState | null {
     try {
-      // 检查localStorage是否有手动存储的认证标记
-      const isLegacyAuthenticated = this.checkLegacyAuth();
-      if (isLegacyAuthenticated) {
-        // 将旧的认证数据转换为新格式
-        this.migrateToNewAuthFormat();
-        return true;
-      }
-    } catch (error) {
-      console.warn('[AuthService] 检查传统认证状态时出错:', error);
-    }
-    
-    return false;
-  }
-
-  /**
-   * 安全检查客户端环境
-   * 防止在服务器端执行时出错
-   */
-  private isClientSide(): boolean {
-    return typeof window !== 'undefined' && typeof localStorage !== 'undefined' && typeof document !== 'undefined';
-  }
-
-  /**
-   * 检查传统认证方式
-   */
-  private checkLegacyAuth(): boolean {
-    // 服务器端直接返回false
-    if (!this.isClientSide()) {
-      return false;
-    }
-    
-    try {
-      // 尝试读取localStorage中的旧格式认证信息
-      let localAuth;
-      let localAuthTime;
-      
-      try {
-        localAuth = localStorage.getItem(AUTH_VALID_KEY);
-        localAuthTime = localStorage.getItem(AUTH_TIME_KEY);
-      } catch (e) {
-        console.warn('[AuthService] 访问localStorage失败:', e);
-        return false;
+      // 优先从内存读取
+      if (memoryAuthState.isAuthenticated) {
+        return memoryAuthState;
       }
       
-      if (localAuth === 'true' && localAuthTime) {
-        const authTime = parseInt(localAuthTime, 10);
-        const now = Date.now();
-        // 如果认证时间在24小时内，认为有效
-        if (now - authTime < 24 * 60 * 60 * 1000) {
-          console.log("[AuthService] 本地存储中发现有效的传统认证");
-          return true;
+      // 然后尝试localStorage/Cookie
+      const storedStateJson = storage.getItem(AUTH_STATE_KEY);
+      if (storedStateJson) {
+        try {
+          return JSON.parse(storedStateJson);
+        } catch (parseError) {
+          console.error('[AuthService] 解析存储的认证状态失败:', parseError);
         }
       }
       
-      // 检查cookie是否存在
-      const hasSBCookie = document.cookie.includes('sb-access-token') || 
-                         document.cookie.includes('sb-refresh-token');
-                         
-      if (hasSBCookie) {
-        console.log("[AuthService] 检测到认证cookie存在");
-        return true;
-      }
+      return null;
     } catch (error) {
-      console.warn('[AuthService] 检查传统认证时出错:', error);
-    }
-    
-    return false;
-  }
-
-  /**
-   * 将旧的认证格式迁移到新格式
-   */
-  private migrateToNewAuthFormat(): void {
-    try {
-      const authTime = localStorage.getItem(AUTH_TIME_KEY);
-      const lastAuthTime = authTime ? parseInt(authTime, 10) : Date.now();
-      
-      // 创建新的认证状态
-      const newState: AuthState = {
-        isAuthenticated: true,
-        lastAuthTime: lastAuthTime,
-        // 无法从旧格式获取这些值，留空
-        userId: undefined,
-        sessionId: undefined,
-        expiresAt: lastAuthTime + (24 * 60 * 60 * 1000) // 默认24小时过期
-      };
-      
-      // 设置新的认证状态
-      this.setAuthState(newState);
-      console.log('[AuthService] 已将传统认证格式迁移到新格式');
-    } catch (error) {
-      console.error('[AuthService] 迁移认证格式时出错:', error);
+      console.error('[AuthService] 读取存储的认证状态时出错:', error);
+      return null;
     }
   }
 
   /**
    * 设置认证状态
    */
-  public setAuthState(state: Partial<AuthState>): void {
-    // 更新内存中的状态
-    memoryAuthState = {
-      ...memoryAuthState,
-      ...state,
-      lastAuthTime: state.lastAuthTime || Date.now()
-    };
-    
-    // 尝试保存到各种存储
-    this.saveAuthState(memoryAuthState);
-    
-    // 通知订阅者
-    this.notifySubscribers();
-    
-    // 兼容旧的认证格式
-    this.updateLegacyAuth(memoryAuthState.isAuthenticated);
-  }
-
-  /**
-   * 更新传统认证状态
-   */
-  private updateLegacyAuth(isAuthenticated: boolean): void {
-    if (!this.isClientSide()) {
-      return;
-    }
-    
+  private setAuthState(partialState: Partial<AuthState>): void {
     try {
-      if (isAuthenticated) {
-        // 设置传统认证标记
-        this.setStorage(StorageType.LOCAL_STORAGE, AUTH_VALID_KEY, 'true');
-        this.setStorage(StorageType.LOCAL_STORAGE, AUTH_TIME_KEY, Date.now().toString());
-      } else {
-        // 清除传统认证标记
-        this.removeStorage(StorageType.LOCAL_STORAGE, AUTH_VALID_KEY);
-        this.removeStorage(StorageType.LOCAL_STORAGE, AUTH_TIME_KEY);
+      // 更新内存状态
+      const newState: AuthState = {
+        ...memoryAuthState,
+        ...partialState,
+        lastAuthTime: Date.now() // 总是更新时间戳
+      };
+      
+      memoryAuthState = newState;
+      
+      // 尝试持久化存储
+      try {
+        const stateJson = JSON.stringify(newState);
+        storage.setItem(AUTH_STATE_KEY, stateJson);
+        
+        // 更新缓存有效性标记
+        storage.setItem(AUTH_CACHE_VALID_KEY, 'true');
+        storage.setItem(AUTH_CACHE_TIME_KEY, Date.now().toString());
+      } catch (storageError) {
+        console.warn('[AuthService] 持久化存储认证状态失败:', storageError);
       }
+      
+      // 通知订阅者
+      this.notifySubscribers();
     } catch (error) {
-      console.warn('[AuthService] 更新传统认证状态时出错:', error);
+      console.error('[AuthService] 设置认证状态时出错:', error);
     }
   }
 
   /**
    * 清除认证状态
    */
-  public clearAuthState(): void {
-    // 重置内存状态
-    memoryAuthState = { ...DEFAULT_AUTH_STATE };
-    
-    // 清除各种存储
-    this.removeStorage(StorageType.LOCAL_STORAGE, AUTH_STATE_KEY);
-    this.removeStorage(StorageType.LOCAL_STORAGE, AUTH_VALID_KEY);
-    this.removeStorage(StorageType.LOCAL_STORAGE, AUTH_TIME_KEY);
-    
-    // 清除Supabase相关的Cookie和localStorage
-    this.clearSupabaseAuth();
-    
-    // 通知订阅者
-    this.notifySubscribers();
-    
-    console.log('[AuthService] 认证状态已清除');
-  }
-  
-  /**
-   * 清除Supabase认证相关的Cookie和localStorage
-   */
-  private clearSupabaseAuth(): void {
-    if (!this.isClientSide()) {
-      return;
-    }
-    
+  private clearAuthState(): void {
     try {
-      // 清除localStorage中的Supabase认证数据
-      localStorage.removeItem('supabase.auth.token');
-      localStorage.removeItem('supabase.auth.expires_at');
-      localStorage.removeItem('wasAuthenticated');
+      // 重置内存状态
+      memoryAuthState = { ...DEFAULT_AUTH_STATE };
       
-      // 清除相关Cookie
-      this.clearCookies(['sb-access-token', 'sb-refresh-token', '__session']);
-      
-      console.log('[AuthService] Supabase认证数据已清除');
-    } catch (error) {
-      console.warn('[AuthService] 清除Supabase认证数据时出错:', error);
-    }
-  }
-  
-  /**
-   * 清除指定的Cookie
-   */
-  private clearCookies(cookieNames: string[]): void {
-    if (!this.isClientSide()) {
-      return;
-    }
-    
-    try {
-      const commonOptions = '; path=/; max-age=0; expires=Thu, 01 Jan 1970 00:00:00 GMT';
-      
-      cookieNames.forEach(cookieName => {
-        // 尝试在所有可能的域上清除cookie
-        document.cookie = `${cookieName}=${commonOptions}`;
-        document.cookie = `${cookieName}=${commonOptions}; domain=${window.location.hostname}`;
-        
-        // 尝试在根域上清除
-        const domainParts = window.location.hostname.split('.');
-        if (domainParts.length > 1) {
-          const rootDomain = domainParts.slice(domainParts.length - 2).join('.');
-          document.cookie = `${cookieName}=${commonOptions}; domain=.${rootDomain}`;
-        }
-        
-        console.log(`[AuthService] 已尝试清除Cookie: ${cookieName}`);
-      });
-    } catch (error) {
-      console.warn('[AuthService] 清除Cookie时出错:', error);
-    }
-  }
-
-  /**
-   * 从存储中读取认证状态
-   */
-  private getStoredAuthState(): AuthState | null {
-    // 服务器端直接返回null
-    if (!this.isClientSide()) {
-      return null;
-    }
-    
-    // 优先从localStorage读取
-    try {
-      const stateStr = localStorage.getItem(AUTH_STATE_KEY);
-      if (stateStr) {
-        return JSON.parse(stateStr) as AuthState;
-      }
-    } catch (error) {
-      console.warn('[AuthService] 从localStorage读取认证状态时出错:', error);
-    }
-    
-    // 从传统存储中读取
-    const isLegacyAuthenticated = this.checkLegacyAuth();
-    if (isLegacyAuthenticated) {
+      // 清除存储
       try {
-        const authTime = localStorage.getItem(AUTH_TIME_KEY);
-        const lastAuthTime = authTime ? parseInt(authTime, 10) : Date.now();
-        
-        return {
-          isAuthenticated: true,
-          lastAuthTime: lastAuthTime,
-          expiresAt: lastAuthTime + (24 * 60 * 60 * 1000) // 默认24小时过期
-        };
-      } catch (error) {
-        console.warn('[AuthService] 读取传统认证时间时出错:', error);
+        storage.removeItem(AUTH_STATE_KEY);
+        storage.removeItem(AUTH_CACHE_VALID_KEY);
+        storage.removeItem(AUTH_CACHE_TIME_KEY);
+      } catch (storageError) {
+        console.warn('[AuthService] 清除存储的认证状态失败:', storageError);
       }
-    }
-    
-    return null;
-  }
-
-  /**
-   * 保存认证状态到存储
-   */
-  private saveAuthState(state: AuthState): void {
-    if (!this.isClientSide()) {
-      return;
-    }
-    
-    try {
-      // 保存到localStorage
-      this.setStorage(StorageType.LOCAL_STORAGE, AUTH_STATE_KEY, JSON.stringify(state));
+      
+      // 通知订阅者
+      this.notifySubscribers();
     } catch (error) {
-      console.warn('[AuthService] 保存认证状态时出错:', error);
+      console.error('[AuthService] 清除认证状态时出错:', error);
     }
   }
 
   /**
-   * 设置存储键值对
+   * 检查是否为客户端环境
    */
-  private setStorage(type: StorageType, key: string, value: string): void {
-    if (!this.isClientSide()) {
-      return;
-    }
-    
-    try {
-      switch (type) {
-        case StorageType.LOCAL_STORAGE:
-          localStorage.setItem(key, value);
-          break;
-          
-        // 其他存储类型可以在这里添加
-        
-        default:
-          break;
-      }
-    } catch (error) {
-      console.warn(`[AuthService] 设置${type}存储时出错:`, error);
-    }
+  private isClientSide(): boolean {
+    return typeof window !== 'undefined';
   }
 
   /**
-   * 从存储中移除键
+   * 检查用户是否已认证
+   * @returns 是否已认证
    */
-  private removeStorage(type: StorageType, key: string): void {
-    if (!this.isClientSide()) {
-      return;
-    }
+  public isAuthenticated(): boolean {
+    // 在服务器端始终返回false
+    if (!this.isClientSide()) return false;
     
     try {
-      switch (type) {
-        case StorageType.LOCAL_STORAGE:
-          localStorage.removeItem(key);
-          break;
-          
-        // 其他存储类型可以在这里添加
+      // 检查登出标记
+      try {
+        // 先检查登出标记
+        const forceLoggedOut = storage.getItem('force_logged_out') === 'true';
+        const isLoggedOut = typeof sessionStorage !== 'undefined' && 
+          sessionStorage.getItem('isLoggedOut') === 'true';
         
-        default:
-          break;
+        if (forceLoggedOut || isLoggedOut) {
+          console.log('[AuthService] 检测到登出标记，状态为未登录');
+          return false;
+        }
+      } catch (storageError) {
+        console.warn('[AuthService] 检查登出标记失败，忽略:', storageError);
       }
+      
+      // 优先检查内存中的状态
+      if (memoryAuthState.isAuthenticated) {
+        return true;
+      }
+      
+      // 如果处于降级模式或缓存无效，则需要通过API验证
+      const now = Date.now();
+      if ((isDegradedToApiAuth || !isAuthCacheValid()) && 
+          now - this.lastApiAuthCheck > this.apiAuthTTL) {
+        
+        // 更新上次检查时间，避免频繁API调用
+        this.lastApiAuthCheck = now;
+        
+        // 触发异步会话刷新，但不等待它完成
+        setTimeout(() => {
+          this.checkServerSession().catch(console.error);
+        }, 0);
+      }
+      
+      // 返回当前内存中的状态(可能在上面的异步验证后被更新)
+      return memoryAuthState.isAuthenticated;
     } catch (error) {
-      console.warn(`[AuthService] 从${type}存储中移除时出错:`, error);
+      console.error('[AuthService] 检查认证状态时出错:', error);
+      
+      // 发生错误时，触发API验证作为恢复措施
+      setTimeout(() => {
+        this.checkServerSession().catch(console.error);
+      }, 0);
+      
+      // 返回当前内存中的状态
+      return memoryAuthState.isAuthenticated;
     }
   }
 
   /**
    * 刷新会话
-   * 尝试多种方式恢复用户会话
+   * @returns 是否成功刷新会话
    */
-  public async refreshSession(): Promise<boolean> {
-    console.log('[AuthService] 开始刷新会话');
+  async refreshSession(): Promise<boolean> {
+    console.log('[AuthService] 尝试刷新会话');
     
-    // 记录开始时间，用于计算耗时
-    const startTime = Date.now();
+    // 如果已经有刷新请求在进行中，复用那个Promise
+    if (isRefreshingSession && refreshPromise) {
+      console.log('[AuthService] 已有刷新请求在进行中，复用现有Promise');
+      return refreshPromise;
+    }
     
-    try {
-      // 首先检查内存中的认证状态
-      if (this.isAuthenticated()) {
-        console.log('[AuthService] 内存中已有有效认证状态');
-        return true;
-      }
-      
-      // 尝试从存储中恢复状态
-      const storedState = this.getStoredAuthState();
-      if (storedState && storedState.isAuthenticated && storedState.userId) {
-        console.log('[AuthService] 从本地存储恢复成功');
-        memoryAuthState = storedState;
-        this.notifySubscribers();
-        return true;
-      }
-      
-      // 尝试直接从Supabase刷新会话
-      let result = false;
-      
-      // 实现指数退避重试 - 最多尝试3次
-      for (let attempt = 0; attempt < 3; attempt++) {
-        try {
-          console.log(`[AuthService] 尝试刷新Supabase会话 (尝试 ${attempt + 1}/3)`);
-          const { data, error } = await this.supabase.auth.refreshSession();
+    isRefreshingSession = true;
+    refreshPromise = (async () => {
+      try {
+        // 如果内存状态已认证且未过期，直接返回成功
+        if (memoryAuthState.isAuthenticated && 
+            memoryAuthState.expiresAt && 
+            memoryAuthState.expiresAt > Date.now()) {
+          console.log('[AuthService] 内存中有有效会话，跳过API刷新');
+          return true;
+        }
+        
+        // 创建Supabase客户端
+        const supabase = createClient();
+        
+        // 先检查当前会话
+        const sessionResult = await supabase.auth.getSession();
+        if (sessionResult.data?.session) {
+          console.log('[AuthService] 获取到有效会话，无需刷新');
           
-          if (error) {
-            console.warn(`[AuthService] 刷新会话失败 (尝试 ${attempt + 1}/3):`, error.message);
-            
-            // 检查是否是会话不存在的错误
-            if (error.message.includes('not found') || error.message.includes('expired')) {
-              console.log('[AuthService] 会话不存在或已过期，停止重试');
-              break;
-            }
-            
-            // 如果不是最后一次尝试，等待后重试
-            if (attempt < 2) {
-              const delay = Math.pow(2, attempt) * 1000; // 指数退避: 1s, 2s, 4s
-              console.log(`[AuthService] 等待 ${delay}ms 后重试`);
-              await new Promise(resolve => setTimeout(resolve, delay));
-            }
-            continue;
-          }
+          const session = sessionResult.data.session;
+          this.setAuthState({
+            isAuthenticated: true,
+            lastVerified: Date.now(),
+            userId: session.user.id,
+            email: session.user.email,
+            expiresAt: new Date(session.expires_at || '').getTime()
+          });
           
-          // 获取到会话信息
-          if (data.session) {
-            console.log('[AuthService] Supabase会话刷新成功:', data.session.expires_at);
+          return true;
+        }
+        
+        // 如果没有有效会话，尝试刷新
+        console.log('[AuthService] 无有效会话，尝试刷新会话');
+        const { data, error } = await supabase.auth.refreshSession();
+        
+        if (error) {
+          // 如果是会话丢失错误，尝试自动降级到getUserInfo
+          if (error.message?.includes('Auth session missing')) {
+            console.log('[AuthService] 会话丢失，尝试获取用户信息');
+            const userInfo = await this.getUserInfo();
             
-            // 更新内存中的认证状态
-            this.setAuthState({
-              isAuthenticated: true,
-              lastAuthTime: Date.now(),
-              userId: data.session.user.id,
-              email: data.session.user.email || '',
-              sessionId: data.session.user.id,
-              expiresAt: new Date(data.session.expires_at || '').getTime()
-            });
-            
-            result = true;
-            break; // 成功，退出重试循环
+            if (userInfo) {
+              console.log('[AuthService] 通过用户信息恢复会话');
+              this.setAuthState({ 
+                isAuthenticated: true,
+                userId: userInfo.id,
+                email: userInfo.email
+              });
+              return true;
+            } else {
+              console.log('[AuthService] 用户信息获取失败，认证失败');
+              this.setAuthState({ isAuthenticated: false });
+              return false;
+            }
           } else {
-            console.warn('[AuthService] Supabase返回了空会话');
-          }
-        } catch (err) {
-          console.error(`[AuthService] 刷新会话过程中出错 (尝试 ${attempt + 1}/3):`, err);
-          
-          // 如果不是最后一次尝试，等待后重试
-          if (attempt < 2) {
-            const delay = Math.pow(2, attempt) * 1000;
-            await new Promise(resolve => setTimeout(resolve, delay));
+            console.error('[AuthService] 刷新会话失败:', error.message);
+            this.setAuthState({ isAuthenticated: false });
+            return false;
           }
         }
+        
+        if (data && data.session) {
+          console.log('[AuthService] 会话刷新成功');
+          this.setAuthState({
+            isAuthenticated: true,
+            lastVerified: Date.now(),
+            userId: data.session.user.id,
+            email: data.session.user.email,
+            expiresAt: new Date(data.session.expires_at || '').getTime()
+          });
+          
+          return true;
+        } else {
+          console.log('[AuthService] 会话刷新后无效');
+          this.setAuthState({ isAuthenticated: false });
+          return false;
+        }
+      } catch (error) {
+        console.error('[AuthService] 刷新会话过程中出错:', error);
+        
+        // 尝试通过用户信息恢复作为最后手段
+        try {
+          const userInfo = await this.getUserInfo();
+          if (userInfo) {
+            console.log('[AuthService] 通过用户信息恢复会话(错误恢复)');
+            this.setAuthState({ 
+              isAuthenticated: true,
+              userId: userInfo.id,
+              email: userInfo.email
+            });
+            return true;
+          }
+        } catch (innerError) {
+          console.error('[AuthService] 恢复尝试也失败:', innerError);
+        }
+        
+        this.setAuthState({ isAuthenticated: false });
+        return false;
+      } finally {
+        // 重置标记，允许下一次刷新
+        setTimeout(() => {
+          isRefreshingSession = false;
+          refreshPromise = null;
+        }, 1000); // 1秒后才允许新的刷新请求
       }
-      
-      // 记录耗时
-      const duration = Date.now() - startTime;
-      console.log(`[AuthService] 会话刷新${result ? '成功' : '失败'}, 耗时 ${duration}ms`);
-      
-      return result;
-    } catch (error) {
-      console.error('[AuthService] 刷新会话过程中发生异常:', error);
-      return false;
-    }
+    })();
+    
+    return refreshPromise;
   }
 
   /**

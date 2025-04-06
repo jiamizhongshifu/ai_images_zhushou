@@ -140,6 +140,31 @@ export function MainNav({ providedAuthState }: MainNavProps) {
     }
   };
 
+  // 处理登录按钮点击
+  const handleLoginClick = () => {
+    // 清除登出标记，以防有残留
+    localStorage.removeItem('force_logged_out');
+    sessionStorage.removeItem('isLoggedOut');
+    
+    // 获取当前路径作为重定向目标
+    const currentPath = window.location.pathname;
+    const isProtectedPath = currentPath.startsWith('/protected');
+    
+    // 如果当前已在登录页，则不添加重定向参数
+    if (currentPath === '/sign-in') {
+      router.push("/sign-in");
+      return;
+    }
+    
+    // 如果当前路径是受保护页面或其他希望登录后返回的页面，添加重定向参数
+    if (isProtectedPath || currentPath !== '/') {
+      router.push(`/sign-in?redirect=${encodeURIComponent(currentPath)}`);
+    } else {
+      // 否则直接前往登录页
+      router.push("/sign-in");
+    }
+  };
+
   // 处理登出按钮点击
   const handleLogout = async () => {
     try {
@@ -190,7 +215,7 @@ export function MainNav({ providedAuthState }: MainNavProps) {
       sessionStorage.setItem('isLoggedOut', 'true');
       
       // 添加特殊参数防止中间件重定向
-      window.location.href = '/?force_logout=true';
+      router.push('/?force_logout=true');
       
       console.log('登出操作完成, 页面将重定向到首页');
     } catch (error) {
@@ -198,31 +223,6 @@ export function MainNav({ providedAuthState }: MainNavProps) {
       alert("退出登录时发生错误");
     } finally {
       setIsSigningOut(false);
-    }
-  };
-
-  // 处理登录按钮点击
-  const handleLoginClick = () => {
-    // 清除登出标记，以防有残留
-    localStorage.removeItem('force_logged_out');
-    sessionStorage.removeItem('isLoggedOut');
-    
-    // 获取当前路径作为重定向目标
-    const currentPath = window.location.pathname;
-    const isProtectedPath = currentPath.startsWith('/protected');
-    
-    // 如果当前已在登录页，则不添加重定向参数
-    if (currentPath === '/sign-in') {
-      window.location.href = "/sign-in";
-      return;
-    }
-    
-    // 如果当前路径是受保护页面或其他希望登录后返回的页面，添加重定向参数
-    if (isProtectedPath || currentPath !== '/') {
-      window.location.href = `/sign-in?redirect=${encodeURIComponent(currentPath)}`;
-    } else {
-      // 否则直接前往登录页
-      window.location.href = "/sign-in";
     }
   };
 

@@ -1,49 +1,122 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
+import Image from "next/image";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Download, Trash2, Loader2, AlertCircle, RefreshCw, Image as ImageIcon, X } from "lucide-react";
+import { Download, Trash2, Loader2, AlertCircle, RefreshCw, Image as ImageIcon, X, ChevronDown } from "lucide-react";
+import { cacheService, CACHE_PREFIXES } from "@/utils/cache-service";
+
+// 每页加载的图片数量
+const IMAGES_PER_PAGE = 20;
+// 历史记录缓存时间 - 10分钟
+const HISTORY_CACHE_TTL = 10 * 60 * 1000;
+// 历史记录缓存键
+const HISTORY_CACHE_KEY = CACHE_PREFIXES.HISTORY + ':full';
 
 export default function HistoryPage() {
   const router = useRouter();
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState("");
-  const [imageHistory, setImageHistory] = useState<any[]>([]);
+  const [fullImageHistory, setFullImageHistory] = useState<any[]>([]); // 完整历史记录
+  const [displayedImages, setDisplayedImages] = useState<any[]>([]); // 当前显示的图片
+  const [currentPage, setCurrentPage] = useState(1);
+  const [hasMore, setHasMore] = useState(false);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
   const [imageLoadRetries, setImageLoadRetries] = useState<{[key: string]: number}>({});
+  // 添加缓存状态引用 - 避免不必要的重渲染
+  const isCachedData = useRef(false);
+  
   const MAX_RETRIES = 3;
   const RETRY_DELAY = 2000; // 2秒后重试
 
   // 页面加载时获取历史记录
   useEffect(() => {
     fetchImageHistory();
+    
+    // 监听缓存刷新事件
+    const unsubscribe = cacheService.onRefresh(HISTORY_CACHE_KEY, () => {
+      console.log('[历史页面] 检测到缓存更新，刷新界面');
+      // 如果当前页面是激活状态，刷新数据
+      if (document.visibilityState === 'visible') {
+        fetchImageHistory(false, false);
+      }
+    });
+    
+    // 页面离开时取消监听
+    return () => {
+      unsubscribe();
+    };
   }, []);
 
-  // 获取历史记录
-  const fetchImageHistory = async () => {
-    try {
+  // 加载更多图片 - 修改防止重复
+  const loadMoreImages = useCallback(() => {
+    const startIndex = (currentPage - 1) * IMAGES_PER_PAGE;
+    const endIndex = startIndex + IMAGES_PER_PAGE;
+    
+    // 取下一批图片
+    const nextBatch = fullImageHistory.slice(startIndex, endIndex);
+    
+    // 确保不加载重复图片
+    const currentImageUrls = new Set(displayedImages.map(img => img.image_url));
+    const uniqueNextBatch = nextBatch.filter(item => !currentImageUrls.has(item.image_url));
+    
+    if (uniqueNextBatch.length > 0) {
+      setDisplayedImages(prev => [...prev, ...uniqueNextBatch]);
+    }
+    
+    setCurrentPage(prev => prev + 1);
+    setHasMore(endIndex < fullImageHistory.length);
+    
+    console.log(`已加载 ${displayedImages.length + uniqueNextBatch.length}/${fullImageHistory.length} 张图片`);
+  }, [currentPage, fullImageHistory, displayedImages]);
+
+  // 获取历史记录 - 增加缓存支持
+  const fetchImageHistory = async (forceRefresh = false, showLoading = true) => {
+    // 如果要显示加载状态，才设置isLoading
+    if (showLoading) {
       setIsLoading(true);
-      setError("");
-      
-      // 请求历史记录
-      const response = await fetch('/api/history/get');
-      
-      if (!response.ok) {
-        if (response.status === 401) {
-          router.push('/sign-in');
-          return;
+    }
+    
+    // 清除错误信息
+    setError("");
+    
+    try {
+      // 使用缓存服务获取数据
+      const historyData = await cacheService.getOrFetch(
+        HISTORY_CACHE_KEY,
+        async () => {
+          // 真正的API请求函数
+          const response = await fetch('/api/history/get', {
+            headers: {
+              'Cache-Control': 'no-cache'
+            }
+          });
+          
+          if (!response.ok) {
+            if (response.status === 401) {
+              router.push('/sign-in');
+              throw new Error('未授权，请登录');
+            }
+            throw new Error(`获取历史记录失败: HTTP ${response.status}`);
+          }
+          
+          return await response.json();
+        },
+        {
+          expiresIn: HISTORY_CACHE_TTL,
+          forceRefresh // 是否强制刷新缓存
         }
-        throw new Error(`获取历史记录失败: HTTP ${response.status}`);
-      }
+      );
       
-      const data = await response.json();
+      // 标记数据来源
+      isCachedData.current = !forceRefresh && cacheService.checkStatus(HISTORY_CACHE_KEY) !== 'none';
       
-      if (data.success) {
-        if (Array.isArray(data.history) && data.history.length > 0) {
+      if (historyData.success) {
+        if (Array.isArray(historyData.history) && historyData.history.length > 0) {
           // 验证并处理图片URL
-          const validImages = data.history
+          const validImages = historyData.history
             .filter((item: any) => item && item.image_url)
             .map((item: any) => ({
               ...item,
@@ -51,19 +124,65 @@ export default function HistoryPage() {
             }))
             .filter((item: any) => item.image_url);
           
-          setImageHistory(validImages);
+          // 确保图片URL唯一性
+          const uniqueUrls = new Set();
+          const uniqueImages = validImages.filter((item: {image_url: string}) => {
+            if (uniqueUrls.has(item.image_url)) {
+              return false;
+            }
+            uniqueUrls.add(item.image_url);
+            return true;
+          });
+          
+          setFullImageHistory(uniqueImages);
+          
+          // 重置当前页和显示的图片
+          setCurrentPage(1);
+          setDisplayedImages(uniqueImages.slice(0, IMAGES_PER_PAGE));
+          setHasMore(uniqueImages.length > IMAGES_PER_PAGE);
+          
+          console.log(`[历史页面] 加载了 ${uniqueImages.length} 张历史图片 ${isCachedData.current ? '(来自缓存)' : '(来自API)'}`);
         } else {
-          setImageHistory([]);
+          setFullImageHistory([]);
+          setDisplayedImages([]);
+          setHasMore(false);
+          console.log('[历史页面] 无历史记录');
         }
       } else {
-        throw new Error(data.error || '获取历史记录失败');
+        throw new Error(historyData.error || '获取历史记录失败');
       }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      console.error('获取历史记录出错:', errorMessage);
+      console.error('[历史页面] 获取历史记录出错:', errorMessage);
       setError(errorMessage);
+      
+      // 尝试从缓存获取旧数据作为降级
+      const cachedData = cacheService.get<{success: boolean, history: any[]}>(HISTORY_CACHE_KEY);
+      if (cachedData && !isCachedData.current) {
+        console.log('[历史页面] 使用缓存数据作为降级');
+        try {
+          // 使用过期缓存处理数据
+          const validImages = cachedData.history
+            .filter((item: any) => item && item.image_url)
+            .map((item: any) => ({
+              ...item,
+              image_url: validateImageUrl(item.image_url)
+            }))
+            .filter((item: any) => item.image_url);
+          
+          setFullImageHistory(validImages);
+          setCurrentPage(1);
+          setDisplayedImages(validImages.slice(0, IMAGES_PER_PAGE));
+          setHasMore(validImages.length > IMAGES_PER_PAGE);
+          setError(error + ' (使用缓存数据)');
+        } catch (cacheError) {
+          console.error('[历史页面] 处理缓存数据出错:', cacheError);
+        }
+      }
     } finally {
-      setIsLoading(false);
+      if (showLoading) {
+        setIsLoading(false);
+      }
     }
   };
 
@@ -120,52 +239,32 @@ export default function HistoryPage() {
   };
 
   // 处理图片错误
-  const handleImageError = (imageUrl: string, e: React.SyntheticEvent<HTMLImageElement>) => {
+  const handleImageError = (e: any, imageUrl: string) => {
     try {
       console.error(`图片加载失败: ${imageUrl}`);
-      const target = e.target as HTMLImageElement;
-      const currentRetries = imageLoadRetries[imageUrl] || 0;
       
       // 更新重试次数
       setImageLoadRetries(prev => ({
         ...prev,
-        [imageUrl]: currentRetries + 1
+        [imageUrl]: (prev[imageUrl] || 0) + 1
       }));
       
-      // 设置占位图
-      target.src = `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='100' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' fill='%23f3f4f6'/%3E%3Cpath d='M50 30c-11.046 0-20 8.954-20 20s8.954 20 20 20 20-8.954 20-20-8.954-20-20-20z' fill='%23ef4444' fill-opacity='0.2'/%3E%3Cpath d='M45 45l10 10M55 45l-10 10' stroke='%23ef4444' stroke-width='3'/%3E%3C/svg%3E`;
-      target.classList.add('opacity-50');
-      
-      // 如果未超过最大重试次数，尝试重载
-      if (currentRetries < MAX_RETRIES) {
-        setTimeout(() => {
-          if (target && document.body.contains(target)) {
-            console.log(`尝试重新加载图片 (${currentRetries + 1}/${MAX_RETRIES}): ${imageUrl}`);
-            target.src = imageUrl;
-          }
-        }, RETRY_DELAY * (currentRetries + 1));
-      }
+      // 如果未超过最大重试次数，后续会自动重试
     } catch (error) {
       console.error('处理图片加载失败时出错:', error);
     }
   };
 
   // 处理图片加载成功
-  const handleImageLoad = (imageUrl: string, e: React.SyntheticEvent<HTMLImageElement>) => {
+  const handleImageLoad = (e: any, imageUrl: string) => {
     try {
+      console.log('图片加载成功:', imageUrl);
       // 移除重试记录
       setImageLoadRetries(prev => {
         const newRetries = {...prev};
         delete newRetries[imageUrl];
         return newRetries;
       });
-      
-      // 设置图片样式
-      if (e && e.target) {
-        const target = e.target as HTMLImageElement;
-        target.classList.remove('opacity-50');
-        target.classList.add('opacity-100');
-      }
     } catch (error) {
       console.error('处理图片加载成功事件出错:', error);
     }
@@ -181,13 +280,13 @@ export default function HistoryPage() {
       }));
       
       // 强制刷新状态
-      setImageHistory(prev => [...prev]);
+      setDisplayedImages(prev => [...prev]);
     } catch (error) {
       console.error('重试加载图片失败:', error);
     }
   };
 
-  // 删除图片
+  // 删除图片 - 增加清除缓存
   const handleDeleteImage = async (imageToDelete: string) => {
     if (!confirm('确定要删除这张图片吗？删除后不可恢复。')) {
       return;
@@ -195,7 +294,8 @@ export default function HistoryPage() {
     
     try {
       // 立即从UI中移除图片
-      setImageHistory(prevImages => prevImages.filter(item => item.image_url !== imageToDelete));
+      setFullImageHistory(prev => prev.filter(item => item.image_url !== imageToDelete));
+      setDisplayedImages(prev => prev.filter(item => item.image_url !== imageToDelete));
       
       // 清除重试计数
       setImageLoadRetries(prev => {
@@ -219,6 +319,22 @@ export default function HistoryPage() {
       
       if (!response.ok) {
         console.error('删除请求失败:', response.status);
+      } else {
+        // 删除成功后，更新缓存
+        // 方法1: 强制使缓存过期，下次获取时会重新请求
+        cacheService.delete(HISTORY_CACHE_KEY);
+        
+        // 方法2: 直接更新缓存中的数据，避免重新请求
+        // const cachedData = cacheService.get(HISTORY_CACHE_KEY);
+        // if (cachedData) {
+        //   const updatedHistory = cachedData.history.filter(
+        //     (item: any) => item.image_url !== imageToDelete
+        //   );
+        //   cacheService.set(HISTORY_CACHE_KEY, {
+        //     ...cachedData,
+        //     history: updatedHistory
+        //   }, HISTORY_CACHE_TTL);
+        // }
       }
       
     } catch (error) {
@@ -245,15 +361,17 @@ export default function HistoryPage() {
         )}
 
         {/* 历史图片显示区 */}
-        <Card>
+        <Card className="min-h-[500px]">
           <CardHeader className="pb-2">
             <div className="flex justify-between items-center">
-              <CardTitle className="text-sm font-medium">历史记录</CardTitle>
+              <CardTitle className="text-sm font-medium">
+                历史记录
+              </CardTitle>
               <Button 
                 variant="outline" 
                 size="sm" 
                 className="gap-1"
-                onClick={() => fetchImageHistory()}
+                onClick={() => fetchImageHistory(true)}
                 disabled={isLoading}
               >
                 {isLoading ? (
@@ -267,17 +385,26 @@ export default function HistoryPage() {
           </CardHeader>
           <CardContent>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-2">
-              {isLoading ? (
-                // 加载中状态
-                Array.from({ length: 4 }).map((_, index) => (
+              {isLoading && displayedImages.length === 0 ? (
+                // 增强的加载骨架屏
+                Array.from({ length: IMAGES_PER_PAGE }).map((_, index) => (
                   <div 
                     key={`skeleton-${index}`}
-                    className="aspect-square bg-muted animate-pulse rounded-lg"
-                  />
+                    className="flex flex-col border border-border/40 rounded-xl overflow-hidden"
+                  >
+                    {/* 图片骨架 */}
+                    <div className="aspect-square bg-muted animate-pulse rounded-t-lg"></div>
+                    
+                    {/* 底部信息骨架 */}
+                    <div className="p-2 bg-muted flex justify-between items-center">
+                      <div className="w-14 h-4 bg-muted-foreground/20 rounded animate-pulse"></div>
+                      <div className="w-6 h-6 rounded bg-primary/10 animate-pulse"></div>
+                    </div>
+                  </div>
                 ))
-              ) : imageHistory.length > 0 ? (
-                // 显示历史图片
-                imageHistory.map((item, index) => (
+              ) : displayedImages.length > 0 ? (
+                // 显示历史图片 - 与主页完全一致
+                displayedImages.map((item, index) => (
                   <div 
                     key={`img-${index}`}
                     className="flex flex-col border border-border rounded-xl overflow-hidden"
@@ -286,6 +413,7 @@ export default function HistoryPage() {
                       <div className="h-full w-full aspect-square bg-muted animate-pulse flex flex-col items-center justify-center">
                         <AlertCircle className="h-8 w-8 text-destructive mb-2" />
                         <p className="text-xs text-muted-foreground text-center px-2">加载失败</p>
+                        <p className="text-[8px] text-muted-foreground line-clamp-1 px-1 mt-1">{item.image_url.substring(0, 30)}...</p>
                         <Button 
                           variant="outline" 
                           size="sm" 
@@ -297,7 +425,7 @@ export default function HistoryPage() {
                       </div>
                     ) : (
                       <>
-                        {/* 图片区域 */}
+                        {/* 图片区域 - 点击直接预览 */}
                         <div 
                           className="cursor-pointer"
                           onClick={() => setPreviewImage(item.image_url)}
@@ -308,44 +436,26 @@ export default function HistoryPage() {
                             className="w-full aspect-square object-cover"
                             loading="lazy"
                             crossOrigin="anonymous"
-                            onLoad={(e) => handleImageLoad(item.image_url, e)}
-                            onError={(e) => handleImageError(item.image_url, e)}
+                            onLoad={(e) => handleImageLoad(e, item.image_url)}
+                            onError={(e) => handleImageError(e, item.image_url)}
                           />
                         </div>
                         
                         {/* 底部信息栏 */}
                         <div className="p-2 bg-muted flex justify-between items-center">
-                          <div className="text-xs font-medium truncate max-w-[120px]">
-                            {item.created_at ? 
-                              new Date(item.created_at).toLocaleString('zh-CN', {
-                                year: 'numeric',
-                                month: '2-digit',
-                                day: '2-digit',
-                                hour: '2-digit',
-                                minute: '2-digit'
-                              }).replace(/\//g, '-')
-                            : `图片 ${index + 1}`}
+                          <div className="text-xs font-medium">
+                            图片 {index + 1}
                           </div>
-                          <div className="flex gap-1">
+                          <div>
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
                                 downloadImage(item.image_url);
                               }}
-                              className="bg-primary/10 hover:bg-primary/20 rounded p-1 transition-colors"
+                              className="bg-primary/10 hover:bg-primary/20 rounded p-1.5 transition-colors"
                               title="下载图片"
                             >
                               <Download className="h-4 w-4 text-primary" />
-                            </button>
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleDeleteImage(item.image_url);
-                              }}
-                              className="bg-destructive/10 hover:bg-destructive/20 rounded p-1 transition-colors"
-                              title="删除图片"
-                            >
-                              <Trash2 className="h-4 w-4 text-destructive" />
                             </button>
                           </div>
                         </div>
@@ -372,11 +482,49 @@ export default function HistoryPage() {
                 </div>
               )}
             </div>
+            
+            {/* 加载更多按钮 */}
+            {hasMore && (
+              <div className="mt-6 flex justify-center">
+                <Button 
+                  variant="outline" 
+                  onClick={loadMoreImages}
+                  className="gap-2"
+                  disabled={isLoading}
+                >
+                  {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <ChevronDown className="h-4 w-4" />}
+                  <span>加载更多</span>
+                </Button>
+              </div>
+            )}
+            
+            {/* 加载中状态下的加载更多骨架 */}
+            {isLoading && displayedImages.length === 0 && (
+              <div className="mt-6 flex justify-center">
+                <div className="w-32 h-9 bg-muted rounded animate-pulse"></div>
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>
 
-      {/* 图片预览模态框 */}
+      {/* 添加全局样式 */}
+      <style jsx global>{`
+        @keyframes skeletonWave {
+          0% {
+            transform: translateX(-100%);
+          }
+          50%, 100% {
+            transform: translateX(100%);
+          }
+        }
+        
+        .skeleton-wave {
+          animation: skeletonWave 1.5s infinite;
+        }
+      `}</style>
+
+      {/* 图片预览模态框 - 包含删除按钮 */}
       {previewImage && (
         <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4">
           <div className="relative max-w-4xl max-h-[90vh] w-full">
@@ -392,11 +540,12 @@ export default function HistoryPage() {
             </div>
             <div className="bg-card rounded-lg overflow-hidden shadow-2xl">
               <div className="relative aspect-square sm:aspect-video max-h-[80vh]">
-                <img 
+                <Image 
                   src={previewImage} 
                   alt="预览图片" 
-                  className="w-full h-full object-contain"
-                  crossOrigin="anonymous"
+                  layout="fill"
+                  objectFit="contain"
+                  priority={true}
                 />
               </div>
               <div className="p-4 text-sm flex justify-between items-center">
@@ -412,7 +561,7 @@ export default function HistoryPage() {
                     onClick={() => window.open(previewImage, '_blank')}
                   >
                     <Download className="h-4 w-4 mr-1" />
-                    <span>下载</span>
+                    <span>在新窗口打开</span>
                   </Button>
                   <Button 
                     variant="destructive" 
@@ -427,7 +576,7 @@ export default function HistoryPage() {
                     }}
                   >
                     <Trash2 className="h-4 w-4 mr-1" />
-                    <span>删除</span>
+                    <span>删除图片</span>
                   </Button>
                 </div>
               </div>

@@ -1,14 +1,27 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, Suspense } from "react";
 import { useRouter } from "next/navigation";
+import dynamic from "next/dynamic";
 import { Upload, SendHorizontal, PlusCircle, RefreshCw, Image as ImageIcon, Loader2, Download, X, AlertCircle, Check, Trash2, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import Image from "next/image";
-import CreditRechargeDialog from "@/components/payment/credit-recharge-dialog";
-// 导入风格配置
 import { STYLE_CONFIGS, StyleConfig, generatePromptWithStyle } from "@/app/config/styles";
+import { cacheService, CACHE_PREFIXES } from "@/utils/cache-service";
+
+// 缓存键
+const USER_CREDITS_CACHE_KEY = CACHE_PREFIXES.USER_CREDITS + ':main';
+const HISTORY_CACHE_KEY = CACHE_PREFIXES.HISTORY + ':recent';
+// 缓存有效期
+const CREDITS_CACHE_TTL = 5 * 60 * 1000; // 5分钟
+const HISTORY_CACHE_TTL = 10 * 60 * 1000; // 10分钟
+
+// 动态导入CreditRechargeDialog组件
+const CreditRechargeDialog = dynamic(
+  () => import("@/components/payment/credit-recharge-dialog"),
+  { ssr: false, loading: () => null }
+);
 
 // 风格卡片组件
 function StyleCard({ 
@@ -96,6 +109,10 @@ export default function ProtectedPage() {
   // 添加初始化状态跟踪
   const [isInitializing, setIsInitializing] = useState(true);
   
+  // 添加缓存状态引用
+  const isCreditsCached = useRef(false);
+  const isHistoryCached = useRef(false);
+  
   // CSS动画类名引用
   const skeletonAnimationClass = "animate-shimmer relative overflow-hidden before:absolute before:inset-0 before:-translate-x-full before:animate-[shimmer_2s_infinite] before:bg-gradient-to-r before:from-transparent before:via-white/30 before:to-transparent";
   
@@ -135,132 +152,194 @@ export default function ProtectedPage() {
     return closestRatio.name;
   };
   
-  // 初始化加载
+  // 初始化加载 - 增加缓存
   useEffect(() => {
     // 静默获取用户点数和历史记录，不设置loading状态
     const fetchInitialData = async () => {
       try {
         // 标记初始化正在进行
         setIsInitializing(true);
-        console.log('开始初始化加载数据...');
+        console.log('[创作页] 开始初始化加载数据...');
         
-        // 并行请求用户点数和历史记录
-        const [creditsResponse, historyResponse] = await Promise.all([
-          fetch('/api/credits/get'),
-          fetch('/api/history/get')
-        ]);
+        // 使用缓存获取用户点数
+        const creditsData = await cacheService.getOrFetch(
+          USER_CREDITS_CACHE_KEY,
+          async () => {
+            const response = await fetch('/api/credits/get');
+            if (!response.ok) {
+              if (response.status === 401) {
+                router.push('/sign-in');
+                throw new Error('未授权，请登录');
+              }
+              throw new Error(`获取点数失败: HTTP ${response.status}`);
+            }
+            return await response.json();
+          },
+          { expiresIn: CREDITS_CACHE_TTL }
+        );
         
-        // 处理用户点数响应
-        if (creditsResponse.ok) {
-          const creditsData = await creditsResponse.json();
-          if (creditsData.success) {
-            setUserCredits(creditsData.credits);
-            console.log('成功加载用户点数:', creditsData.credits);
-          }
-        } else if (creditsResponse.status === 401) {
-          router.push('/login');
-          return;
+        // 记录点数数据来源
+        isCreditsCached.current = cacheService.checkStatus(USER_CREDITS_CACHE_KEY) !== 'none';
+        
+        if (creditsData.success) {
+          setUserCredits(creditsData.credits);
+          console.log(`[创作页] 成功加载用户点数: ${creditsData.credits} ${isCreditsCached.current ? '(来自缓存)' : '(来自API)'}`);
         }
+        
+        // 使用缓存获取历史记录
+        const historyData = await cacheService.getOrFetch(
+          HISTORY_CACHE_KEY,
+          async () => {
+            const response = await fetch('/api/history/get');
+            if (!response.ok) {
+              if (response.status === 401) {
+                throw new Error('未授权，请登录');
+              }
+              throw new Error(`获取历史记录失败: HTTP ${response.status}`);
+            }
+            return await response.json();
+          },
+          { expiresIn: HISTORY_CACHE_TTL }
+        );
+        
+        // 记录历史记录数据来源
+        isHistoryCached.current = cacheService.checkStatus(HISTORY_CACHE_KEY) !== 'none';
         
         let validImagesLoaded = false;
         
         // 处理历史记录响应
-        if (historyResponse.ok) {
-          const historyData = await historyResponse.json();
-          if (historyData.success) {
-            console.log('初始化时获取到历史记录数据:', historyData.history?.length || 0, '条');
+        if (historyData.success) {
+          console.log(`[创作页] 初始化时获取到历史记录数据: ${historyData.history?.length || 0} 条 ${isHistoryCached.current ? '(来自缓存)' : '(来自API)'}`);
+          
+          if (Array.isArray(historyData.history) && historyData.history.length > 0) {
+            // 验证并处理图片URL
+            const validImages = historyData.history
+              .filter((item: any) => item && item.image_url)
+              .map((item: any) => ({
+                ...item,
+                image_url: validateImageUrl(item.image_url)
+              }))
+              .filter((item: any) => item.image_url); // 过滤掉无效的URL
             
-            if (Array.isArray(historyData.history) && historyData.history.length > 0) {
-              // 验证并处理图片URL
-              const validImages = historyData.history
-                .filter((item: any) => item && item.image_url)
-                .map((item: any) => ({
-                  ...item,
-                  image_url: validateImageUrl(item.image_url)
-                }))
-                .filter((item: any) => item.image_url); // 过滤掉无效的URL
-              
-              console.log('初始化处理后的有效图片数据:', validImages.length, '条');
-              setImageHistory(validImages);
-              
-              // 如果有有效图片，设置到生成图片数组
-              if (validImages.length > 0) {
-                console.log('初始化时从历史记录加载图片到展示区域');
-                // 提取图片URL数组
-                const imageUrls = validImages.map((item: any) => item.image_url);
-                setGeneratedImages(imageUrls);
-                validImagesLoaded = true;
-                console.log('成功设置', imageUrls.length, '张图片到展示区域');
-              }
-            } else {
-              console.log('初始化时未获取到历史记录或记录为空');
+            console.log('[创作页] 初始化处理后的有效图片数据:', validImages.length, '条');
+            setImageHistory(validImages);
+            
+            // 如果有有效图片，设置到生成图片数组
+            if (validImages.length > 0) {
+              console.log('[创作页] 初始化时从历史记录加载图片到展示区域');
+              // 提取图片URL数组
+              const imageUrls = validImages.map((item: any) => item.image_url);
+              setGeneratedImages(imageUrls);
+              validImagesLoaded = true;
+              console.log('[创作页] 成功设置', imageUrls.length, '张图片到展示区域');
             }
           } else {
-            console.error('初始化时获取历史记录失败:', historyData.error || '未知错误');
+            console.log('[创作页] 初始化时未获取到历史记录或记录为空');
           }
         } else {
-          console.error('初始化时历史记录请求失败:', historyResponse.status);
+          console.error('[创作页] 初始化时获取历史记录失败:', historyData.error || '未知错误');
         }
         
         // 等待状态更新完成再结束初始化
         // 使用短暂延时确保状态已更新
         setTimeout(() => {
           setIsInitializing(false);
-          console.log('初始化加载完成, 图片加载状态:', validImagesLoaded ? '成功' : '无图片');
+          console.log('[创作页] 初始化加载完成, 图片加载状态:', validImagesLoaded ? '成功' : '无图片');
         }, 500);
       } catch (error) {
-        console.error('初始化加载数据失败:', error);
+        console.error('[创作页] 初始化加载数据失败:', error);
         // 静默失败，不显示错误给用户
         setIsInitializing(false);
       }
     };
     
     fetchInitialData();
+    
+    // 监听缓存更新事件
+    const unsubscribeCredits = cacheService.onRefresh(USER_CREDITS_CACHE_KEY, () => {
+      console.log('[创作页] 检测到点数缓存更新，刷新状态');
+      fetchUserCredits(false);
+    });
+    
+    const unsubscribeHistory = cacheService.onRefresh(HISTORY_CACHE_KEY, () => {
+      console.log('[创作页] 检测到历史记录缓存更新，刷新状态');
+      if (document.visibilityState === 'visible') {
+        fetchImageHistory(false, false);
+      }
+    });
+    
+    return () => {
+      unsubscribeCredits();
+      unsubscribeHistory();
+    };
   }, [router]);
   
-  // 获取用户点数 - 用于主动刷新时显示loading状态
-  const fetchUserCredits = async () => {
+  // 获取用户点数 - 增加缓存支持
+  const fetchUserCredits = async (showLoading = true, forceRefresh = false) => {
     try {
-      setIsLoadingCredits(true);
-      const response = await fetch('/api/credits/get');
-      
-      if (!response.ok) {
-        if (response.status === 401) {
-          router.push('/login'); // 未认证，跳转到登录页
-          return;
-        }
-        throw new Error(`获取点数失败: HTTP ${response.status}`);
+      if (showLoading) {
+        setIsLoadingCredits(true);
       }
       
-      const data = await response.json().catch(err => {
-        console.error('解析点数响应失败:', err);
-        return { success: false, error: '解析响应数据失败' };
-      });
+      // 使用缓存服务获取数据
+      const creditsData = await cacheService.getOrFetch(
+        USER_CREDITS_CACHE_KEY,
+        async () => {
+          const response = await fetch('/api/credits/get', {
+            headers: { 'Cache-Control': 'no-cache' }
+          });
+          
+          if (!response.ok) {
+            if (response.status === 401) {
+              router.push('/sign-in');
+              throw new Error('未授权，请登录');
+            }
+            throw new Error(`获取点数失败: HTTP ${response.status}`);
+          }
+          
+          return await response.json().catch(err => {
+            console.error('[创作页] 解析点数响应失败:', err);
+            return { success: false, error: '解析响应数据失败' };
+          });
+        },
+        {
+          expiresIn: CREDITS_CACHE_TTL,
+          forceRefresh
+        }
+      );
       
-      if (data.success) {
-        setUserCredits(data.credits);
+      // 记录数据来源
+      isCreditsCached.current = !forceRefresh && cacheService.checkStatus(USER_CREDITS_CACHE_KEY) !== 'none';
+      
+      if (creditsData.success) {
+        setUserCredits(creditsData.credits);
+        console.log(`[创作页] 获取用户点数成功: ${creditsData.credits} ${isCreditsCached.current ? '(来自缓存)' : '(来自API)'}`);
       } else {
-        console.error('获取点数失败:', data.error || '未知错误');
+        console.error('[创作页] 获取点数失败:', creditsData.error || '未知错误');
       }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      console.error('获取用户点数出错:', errorMessage);
+      console.error('[创作页] 获取用户点数出错:', errorMessage);
     } finally {
-      setIsLoadingCredits(false);
+      if (showLoading) {
+        setIsLoadingCredits(false);
+      }
     }
   };
   
-  // 增强fetchImageHistory处理函数
-  const fetchImageHistory = async () => {
+  // 增强fetchImageHistory处理函数 - 增加缓存支持
+  const fetchImageHistory = async (forceRefresh = false, showLoading = true) => {
     try {
-      console.log('开始获取历史记录');
+      console.log('[创作页] 开始获取历史记录', forceRefresh ? '(强制刷新)' : '');
       
       // 设置加载状态
-      setIsLoadingHistory(true);
+      if (showLoading) {
+        setIsLoadingHistory(true);
+      }
       
       // 确保不是服务端渲染
       if (typeof window === 'undefined') {
-        console.log('服务端渲染，跳过获取历史记录');
+        console.log('[创作页] 服务端渲染，跳过获取历史记录');
         setIsLoadingHistory(false);
         return;
       }
@@ -268,44 +347,58 @@ export default function ProtectedPage() {
       // 强制清空重试计数
       setImageLoadRetries({});
       
-      const response = await fetch('/api/history/get');
-      
-      if (!response.ok) {
-        if (response.status === 401) {
-          console.log('未授权，跳转到登录页');
-          router.push('/login');
-          return;
+      // 使用缓存服务获取数据
+      const historyData = await cacheService.getOrFetch(
+        HISTORY_CACHE_KEY,
+        async () => {
+          const response = await fetch('/api/history/get', {
+            headers: { 'Cache-Control': 'no-cache' }
+          });
+          
+          if (!response.ok) {
+            if (response.status === 401) {
+              console.log('[创作页] 未授权，跳转到登录页');
+              router.push('/sign-in');
+              throw new Error('未授权，请登录');
+            }
+            throw new Error(`获取历史记录失败: HTTP ${response.status}`);
+          }
+          
+          try {
+            return await response.json();
+          } catch (err) {
+            console.error('[创作页] 解析历史记录响应失败:', err);
+            throw new Error('解析响应数据失败');
+          }
+        },
+        {
+          expiresIn: HISTORY_CACHE_TTL,
+          forceRefresh
         }
-        throw new Error(`获取历史记录失败: HTTP ${response.status}`);
-      }
+      );
       
-      let data;
-      try {
-        data = await response.json();
-      } catch (err) {
-        console.error('解析历史记录响应失败:', err);
-        throw new Error('解析响应数据失败');
-      }
+      // 记录数据来源
+      isHistoryCached.current = !forceRefresh && cacheService.checkStatus(HISTORY_CACHE_KEY) !== 'none';
       
-      if (data.success) {
+      if (historyData.success) {
         // 直接打印历史记录，帮助调试
-        console.log('获取到历史记录数据:', data.history.length, '条');
+        console.log(`[创作页] 获取到历史记录数据: ${historyData.history.length} 条 ${isHistoryCached.current ? '(来自缓存)' : '(来自API)'}`);
         
-        if (!Array.isArray(data.history)) {
-          console.error('历史记录不是数组格式:', data.history);
+        if (!Array.isArray(historyData.history)) {
+          console.error('[创作页] 历史记录不是数组格式:', historyData.history);
           setIsLoadingHistory(false);
           return;
         }
         
-        if (data.history.length === 0) {
-          console.log('历史记录为空');
+        if (historyData.history.length === 0) {
+          console.log('[创作页] 历史记录为空');
           setImageHistory([]);
           setIsLoadingHistory(false);
           return;
         }
         
         // 验证并处理图片URL
-        const validImages = data.history
+        const validImages = historyData.history
           .filter((item: any) => item && item.image_url)
           .map((item: any) => ({
             ...item,
@@ -313,40 +406,69 @@ export default function ProtectedPage() {
           }))
           .filter((item: any) => item.image_url); // 过滤掉无效的URL
         
-        console.log('处理后的有效图片数据:', validImages.length, '条');
+        console.log('[创作页] 处理后的有效图片数据:', validImages.length, '条');
         
         // 先更新历史记录状态
         setImageHistory(validImages);
         
         // 确保有历史记录时更新生成图片状态
         if (validImages.length > 0) {
-          console.log('从历史记录加载图片到展示区域');
+          console.log('[创作页] 从历史记录加载图片到展示区域');
           const imageUrls = validImages.map((item: any) => item.image_url);
           
           // 防止出现重复URL
           const uniqueUrls = Array.from(new Set(imageUrls)) as string[];
-          console.log('处理后的唯一URL数量:', uniqueUrls.length);
+          console.log('[创作页] 处理后的唯一URL数量:', uniqueUrls.length);
           
           // 清空当前重试记录
           setImageLoadRetries({});
           
           // 设置生成图片状态
           setGeneratedImages(uniqueUrls);
-          console.log('成功设置历史图片到展示区');
+          console.log('[创作页] 成功设置历史图片到展示区');
         } else {
-          console.warn('处理后没有有效的图片URL');
+          console.warn('[创作页] 处理后没有有效的图片URL');
         }
       } else {
-        console.error('获取历史记录失败:', data.error || '未知错误');
+        console.error('[创作页] 获取历史记录失败:', historyData.error || '未知错误');
       }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      console.error('获取历史记录出错:', errorMessage);
+      console.error('[创作页] 获取历史记录出错:', errorMessage);
+      
+      // 尝试从缓存获取旧数据作为降级
+      if (!isHistoryCached.current) {
+        const cachedData = cacheService.get<{success: boolean, history: any[]}>(HISTORY_CACHE_KEY);
+        if (cachedData) {
+          console.log('[创作页] 使用过期缓存数据作为降级');
+          try {
+            // 处理缓存数据
+            const validImages = cachedData.history
+              .filter((item: any) => item && item.image_url)
+              .map((item: any) => ({
+                ...item,
+                image_url: validateImageUrl(item.image_url)
+              }))
+              .filter((item: any) => item.image_url);
+            
+            setImageHistory(validImages);
+            
+            if (validImages.length > 0) {
+              const imageUrls = validImages.map((item: any) => item.image_url);
+              setGeneratedImages(Array.from(new Set(imageUrls)));
+            }
+          } catch (cacheError) {
+            console.error('[创作页] 处理缓存数据出错:', cacheError);
+          }
+        }
+      }
     } finally {
       // 短延时确保DOM更新
       setTimeout(() => {
-      setIsLoadingHistory(false);
-        console.log('历史记录加载完成');
+        if (showLoading) {
+          setIsLoadingHistory(false);
+        }
+        console.log('[创作页] 历史记录加载完成');
       }, 500);
     }
   };
@@ -505,7 +627,7 @@ export default function ProtectedPage() {
     }
   };
   
-  // 生成图片
+  // 生成图片 - 增加缓存更新
   const generateImage = async () => {
     // 检查是否有上传图片和选择风格
     const hasUploadedImage = !!uploadedImage;
@@ -553,7 +675,7 @@ export default function ProtectedPage() {
       });
       
       const data = await response.json().catch(err => {
-        console.error('解析生成图片响应失败:', err);
+        console.error('[创作页] 解析生成图片响应失败:', err);
         return { success: false, error: '解析响应数据失败' };
       });
       
@@ -562,7 +684,7 @@ export default function ProtectedPage() {
       }
       
       if (data.success && data.imageUrl) {
-        console.log(`图片生成成功，URL: ${data.imageUrl}`);
+        console.log(`[创作页] 图片生成成功，URL: ${data.imageUrl}`);
         
         // 添加生成的图片到列表，避免重复添加
         setGeneratedImages(prev => {
@@ -578,13 +700,15 @@ export default function ProtectedPage() {
         setIsGenerating(false);
         setGenerationStatus("success");
         
-        // 重新获取用户点数
-        fetchUserCredits();
+        // 使缓存过期，确保下次获取时刷新数据
+        cacheService.delete(USER_CREDITS_CACHE_KEY);
+        cacheService.delete(HISTORY_CACHE_KEY);
         
-        // 重新获取历史记录
-        fetchImageHistory().catch(err => {
-          console.error('获取历史记录失败:', err);
-        });
+        // 后台重新获取用户点数
+        fetchUserCredits(false, true);
+        
+        // 后台重新获取历史记录
+        fetchImageHistory(true, false);
         
         // 显示成功通知
         showNotification('图片生成成功！', 'success');
@@ -593,7 +717,7 @@ export default function ProtectedPage() {
       }
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
-      console.error("生成图片失败:", errorMessage);
+      console.error("[创作页] 生成图片失败:", errorMessage);
       setError(errorMessage || "生成图片时发生错误");
       setGenerationStatus("error");
       setIsGenerating(false);
@@ -741,15 +865,15 @@ export default function ProtectedPage() {
     );
   };
 
-  // 改进删除图片的处理逻辑
+  // 改进删除图片的处理逻辑 - 增加缓存更新
   const handleDeleteImage = async (imageToDelete: string) => {
     // 确认是否删除
     if (!confirm('确定要删除这张图片吗？删除后不可恢复。')) {
-            return;
-          }
+      return;
+    }
           
     try {
-      console.log('开始删除图片:', imageToDelete);
+      console.log('[创作页] 开始删除图片:', imageToDelete);
       
       // 立即从UI中移除图片，提供即时反馈
       setGeneratedImages(prevImages => prevImages.filter(img => img !== imageToDelete));
@@ -778,27 +902,31 @@ export default function ProtectedPage() {
       });
       
       const result = await response.json();
-      console.log('删除结果:', result);
+      console.log('[创作页] 删除结果:', result);
 
       if (!response.ok) {
-        console.error('删除请求失败:', response.status, result.error);
+        console.error('[创作页] 删除请求失败:', response.status, result.error);
+      } else {
+        // 删除成功后，更新缓存
+        cacheService.delete(HISTORY_CACHE_KEY);
+        
+        // 可选：直接更新缓存中的数据而不删除整个缓存
+        /*
+        const cachedData = cacheService.get<{success: boolean, history: any[]}>(HISTORY_CACHE_KEY);
+        if (cachedData) {
+          const updatedHistory = cachedData.history.filter(
+            (item: any) => item.image_url !== imageToDelete
+          );
+          cacheService.set(HISTORY_CACHE_KEY, {
+            ...cachedData,
+            history: updatedHistory
+          }, HISTORY_CACHE_TTL);
+        }
+        */
       }
-
-      // 不论结果如何，确保本地UI与删除操作保持一致
-      // 图片已从UI移除，保持这个状态
-      
-      // 可选：在短暂延时后刷新历史记录，确保与服务器同步
-      // 此步骤通常不需要，因为我们已经在本地维护了一致的状态
-      setTimeout(() => {
-        // 静默刷新历史记录，但不影响用户体验
-        fetchImageHistory().catch(e => {
-          // 忽略错误，不影响用户体验
-          console.log('后台刷新历史记录时出错 (忽略):', e);
-        });
-      }, 2000);
       
     } catch (error) {
-      console.error('删除图片处理过程中出错:', error);
+      console.error('[创作页] 删除图片处理过程中出错:', error);
       // 即使发生错误，也保持UI上已经删除的状态，提供一致的用户体验
     }
   };
@@ -935,7 +1063,9 @@ export default function ProtectedPage() {
           <Card className="mt-4">
             <CardHeader className="pb-2">
               <div className="flex justify-between items-center">
-                <CardTitle className="text-sm font-medium">生成结果</CardTitle>
+                <CardTitle className="text-sm font-medium">
+                  生成结果
+                </CardTitle>
                 {generatedImages.length > 4 && (
                   <Button
                     variant="ghost"
