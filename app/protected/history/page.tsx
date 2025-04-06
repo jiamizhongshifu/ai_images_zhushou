@@ -162,105 +162,118 @@ export default function HistoryPage() {
           </div>
         )}
 
-        {/* 与创作页完全相同的容器结构 */}
-        <div className="flex flex-col gap-6">
-          {/* 历史记录卡片 - 完全复制创作页的图片展示区结构 */}
-          <Card className="p-6">
-            <div className="space-y-4">
-              <div className="flex justify-between items-center">
-                <h3 className="text-lg font-medium flex items-center">
-                  历史记录
-                  {isLoading && (
-                    <Loader2 className="h-4 w-4 ml-2 animate-spin text-muted-foreground" />
-                  )}
-                </h3>
-                
-                <Button 
-                  variant="outline" 
-                  size="sm" 
-                  onClick={handleRefresh} 
-                  disabled={isLoading}
-                  className="flex items-center text-sm"
-                >
-                  {isLoading ? (
-                    <>
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      加载中
-                    </>
-                  ) : (
-                    "刷新记录"
-                  )}
-                </Button>
-              </div>
+        {/* 全页面加载状态 */}
+        {(isLoading || !dataChecked) ? (
+          <div className="w-full flex flex-col items-center justify-center py-20">
+            <Loader2 className="h-10 w-10 animate-spin text-primary mb-4" />
+            <p className="text-muted-foreground text-center">正在加载历史记录，请稍候...</p>
+          </div>
+        ) : (
+          /* 数据加载完成后才显示历史记录内容 */
+          <div className="flex flex-col gap-6">
+            {/* 历史记录卡片 */}
+            <Card className="p-6">
+              <div className="space-y-4">
+                <div className="flex justify-between items-center">
+                  <h3 className="text-lg font-medium flex items-center">
+                    历史记录
+                  </h3>
+                  
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    onClick={handleRefresh} 
+                    disabled={isLoading}
+                    className="flex items-center text-sm"
+                  >
+                    {isLoading ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        加载中
+                      </>
+                    ) : (
+                      "刷新记录"
+                    )}
+                  </Button>
+                </div>
 
-              {/* 使用与创作页完全相同的组件和结构，但包装在样式增强器中 */}
-              <div className="history-enhanced-gallery">
-                <GeneratedImageGallery
-                  images={historyItems.map(item => item.image_url)}
-                  isLoading={isLoading || !dataChecked}
-                  onImageLoad={onImageLoad}
-                  onImageError={onImageError}
-                  onDownloadImage={downloadImage}
-                  onDeleteImage={deleteImage}
-                  hideViewMoreButton={true}
-                />
+                {/* 图片展示区 */}
+                <div className="history-enhanced-gallery">
+                  <GeneratedImageGallery
+                    images={historyItems.map(item => item.image_url)}
+                    isLoading={false} // 已经在外层处理了加载状态，这里不需要再显示
+                    onImageLoad={onImageLoad}
+                    onImageError={onImageError}
+                    onDownloadImage={downloadImage}
+                    onDeleteImage={deleteImage}
+                    hideViewMoreButton={true}
+                  />
+                </div>
+                
+                {/* 添加自定义样式，调整图片大小但保持网格布局不变 */}
+                <style jsx global>{`
+                  /* 保持原有网格布局不变 */
+                  .history-enhanced-gallery .grid {
+                    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+                  }
+                  
+                  @media (min-width: 640px) {
+                    .history-enhanced-gallery .grid {
+                      grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+                    }
+                  }
+                  
+                  @media (min-width: 768px) {
+                    .history-enhanced-gallery .grid {
+                      grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+                    }
+                  }
+                  
+                  /* 增大图片容器尺寸，确保刷新后依然生效 */
+                  .history-enhanced-gallery .aspect-square {
+                    min-height: 180px !important;
+                    height: auto !important;
+                  }
+                  
+                  @media (min-width: 640px) {
+                    .history-enhanced-gallery .aspect-square {
+                      min-height: 200px !important;
+                    }
+                  }
+                  
+                  @media (min-width: 768px) {
+                    .history-enhanced-gallery .aspect-square {
+                      min-height: 220px !important;
+                    }
+                  }
+                  
+                  /* 改进图片显示 - 仅针对网格中的图片，不影响预览 */
+                  .history-enhanced-gallery .grid img {
+                    object-fit: cover !important;
+                  }
+                  
+                  /* 确保内容区域充分利用空间 */
+                  .history-enhanced-gallery > div {
+                    width: 100% !important;
+                  }
+                  
+                  /* 确保预览模式下显示完整图片 */
+                  .fixed.inset-0.bg-black\/80.z-50 img {
+                    object-fit: contain !important;
+                  }
+                `}</style>
               </div>
-              
-              {/* 添加自定义样式，调整图片大小但保持网格布局不变 */}
-              <style jsx global>{`
-                /* 保持原有网格布局不变 */
-                .history-enhanced-gallery .grid {
-                  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
-                }
-                
-                @media (min-width: 640px) {
-                  .history-enhanced-gallery .grid {
-                    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
-                  }
-                }
-                
-                @media (min-width: 768px) {
-                  .history-enhanced-gallery .grid {
-                    grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
-                  }
-                }
-                
-                /* 增大图片容器尺寸，确保刷新后依然生效 */
-                .history-enhanced-gallery .aspect-square {
-                  min-height: 180px !important;
-                  height: auto !important;
-                }
-                
-                @media (min-width: 640px) {
-                  .history-enhanced-gallery .aspect-square {
-                    min-height: 200px !important;
-                  }
-                }
-                
-                @media (min-width: 768px) {
-                  .history-enhanced-gallery .aspect-square {
-                    min-height: 220px !important;
-                  }
-                }
-                
-                /* 改进图片显示 - 仅针对网格中的图片，不影响预览 */
-                .history-enhanced-gallery .grid img {
-                  object-fit: cover !important;
-                }
-                
-                /* 确保内容区域充分利用空间 */
-                .history-enhanced-gallery > div {
-                  width: 100% !important;
-                }
-                
-                /* 确保预览模式下显示完整图片 */
-                .fixed.inset-0.bg-black\/80.z-50 img {
-                  object-fit: contain !important;
-                }
-              `}</style>
-            </div>
-          </Card>
-        </div>
+            </Card>
+            
+            {/* 空状态显示 */}
+            {historyItems.length === 0 && (
+              <div className="text-center py-8">
+                <p className="text-muted-foreground">暂无历史记录</p>
+                <p className="text-xs text-muted-foreground mt-2">创建新的图片将会显示在这里</p>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
