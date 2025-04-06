@@ -2,28 +2,47 @@
 @tailwind components;
 @tailwind utilities;
 
+/* 导入Google Fonts */
+@import url('https://fonts.googleapis.com/css2?family=Quicksand:wght@300;400;500;600;700&family=Nunito:wght@300;400;500;600;700&display=swap');
+
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 0 0% 3.9%;
-    --card: 0 0% 100%;
-    --card-foreground: 0 0% 3.9%;
+    /* Ghiblit.ai 风格色彩系统 */
+    --background: 43 38% 97%;  /* 浅米色背景 #F9F7F3 */
+    --foreground: 0 0% 20%;    /* 深灰色文本 #333333 */
+    
+    --card: 0 0% 100%;         /* 白色卡片背景 #FFFFFF */
+    --card-foreground: 0 0% 20%; /* 卡片中的文字颜色 */
+    
     --popover: 0 0% 100%;
-    --popover-foreground: 0 0% 3.9%;
-    --primary: 0 0% 9%;
-    --primary-foreground: 0 0% 98%;
-    --secondary: 0 0% 96.1%;
-    --secondary-foreground: 0 0% 9%;
-    --muted: 0 0% 96.1%;
-    --muted-foreground: 0 0% 45.1%;
-    --accent: 0 0% 96.1%;
-    --accent-foreground: 0 0% 9%;
-    --destructive: 0 84.2% 60.2%;
+    --popover-foreground: 0 0% 20%;
+    
+    --primary: 180 48% 57%;    /* 柔和的蓝绿色 #66BFBF */
+    --primary-foreground: 0 0% 100%;
+    
+    --secondary: 0 0% 96%;
+    --secondary-foreground: 180 48% 27%; /* 深蓝绿色 #207178 */
+    
+    --muted: 43 38% 93%;       /* 更淡的米色 */
+    --muted-foreground: 0 0% 45%;
+    
+    --accent: 10 100% 83%;     /* 淡粉色 #FFAAA7 */ 
+    --accent-foreground: 0 0% 20%;
+    
+    --destructive: 0 84% 60%;
     --destructive-foreground: 0 0% 98%;
-    --border: 0 0% 89.8%;
-    --input: 0 0% 89.8%;
-    --ring: 0 0% 3.9%;
-    --radius: 0.5rem;
+    
+    --border: 43 38% 90%;      /* 淡米色边框 */
+    --input: 43 38% 90%;
+    --ring: 180 48% 57%;       /* 主色调环 */
+    
+    --radius: 0.75rem;         /* 更大的圆角 */
+    
+    /* 额外的强调色 */
+    --accent-yellow: 31 100% 85%;  /* 浅黄色 #FFD3B4 */
+    --accent-purple: 0 21% 74%;    /* 柔和的紫色 #D4A5A5 */
+    
+    /* 图表颜色保持不变 */
     --chart-1: 12 76% 61%;
     --chart-2: 173 58% 39%;
     --chart-3: 197 37% 24%;
@@ -32,25 +51,39 @@
   }
 
   .dark {
-    --background: 0 0% 3.9%;
-    --foreground: 0 0% 98%;
-    --card: 0 0% 3.9%;
-    --card-foreground: 0 0% 98%;
-    --popover: 0 0% 3.9%;
-    --popover-foreground: 0 0% 98%;
-    --primary: 0 0% 98%;
-    --primary-foreground: 0 0% 9%;
-    --secondary: 0 0% 14.9%;
-    --secondary-foreground: 0 0% 98%;
-    --muted: 0 0% 14.9%;
-    --muted-foreground: 0 0% 63.9%;
-    --accent: 0 0% 14.9%;
+    --background: 210 20% 12%;  /* 深蓝灰背景 #1A202C */
+    --foreground: 210 20% 98%;  /* 几乎白色文本 #F8FAFC */
+    
+    --card: 210 20% 16%;        /* 稍微亮一点的深蓝灰 #243142 */
+    --card-foreground: 210 20% 98%;
+    
+    --popover: 210 20% 16%;
+    --popover-foreground: 210 20% 98%;
+    
+    --primary: 180 48% 42%;     /* 暗色模式下稍深的蓝绿色 #4A9393 */
+    --primary-foreground: 0 0% 100%;
+    
+    --secondary: 210 20% 20%;
+    --secondary-foreground: 180 48% 72%; /* 亮蓝绿色 #A0DFDF */
+    
+    --muted: 210 20% 18%;
+    --muted-foreground: 210 20% 70%;
+    
+    --accent: 10 70% 63%;       /* 深粉色 #E07F7C */
     --accent-foreground: 0 0% 98%;
+    
     --destructive: 0 62.8% 30.6%;
     --destructive-foreground: 0 0% 98%;
-    --border: 0 0% 14.9%;
-    --input: 0 0% 14.9%;
-    --ring: 0 0% 83.1%;
+    
+    --border: 210 20% 25%;
+    --input: 210 20% 25%;
+    --ring: 180 48% 42%;
+    
+    /* 暗色模式强调色 */
+    --accent-yellow: 31 70% 65%;  /* 更深的黄色 */
+    --accent-purple: 0 21% 54%;   /* 更深的紫色 */
+    
+    /* 图表颜色保持不变 */
     --chart-1: 220 70% 50%;
     --chart-2: 160 60% 45%;
     --chart-3: 30 80% 55%;
@@ -65,5 +98,40 @@
   }
   body {
     @apply bg-background text-foreground;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+  
+  /* 增强排版规则 */
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-bold tracking-tight;
+    line-height: 1.2;
+  }
+  
+  h1 {
+    @apply text-4xl md:text-5xl;
+    letter-spacing: -0.02em;
+  }
+  
+  h2 {
+    @apply text-3xl md:text-4xl;
+    letter-spacing: -0.01em;
+  }
+  
+  h3 {
+    @apply text-2xl md:text-3xl;
+  }
+  
+  p {
+    @apply leading-relaxed;
+  }
+  
+  /* 增强链接样式 */
+  a:not(.btn) {
+    @apply text-primary hover:text-primary/80 transition-colors;
+  }
+  
+  /* 设置过渡效果 */
+  .transition-all {
+    transition-duration: 0.3s;
   }
 }

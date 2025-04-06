@@ -2,7 +2,7 @@ import DeployButton from "@/components/deploy-button";
 import { EnvVarWarning } from "@/components/env-var-warning";
 import { ThemeSwitcher } from "@/components/theme-switcher";
 import { hasEnvVars } from "@/utils/supabase/check-env-vars";
-import { Geist } from "next/font/google";
+import { Quicksand, Nunito } from "next/font/google";
 import { ThemeProvider } from "next-themes";
 import Link from "next/link";
 import "./globals.css";
@@ -19,9 +19,17 @@ export const metadata = {
   description: "将您的照片转化为魔幻风格的艺术作品，AI智能图像创作平台",
 };
 
-const geistSans = Geist({
-  display: "swap",
+// 替换Geist字体为Ghiblit.ai风格的字体组合
+const quicksand = Quicksand({
   subsets: ["latin"],
+  display: "swap",
+  variable: "--font-quicksand",
+});
+
+const nunito = Nunito({
+  subsets: ["latin"],
+  display: "swap",
+  variable: "--font-nunito",
 });
 
 // 验证必要的环境变量
@@ -43,8 +51,12 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="zh-CN" className={geistSans.className} suppressHydrationWarning>
-      <body className="bg-background text-foreground">
+    <html 
+      lang="zh-CN" 
+      className={`${quicksand.variable} ${nunito.variable}`} 
+      suppressHydrationWarning
+    >
+      <body className="bg-background text-foreground font-nunito">
         <ThemeProvider
           attribute="class"
           defaultTheme="system"
