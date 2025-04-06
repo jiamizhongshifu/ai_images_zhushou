@@ -177,17 +177,7 @@ export default function ProtectedPage() {
             将您的照片转化为魔幻风格的艺术作品，上传照片并选择风格，创造独特的视觉效果
           </p>
           
-          {/* 重置按钮 - 只在有生成结果时显示 */}
-          {generatedImages.length > 0 && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={resetConversation}
-              className="mt-4"
-            >
-              重置创作
-            </Button>
-          )}
+          {/* 重置按钮已移除 */}
         </div>
 
         {/* 错误信息显示 */}
