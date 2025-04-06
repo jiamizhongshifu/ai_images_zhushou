@@ -401,12 +401,28 @@ export const updateSession = async (request: NextRequest) => {
     
     // 对受保护的路由进行验证，但给予登录后的请求一定宽容度
     if (request.nextUrl.pathname.startsWith("/protected") && !user) {
+      // 检查是否有直接导航标记，如果有则尊重用户的导航意图
+      const isDirectNav = request.nextUrl.searchParams.get('nav_direct') === 'true';
+      if (isDirectNav) {
+        // 清除导航标记，避免保留在URL中
+        const cleanUrl = new URL(request.url);
+        cleanUrl.searchParams.delete('nav_direct');
+        
+        logger.info('检测到直接导航参数，重定向到登录页并记住要返回的页面');
+        
+        // 将目标地址作为redirect参数传递给登录页
+        const loginUrl = new URL('/sign-in', request.url);
+        loginUrl.searchParams.set('redirect', cleanUrl.pathname);
+        
+        return NextResponse.redirect(loginUrl);
+      }
+
       if (isComingFromSignIn) {
         logger.debug('检测到登录后的首次访问protected路径，尝试宽容处理');
         
         // 检查是否有Supabase的访问令牌cookie
         const hasAuthCookie = request.cookies.has('sb-access-token') || 
-                            request.cookies.has('sb-refresh-token');
+                              request.cookies.has('sb-refresh-token');
         
         if (hasAuthCookie) {
           logger.debug('检测到认证cookie存在，允许访问');
@@ -417,7 +433,11 @@ export const updateSession = async (request: NextRequest) => {
       // 记录本次重定向
       lastRedirectInfo = { url: '/sign-in', timestamp: currentTime };
       logger.info('未授权访问，重定向到登录页');
-      return NextResponse.redirect(new URL("/sign-in", request.url));
+      
+      // 添加redirect参数，使登录后可以返回原页面
+      const loginUrl = new URL("/sign-in", request.url);
+      loginUrl.searchParams.set('redirect', request.nextUrl.pathname);
+      return NextResponse.redirect(loginUrl);
     }
 
     // 如果用户已登录且访问根路径，重定向到受保护页面
@@ -428,9 +448,13 @@ export const updateSession = async (request: NextRequest) => {
         return response;
       }
       
-      // 记录本次重定向
-      lastRedirectInfo = { url: '/protected', timestamp: currentTime };
-      return NextResponse.redirect(new URL("/protected", request.url));
+      // 注释掉原有的重定向逻辑，允许用户访问首页
+      // lastRedirectInfo = { url: '/protected', timestamp: currentTime };
+      // return NextResponse.redirect(new URL("/protected", request.url));
+      
+      // 直接返回响应，允许访问首页
+      logger.info('用户已登录且访问首页，允许直接访问');
+      return response;
     }
 
     return response;

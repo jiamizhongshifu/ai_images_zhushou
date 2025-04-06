@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { Upload, SendHorizontal, PlusCircle, RefreshCw, Image as ImageIcon, Loader2, Download, X, AlertCircle, Check, Trash2 } from "lucide-react";
+import { Upload, SendHorizontal, PlusCircle, RefreshCw, Image as ImageIcon, Loader2, Download, X, AlertCircle, Check, Trash2, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import Image from "next/image";
@@ -936,18 +936,24 @@ export default function ProtectedPage() {
             <CardHeader className="pb-2">
               <div className="flex justify-between items-center">
                 <CardTitle className="text-sm font-medium">生成结果</CardTitle>
-                {generatedImages.length > 0 && (
-                  <span className="text-xs text-muted-foreground">
-                    共 {generatedImages.length} 张图片
-                  </span>
+                {generatedImages.length > 4 && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-xs text-primary h-8 px-2"
+                    onClick={() => router.push('/protected/history')}
+                  >
+                    查看更多
+                    <ChevronRight className="ml-1 h-4 w-4" />
+                  </Button>
                 )}
               </div>
             </CardHeader>
             <CardContent>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-2">
                 {generatedImages.length > 0 ? (
-                  // 显示生成的图片
-                  generatedImages.map((image, index) => (
+                  // 显示生成的图片，最多显示4张
+                  generatedImages.slice(0, 4).map((image, index) => (
                     <div 
                       key={`img-${index}`}
                       className="flex flex-col border border-border rounded-xl overflow-hidden"

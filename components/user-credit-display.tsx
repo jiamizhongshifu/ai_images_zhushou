@@ -5,8 +5,9 @@ import { Coins, PlusCircle, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { authService } from '@/utils/auth-service';
 import CreditRechargeDialog from "@/components/payment/credit-recharge-dialog";
+import { cn } from '@/lib/utils';
 
-export default function UserCreditDisplay() {
+export default function UserCreditDisplay({ className }: { className?: string }) {
   const [credits, setCredits] = useState<number | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -87,7 +88,7 @@ export default function UserCreditDisplay() {
   
   // 渲染组件
   return (
-    <div className="flex items-center gap-2">
+    <div className={cn("flex items-center gap-1", className)}>
       <div className="flex items-center gap-1 text-sm">
         <Coins className="text-primary h-4 w-4" />
         
@@ -99,7 +100,7 @@ export default function UserCreditDisplay() {
           </span>
         )}
         
-        <span className="text-muted-foreground">点</span>
+        <span className="text-muted-foreground hidden sm:inline">点</span>
       </div>
       
       <Button
@@ -108,8 +109,9 @@ export default function UserCreditDisplay() {
         className="h-6 w-6"
         onClick={handleRecharge}
         title="充值点数"
+        aria-label="充值点数"
       >
-        <PlusCircle className="h-3 w-3" />
+        <PlusCircle className="h-3.5 w-3.5" />
       </Button>
       
       {/* 充值弹窗 */}

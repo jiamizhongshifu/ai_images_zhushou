@@ -35,6 +35,8 @@ const AUTH_TIME_KEY = 'auth_time';
 
 // 内存中的认证状态缓存
 let memoryAuthState: AuthState = { ...DEFAULT_AUTH_STATE };
+// 标记是否已检查过服务器会话
+let hasCheckedServerSession = false;
 
 /**
  * 认证服务类 - 提供统一的认证状态管理
@@ -43,6 +45,7 @@ class AuthService {
   private static instance: AuthService;
   private subscribers: Array<(state: AuthState) => void> = [];
   private supabase = createClient();
+  private isInitializing = false;
 
   // 私有构造函数，确保单例
   private constructor() {
@@ -64,8 +67,9 @@ class AuthService {
   /**
    * 初始化认证状态
    */
-  private initAuthState(): void {
+  private async initAuthState(): Promise<void> {
     try {
+      this.isInitializing = true;
       // 尝试从各种存储中读取认证状态
       const state = this.getStoredAuthState();
       if (state) {
@@ -74,8 +78,54 @@ class AuthService {
       } else {
         console.log('[AuthService] 未找到存储的认证状态，使用默认状态');
       }
+
+      // 新增：主动检查 Supabase 会话状态
+      if (this.isClientSide() && !hasCheckedServerSession) {
+        console.log('[AuthService] 主动检查 Supabase 会话状态');
+        this.checkServerSession();
+      }
     } catch (error) {
       console.error('[AuthService] 初始化认证状态时出错:', error);
+    } finally {
+      this.isInitializing = false;
+    }
+  }
+
+  /**
+   * 主动检查服务器会话状态
+   */
+  private async checkServerSession(): Promise<void> {
+    try {
+      const { data, error } = await this.supabase.auth.getSession();
+      
+      if (error) {
+        console.error('[AuthService] 获取会话失败:', error.message);
+        return;
+      }
+      
+      hasCheckedServerSession = true;
+      
+      if (data && data.session) {
+        const session = data.session;
+        console.log(`[AuthService] 检测到有效会话，用户 ID: ${session.user.id.substring(0, 8)}...`);
+        
+        // 更新认证状态
+        this.setAuthState({
+          isAuthenticated: true,
+          lastAuthTime: Date.now(),
+          userId: session.user.id,
+          sessionId: session.user.id,
+          email: session.user.email,
+          expiresAt: new Date(session.expires_at || '').getTime(),
+          lastVerified: Date.now()
+        });
+        
+        return;
+      }
+      
+      console.log('[AuthService] 无有效会话');
+    } catch (error) {
+      console.error('[AuthService] 检查服务器会话时出错:', error);
     }
   }
 
@@ -96,8 +146,10 @@ class AuthService {
               isAuthenticated: true,
               lastAuthTime: Date.now(),
               userId: session.user.id,
-              sessionId: session.user.id, // 使用用户ID作为会话ID
-              expiresAt: new Date(session.expires_at || '').getTime()
+              sessionId: session.user.id,
+              email: session.user.email,
+              expiresAt: new Date(session.expires_at || '').getTime(),
+              lastVerified: Date.now()
             });
           } else if (event === 'SIGNED_OUT') {
             console.log('[AuthService] 用户已登出');
@@ -122,6 +174,12 @@ class AuthService {
    * 检查用户是否已认证
    */
   public isAuthenticated(): boolean {
+    // 如果正在初始化，等待初始化完成
+    if (this.isInitializing) {
+      console.log('[AuthService] 正在初始化，暂时返回当前状态');
+      return memoryAuthState.isAuthenticated;
+    }
+
     // 检查内存中的状态
     if (memoryAuthState.isAuthenticated) {
       // 如果设置了过期时间，检查是否已过期
@@ -130,7 +188,27 @@ class AuthService {
         this.clearAuthState();
         return false;
       }
+      
+      // 如果最后验证时间超过30分钟，尝试刷新会话
+      const thirtyMinutes = 30 * 60 * 1000;
+      if (memoryAuthState.lastVerified && (Date.now() - memoryAuthState.lastVerified > thirtyMinutes)) {
+        console.log('[AuthService] 最后验证时间已超过30分钟，尝试刷新会话');
+        // 异步刷新会话，不阻塞当前请求
+        this.refreshSession().catch(err => {
+          console.warn('[AuthService] 刷新会话失败:', err);
+        });
+      }
+      
       return true;
+    }
+    
+    // 如果没有检查过服务器会话，主动检查
+    if (this.isClientSide() && !hasCheckedServerSession) {
+      console.log('[AuthService] 未检查过服务器会话，主动检查');
+      // 异步检查会话，不阻塞当前请求
+      this.checkServerSession().catch(err => {
+        console.warn('[AuthService] 检查服务器会话失败:', err);
+      });
     }
     
     // 尝试从传统存储中读取

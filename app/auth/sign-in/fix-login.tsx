@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { createClient } from '@/utils/supabase/client';
 
 /**
@@ -10,6 +10,8 @@ import { createClient } from '@/utils/supabase/client';
  */
 export default function FixLogin() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const redirectPath = searchParams?.get('redirect') || null;
   const supabase = createClient();
   
   useEffect(() => {
@@ -24,11 +26,15 @@ export default function FixLogin() {
         }
         
         if (data?.session) {
-          console.log('[登录修复] 检测到用户已登录，但在登录页面，重定向到受保护页面');
+          console.log('[登录修复] 检测到用户已登录，但在登录页面');
+          
+          // 如果URL中有重定向参数，则使用该参数进行重定向
+          const redirectTo = redirectPath || '/protected';
+          console.log(`[登录修复] 重定向到: ${redirectTo}`);
           
           // 确认重定向前等待短暂延迟，确保会话完全同步
           setTimeout(() => {
-            router.push('/protected');
+            router.push(redirectTo);
           }, 300);
         }
       } catch (err) {
@@ -37,7 +43,7 @@ export default function FixLogin() {
     };
     
     checkAndFixLogin();
-  }, [router, supabase]);
+  }, [router, supabase, redirectPath]);
   
   // 此组件不渲染任何内容
   return null;

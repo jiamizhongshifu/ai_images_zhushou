@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Lock, Mail } from "lucide-react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useRef, useState } from "react";
 
 // 使用时间戳生成唯一表单ID
@@ -22,6 +22,8 @@ export default function LoginForm({ message }: LoginFormProps) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const redirectParam = searchParams?.get('redirect') || null;
   
   // 表单引用，用于手动处理表单提交
   const formRef = useRef<HTMLFormElement>(null);
@@ -82,11 +84,27 @@ export default function LoginForm({ message }: LoginFormProps) {
       console.warn('[登录表单] 清除登出标记失败:', error);
     }
     
+    // 确定重定向目标
+    let redirectTarget = `/protected?just_logged_in=true&login_time=${loginTime}&clear_logout_flags=true&force_login=true`;
+    
+    // 如果存在重定向参数，优先使用该参数
+    if (redirectParam) {
+      // 检查是否为受保护路径，需要添加登录参数
+      if (redirectParam.startsWith('/protected')) {
+        redirectTarget = `${redirectParam}?just_logged_in=true&login_time=${loginTime}&force_login=true`;
+      } else {
+        // 非受保护路径，直接跳转
+        redirectTarget = redirectParam;
+      }
+      console.log(`[登录表单] 使用自定义重定向目标: ${redirectTarget}`);
+    } else {
+      console.log(`[登录表单] 使用默认保护页面重定向: ${redirectTarget}`);
+    }
+    
     // 等待较长时间确保清除操作完成
     setTimeout(() => {
       // 使用window.location进行完全页面刷新，避免Next.js客户端路由可能的问题
-      // 添加force_login=true参数确保中间件识别为强制登录状态
-      window.location.href = `/protected?just_logged_in=true&login_time=${loginTime}&clear_logout_flags=true&force_login=true`;
+      window.location.href = redirectTarget;
     }, 800); // 增加等待时间到800ms
   };
 

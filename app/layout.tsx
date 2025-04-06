@@ -7,6 +7,7 @@ import { ThemeProvider } from "next-themes";
 import Link from "next/link";
 import "./globals.css";
 import { validateRequiredEnvVars } from '@/utils/env';
+import { Navbar } from "@/components/layout/navbar";
 
 const defaultUrl = process.env.VERCEL_URL
   ? `https://${process.env.VERCEL_URL}`
@@ -14,8 +15,8 @@ const defaultUrl = process.env.VERCEL_URL
 
 export const metadata = {
   metadataBase: new URL(defaultUrl),
-  title: "Next.js and Supabase Starter Kit",
-  description: "The fastest way to build apps with Next.js and Supabase",
+  title: "IMG图图 - AI图像创意平台",
+  description: "将您的照片转化为魔幻风格的艺术作品，AI智能图像创作平台",
 };
 
 const geistSans = Geist({
@@ -42,7 +43,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={geistSans.className} suppressHydrationWarning>
+    <html lang="zh-CN" className={geistSans.className} suppressHydrationWarning>
       <body className="bg-background text-foreground">
         <ThemeProvider
           attribute="class"
@@ -50,9 +51,12 @@ export default function RootLayout({
           enableSystem
           disableTransitionOnChange
         >
+          {/* 全局导航栏 */}
+          <Navbar />
+          
           <main className="min-h-screen flex flex-col items-center">
             <div className="flex-1 w-full flex flex-col gap-20 items-center">
-              <div className="flex flex-col gap-20 max-w-5xl p-5 mt-16">
+              <div className="flex flex-col gap-20 max-w-5xl p-5 mt-8">
                 {children}
               </div>
 
