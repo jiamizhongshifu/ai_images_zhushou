@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useCallback } from "react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { Loader2, X, Download, Trash2, ChevronRight, ImageIcon } from "lucide-react";
@@ -27,6 +27,8 @@ export default function GeneratedImageGallery({
 }: GeneratedImageGalleryProps) {
   const router = useRouter();
   const [previewImage, setPreviewImage] = useState<string | null>(null);
+  const [loadedImages, setLoadedImages] = useState<Record<string, boolean>>({});
+  const [errorImages, setErrorImages] = useState<Record<string, boolean>>({});
   
   // 查看更多，跳转到历史页
   const handleViewMore = () => {
@@ -45,21 +47,35 @@ export default function GeneratedImageGallery({
         if (previewImage === imageUrl) {
           setPreviewImage(null);
         }
+        
+        // 清除加载状态
+        setLoadedImages(prev => {
+          const newState = {...prev};
+          delete newState[imageUrl];
+          return newState;
+        });
       }
     } catch (error) {
       console.error("删除图片失败:", error);
     }
   };
+  
+  // 处理图片加载
+  const handleImageLoad = useCallback((imageUrl: string) => {
+    setLoadedImages(prev => ({...prev, [imageUrl]: true}));
+    onImageLoad(imageUrl);
+  }, [onImageLoad]);
+  
+  // 处理图片加载错误
+  const handleImageError = useCallback((imageUrl: string) => {
+    setErrorImages(prev => ({...prev, [imageUrl]: true}));
+    onImageError(imageUrl);
+  }, [onImageError]);
 
   // 构建CSS类名
   const gridClassName = isLargerSize 
     ? "grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6 relative" 
     : "grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4 relative";
-
-  // 图片容器样式
-  const imageContainerClassName = isLargerSize
-    ? "relative aspect-square border border-border rounded-xl overflow-hidden group cursor-pointer shadow-ghibli-sm hover:shadow-ghibli transition-all duration-300 hover:border-primary/30 hover:translate-y-[-2px]"
-    : "relative aspect-square border border-border rounded-xl overflow-hidden group cursor-pointer shadow-ghibli-sm hover:shadow-ghibli transition-all duration-300 hover:border-primary/30 hover:translate-y-[-2px]";
 
   // 图片sizes属性
   const imageSizes = isLargerSize
@@ -73,7 +89,7 @@ export default function GeneratedImageGallery({
         {/* 加载状态 */}
         {isLoading && (
           <div className={`col-span-full flex items-center justify-center py-14`}>
-            <div className="flex flex-col items-center bg-card/60 p-6 rounded-xl border border-border shadow-ghibli-sm">
+            <div className="flex flex-col items-center bg-card/60 p-6 rounded-xl border border-border shadow-ghibli-sm animate-pulse-soft">
               <Loader2 className="h-8 w-8 animate-spin text-primary mb-3" />
               <p className="text-foreground/90 font-quicksand">正在生成图片，请稍候...</p>
             </div>
@@ -97,23 +113,37 @@ export default function GeneratedImageGallery({
         {images.map((imageUrl, index) => (
           <div
             key={`${imageUrl}-${index}`}
-            className={imageContainerClassName}
+            className="ghibli-image-container aspect-square cursor-pointer animate-fade-in"
             onClick={() => setPreviewImage(imageUrl)}
           >
             {/* 图片加载中状态 */}
-            <div className="absolute inset-0 flex items-center justify-center bg-muted/60 backdrop-blur-sm">
-              <Loader2 className="h-6 w-6 animate-spin text-primary/70" />
-            </div>
+            {!loadedImages[imageUrl] && !errorImages[imageUrl] && (
+              <div className="absolute inset-0 flex items-center justify-center bg-muted/60 backdrop-blur-sm z-10">
+                <Loader2 className="h-6 w-6 animate-spin text-primary/70" />
+              </div>
+            )}
             
-            <Image
-              src={imageUrl}
-              alt={`生成的图片 ${index + 1}`}
-              fill
-              sizes={imageSizes}
-              className="object-cover transition-transform duration-700 group-hover:scale-[1.05]"
-              onLoad={() => onImageLoad(imageUrl)}
-              onError={() => onImageError(imageUrl)}
-            />
+            {/* 图片加载错误状态 */}
+            {errorImages[imageUrl] && (
+              <div className="absolute inset-0 flex flex-col items-center justify-center bg-muted/60 backdrop-blur-sm z-10">
+                <ImageIcon className="h-8 w-8 text-destructive/50 mb-2" />
+                <p className="text-xs text-destructive">加载失败</p>
+              </div>
+            )}
+            
+            <div className="w-full h-full relative">
+              <Image
+                src={imageUrl}
+                alt={`生成的图片 ${index + 1}`}
+                fill
+                sizes={imageSizes}
+                className={`object-cover transition-transform duration-700 group-hover:scale-[1.05] ${
+                  loadedImages[imageUrl] ? 'opacity-100' : 'opacity-0'
+                }`}
+                onLoad={() => handleImageLoad(imageUrl)}
+                onError={() => handleImageError(imageUrl)}
+              />
+            </div>
             
             {/* 图片操作按钮 - 鼠标悬停时显示 */}
             <div className="absolute bottom-0 left-0 right-0 p-2.5 bg-gradient-to-t from-black/80 to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex justify-end">
@@ -139,7 +169,7 @@ export default function GeneratedImageGallery({
           <Button 
             variant="outline" 
             size="sm" 
-            className="flex items-center text-sm hover:bg-primary/10 hover:text-primary border-primary/30 font-quicksand shadow-ghibli-sm hover:shadow-ghibli transition-all duration-300 hover:translate-y-[-1px]"
+            className="ghibli-btn-outline"
             onClick={handleViewMore}
           >
             查看更多
@@ -151,7 +181,7 @@ export default function GeneratedImageGallery({
       {/* 图片预览模态框 */}
       {previewImage && (
         <div className="fixed inset-0 bg-black/85 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-fade-in">
-          <div className="relative max-w-4xl max-h-[90vh] w-full">
+          <div className="relative max-w-4xl max-h-[90vh] w-full animate-scale-in">
             {/* 关闭按钮 */}
             <div className="absolute -top-12 right-0 flex justify-end">
               <Button 
@@ -187,7 +217,7 @@ export default function GeneratedImageGallery({
                   <Button 
                     variant="outline" 
                     size="sm" 
-                    className="flex-shrink-0 shadow-ghibli-sm hover:shadow-ghibli transition-all duration-300 hover:border-primary/50 hover:bg-primary/5 hover:translate-y-[-1px]"
+                    className="ghibli-btn-outline"
                     onClick={() => onDownloadImage(previewImage)}
                   >
                     <Download className="h-4 w-4 mr-1" />
@@ -198,7 +228,7 @@ export default function GeneratedImageGallery({
                     <Button 
                       variant="destructive" 
                       size="sm" 
-                      className="flex-shrink-0 shadow-ghibli-sm hover:shadow-ghibli transition-all duration-300 hover:translate-y-[-1px]"
+                      className="shadow-ghibli-sm hover:shadow-ghibli transition-all duration-300 hover:translate-y-[-1px]"
                       onClick={() => handleDeleteImage(previewImage)}
                     >
                       <Trash2 className="h-4 w-4 mr-1" />

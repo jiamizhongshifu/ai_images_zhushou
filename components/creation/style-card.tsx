@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState } from "react";
 import { Check } from "lucide-react";
 import { Image as ImageIcon } from "lucide-react";
 import { StyleConfig } from "@/app/config/styles";
@@ -13,29 +13,48 @@ export default function StyleCard({
   isActive: boolean; 
   onClick: () => void;
 }) {
+  const [imageLoaded, setImageLoaded] = useState(false);
+  const [imageError, setImageError] = useState(false);
+  
+  // 处理图片加载成功
+  const handleImageLoad = () => {
+    setImageLoaded(true);
+  };
+  
+  // 处理图片加载失败
+  const handleImageError = () => {
+    setImageError(true);
+    setImageLoaded(false);
+  };
+  
   return (
     <div 
-      className={`relative rounded-xl overflow-hidden cursor-pointer transition-all duration-300 shadow-ghibli-sm ${
+      className={`relative rounded-xl overflow-hidden cursor-pointer transition-all duration-300 ghibli-image-container ${
         isActive 
           ? "border-2 border-primary ring-2 ring-primary/20 transform scale-[1.02]" 
-          : "border border-border hover:border-primary/50 hover:shadow-ghibli hover:translate-y-[-2px]"
+          : ""
       }`}
       onClick={onClick}
     >
       {/* 图片预览 */}
       <div className="aspect-square bg-muted relative">
-        <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-b from-muted/30 to-muted/10 z-0">
+        {/* 未加载状态的背景 */}
+        <div className={`absolute inset-0 flex items-center justify-center bg-gradient-to-b from-muted/30 to-muted/10 z-0 transition-opacity duration-300 ${
+          imageLoaded ? 'opacity-0' : 'opacity-100'
+        }`}>
           <ImageIcon className="w-6 h-6 text-muted-foreground/30" />
         </div>
+        
+        {/* 风格图片 */}
         <img
           src={style.imageUrl || `/examples/placeholder.jpg`}
           alt={`${style.name}风格示例`}
-          className="w-full h-full object-cover relative z-10 transition-transform duration-500 hover:scale-[1.05]"
+          className={`w-full h-full object-cover relative z-10 transition-all duration-500 ${
+            imageLoaded ? 'opacity-100 hover:scale-[1.05]' : 'opacity-0'
+          }`}
           loading="lazy"
-          onError={(e) => {
-            e.currentTarget.style.opacity = "0.3";
-            e.currentTarget.style.zIndex = "0";
-          }}
+          onLoad={handleImageLoad}
+          onError={handleImageError}
         />
         
         {/* 选中指示 */}

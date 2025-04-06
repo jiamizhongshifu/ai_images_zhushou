@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState } from "react";
 import { Sparkles, AlertCircle, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -20,28 +20,60 @@ export default function PromptInput({
   canGenerate,
   hasLowCredits = false,
 }: PromptInputProps) {
+  const [focused, setFocused] = useState(false);
+  const [showPlaceholder, setShowPlaceholder] = useState(true);
+  
   // 处理提示文本变化
   const handlePromptChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    onPromptChange(e.target.value);
+    const value = e.target.value;
+    onPromptChange(value);
+    setShowPlaceholder(value.length === 0);
   };
-
+  
+  // 处理焦点事件
+  const handleFocus = () => {
+    setFocused(true);
+    if (prompt.length === 0) {
+      setShowPlaceholder(true);
+    }
+  };
+  
+  const handleBlur = () => {
+    setFocused(false);
+  };
+  
   return (
     <div className="space-y-3 w-full">
       <div 
-        className="flex flex-col bg-card/70 rounded-xl border border-border hover:border-primary/50 shadow-ghibli-sm hover:shadow-ghibli transition-all duration-300 overflow-hidden"
+        className={`flex flex-col bg-card/70 rounded-xl border transition-all duration-300 overflow-hidden shadow-ghibli-sm 
+                   ${focused ? 'border-primary/50 shadow-ghibli' : 'border-border hover:border-primary/30 hover:shadow-ghibli'}`}
       >
         {/* 文本输入区域 */}
-        <Textarea
-          placeholder="描述您想要的图像效果..."
-          value={prompt}
-          onChange={handlePromptChange}
-          className="min-h-[120px] resize-none border-0 bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0 p-4 text-base font-quicksand placeholder:text-muted-foreground/70"
-        />
+        <div className="relative">
+          <Textarea
+            value={prompt}
+            onChange={handlePromptChange}
+            onFocus={handleFocus}
+            onBlur={handleBlur}
+            className="min-h-[120px] resize-none border-0 bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0 p-4 text-base font-quicksand placeholder:text-transparent"
+            disabled={isGenerating}
+            placeholder=" "
+          />
+          
+          {/* 自定义占位符 - 仅在文本为空时显示 */}
+          {showPlaceholder && (
+            <div className={`absolute top-4 left-4 text-muted-foreground/70 pointer-events-none transition-opacity duration-300 ${
+              focused ? 'opacity-70' : 'opacity-100'
+            }`}>
+              描述您想要的图像效果...
+            </div>
+          )}
+        </div>
         
         {/* 操作按钮区 */}
-        <div className="flex justify-end items-center p-2 bg-muted/30 border-t border-border">
+        <div className="flex justify-end items-center p-2.5 bg-muted/30 border-t border-border">
           {hasLowCredits && (
-            <div className="text-amber-500 text-xs flex items-center mr-auto">
+            <div className="text-amber-500 text-xs flex items-center mr-auto animate-pulse-soft">
               <AlertCircle className="h-3.5 w-3.5 mr-1" />
               积分不足，生成后将扣除全部积分
             </div>
@@ -51,7 +83,7 @@ export default function PromptInput({
             onClick={onGenerate}
             disabled={!canGenerate || isGenerating}
             size="sm"
-            className="bg-gradient-to-br from-primary to-primary-600 hover:from-primary-600 hover:to-primary-700 text-primary-foreground shadow-ghibli-sm hover:shadow-ghibli hover:translate-y-[-1px] transition-all duration-300"
+            className="ghibli-btn-primary"
           >
             {isGenerating ? (
               <>
@@ -66,6 +98,17 @@ export default function PromptInput({
             )}
           </Button>
         </div>
+      </div>
+      
+      {/* 提示文本计数 */}
+      <div className="flex justify-end">
+        <span className={`text-xs transition-colors duration-300 ${
+          prompt.length > 300 ? 'text-amber-500' : 
+          prompt.length > 200 ? 'text-muted-foreground' : 
+          'text-muted-foreground/70'
+        }`}>
+          {prompt.length} / 500 字符
+        </span>
       </div>
     </div>
   );

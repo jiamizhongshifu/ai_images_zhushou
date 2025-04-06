@@ -16,6 +16,7 @@ export default function ImageUploader({
 }: ImageUploaderProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
+  const [imageLoading, setImageLoading] = useState(false);
   
   // 处理文件选择
   const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
@@ -47,6 +48,7 @@ export default function ImageUploader({
   
   // 处理图片文件
   const processImageFile = (file: File) => {
+    setImageLoading(true);
     const reader = new FileReader();
     
     reader.onload = (e) => {
@@ -59,8 +61,18 @@ export default function ImageUploader({
         if (onImageUploaded) {
           onImageUploaded(dataUrl, img.width, img.height);
         }
+        setImageLoading(false);
+      };
+      img.onerror = () => {
+        console.error("图片加载失败");
+        setImageLoading(false);
       };
       img.src = dataUrl;
+    };
+    
+    reader.onerror = () => {
+      console.error("文件读取失败");
+      setImageLoading(false);
     };
     
     reader.readAsDataURL(file);
@@ -86,7 +98,7 @@ export default function ImageUploader({
       </h3>
       
       {/* 上传区域 */}
-      <Card className={`bg-background/60 border border-border rounded-xl overflow-hidden shadow-ghibli-sm hover:shadow-ghibli transition-all duration-300 relative ${dragging ? 'ring-2 ring-primary/30' : ''}`}>
+      <Card className={`ghibli-card ${dragging ? 'ring-2 ring-primary/30' : ''}`}>
         <CardContent className="p-0">
           {!uploadedImage ? (
             // 拖放上传区域
@@ -99,14 +111,14 @@ export default function ImageUploader({
               onDragLeave={handleDragLeave}
               onDrop={handleDrop}
             >
-              <div className="bg-muted/50 rounded-full p-4 mb-4">
+              <div className="bg-muted/50 rounded-full p-4 mb-4 animate-pulse-soft">
                 <Upload className="h-6 w-6 text-primary/70" />
               </div>
               <p className="text-base font-medium mb-2 font-quicksand text-foreground/90">拖放图片到这里</p>
               <p className="text-sm text-muted-foreground mb-4">或选择一张图片上传</p>
               <Button
                 variant="outline"
-                className="shadow-ghibli-sm hover:shadow-ghibli transition-all duration-300 hover:translate-y-[-1px] hover:bg-primary/10 hover:text-primary border-border hover:border-primary/50 font-quicksand"
+                className="ghibli-btn-outline"
                 onClick={(e) => {
                   e.stopPropagation();
                   triggerFileInput();
@@ -126,13 +138,27 @@ export default function ImageUploader({
           ) : (
             // 已上传图片预览
             <div className="relative p-4">
-              <div className="w-full flex items-center justify-center">
-                <img
-                  src={uploadedImage}
-                  alt="上传的图片"
-                  className="max-w-full max-h-[500px] object-contain rounded-lg shadow-ghibli-sm"
-                  style={{ maxWidth: '100%', objectFit: 'scale-down' }}
-                />
+              <div className="flex items-center justify-center">
+                {/* 加载指示器 */}
+                {imageLoading && (
+                  <div className="absolute inset-0 flex items-center justify-center bg-background/50 backdrop-blur-sm z-10 animate-fade-in">
+                    <div className="flex flex-col items-center">
+                      <div className="h-8 w-8 rounded-full border-2 border-primary border-t-transparent animate-spin"></div>
+                      <p className="mt-2 text-sm text-foreground/80 font-quicksand">处理图片中...</p>
+                    </div>
+                  </div>
+                )}
+                
+                {/* 图片预览 */}
+                <div className="relative max-w-full animate-scale-in">
+                  <img
+                    src={uploadedImage}
+                    alt="上传的图片"
+                    className="max-w-full max-h-[500px] rounded-lg shadow-ghibli-sm object-contain"
+                    style={{ maxWidth: '100%', objectFit: 'scale-down' }}
+                    onLoad={() => setImageLoading(false)}
+                  />
+                </div>
               </div>
               
               {/* 删除按钮 */}

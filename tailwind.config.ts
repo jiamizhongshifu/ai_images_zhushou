@@ -19,8 +19,8 @@ const config = {
   	},
   	extend: {
       fontFamily: {
-        quicksand: ['var(--font-quicksand)', 'sans-serif'],
-        nunito: ['var(--font-nunito)', 'sans-serif'],
+        quicksand: ['var(--font-quicksand)', 'Quicksand', 'sans-serif'],
+        nunito: ['var(--font-nunito)', 'Nunito', 'sans-serif'],
       },
   		colors: {
   			border: 'hsl(var(--border))',
@@ -30,7 +30,9 @@ const config = {
   			foreground: 'hsl(var(--foreground))',
   			primary: {
   				DEFAULT: 'hsl(var(--primary))',
-  				foreground: 'hsl(var(--primary-foreground))'
+  				foreground: 'hsl(var(--primary-foreground))',
+          600: 'hsl(var(--primary-600))',
+          700: 'hsl(var(--primary-700))',
   			},
   			secondary: {
   				DEFAULT: 'hsl(var(--secondary))',
@@ -68,12 +70,16 @@ const config = {
   		borderRadius: {
   			lg: 'var(--radius)',
   			md: 'calc(var(--radius) - 2px)',
-  			sm: 'calc(var(--radius) - 4px)'
+  			sm: 'calc(var(--radius) - 4px)',
+        xl: 'calc(var(--radius) + 4px)',
+        '2xl': 'calc(var(--radius) + 8px)',
   		},
       boxShadow: {
         'ghibli-sm': '0 2px 8px rgba(0, 0, 0, 0.05), 0 1px 2px rgba(0, 0, 0, 0.1)',
         'ghibli': '0 4px 12px rgba(0, 0, 0, 0.08), 0 2px 4px rgba(0, 0, 0, 0.12)',
         'ghibli-lg': '0 8px 20px rgba(0, 0, 0, 0.1), 0 3px 6px rgba(0, 0, 0, 0.15)',
+        'ghibli-inner': 'inset 0 2px 4px rgba(0, 0, 0, 0.06)',
+        'ghibli-focus': '0 0 0 2px rgba(102, 191, 191, 0.25)',
       },
   		keyframes: {
   			'accordion-down': {
@@ -108,6 +114,18 @@ const config = {
           '0%, 100%': { opacity: '1' },
           '50%': { opacity: '0.8' },
         },
+        'fade-in': {
+          '0%': { opacity: '0' },
+          '100%': { opacity: '1' },
+        },
+        'scale-in': {
+          '0%': { transform: 'scale(0.9)', opacity: '0' },
+          '100%': { transform: 'scale(1)', opacity: '1' },
+        },
+        'float-in': {
+          '0%': { transform: 'translateY(10px)', opacity: '0' },
+          '100%': { transform: 'translateY(0)', opacity: '1' },
+        },
   		},
   		animation: {
   			'accordion-down': 'accordion-down 0.2s ease-out',
@@ -115,7 +133,30 @@ const config = {
   			'shimmer': 'shimmer 2s infinite linear',
         'float': 'float 4s ease-in-out infinite',
         'pulse-soft': 'pulse-soft 3s ease-in-out infinite',
-  		}
+        'fade-in': 'fade-in 0.5s ease-out forwards',
+        'scale-in': 'scale-in 0.3s ease-out forwards',
+        'float-in': 'float-in 0.4s ease-out forwards',
+  		},
+      backgroundImage: {
+        'gradient-radial': 'radial-gradient(var(--tw-gradient-stops))',
+        'gradient-conic': 'conic-gradient(from 180deg at 50% 50%, var(--tw-gradient-stops))',
+        'gradient-diagonal': 'linear-gradient(to bottom right, var(--tw-gradient-stops))',
+        'gradient-tl-br': 'linear-gradient(to bottom right, var(--tw-gradient-stops))',
+        'gradient-bl-tr': 'linear-gradient(to top right, var(--tw-gradient-stops))',
+        'texture-dots': 'url("/textures/dots.png")',
+        'texture-paper': 'url("/textures/paper.png")',
+      },
+      transitionProperty: {
+        'height': 'height',
+        'spacing': 'margin, padding',
+        'width': 'width',
+        'backdrop': 'backdrop-filter',
+      },
+      transitionDuration: {
+        '250': '250ms',
+        '350': '350ms',
+        '400': '400ms',
+      },
   	}
   },
   plugins: [
@@ -144,6 +185,33 @@ const config = {
         },
         '.text-shadow-sm': {
           textShadow: '0 1px 2px rgba(0, 0, 0, 0.1)',
+        },
+        '.text-gradient': {
+          background: 'linear-gradient(to right, hsl(var(--primary)), hsl(var(--primary-700)))',
+          WebkitBackgroundClip: 'text',
+          WebkitTextFillColor: 'transparent',
+        },
+        '.backdrop-blur-xs': {
+          backdropFilter: 'blur(2px)',
+        },
+        '.backdrop-blur-sm': {
+          backdropFilter: 'blur(4px)',
+        },
+        '.backdrop-blur': {
+          backdropFilter: 'blur(8px)',
+        },
+        '.backdrop-blur-md': {
+          backdropFilter: 'blur(12px)',
+        },
+        '.backdrop-blur-lg': {
+          backdropFilter: 'blur(16px)',
+        },
+        '.hide-scrollbar': {
+          scrollbarWidth: 'none',
+          '-ms-overflow-style': 'none',
+        },
+        '.hide-scrollbar::-webkit-scrollbar': {
+          display: 'none',
         },
       })
     })

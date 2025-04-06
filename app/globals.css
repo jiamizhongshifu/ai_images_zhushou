@@ -20,6 +20,10 @@
     --primary: 180 48% 57%;    /* 柔和的蓝绿色 #66BFBF */
     --primary-foreground: 0 0% 100%;
     
+    /* 添加主色调变体 */
+    --primary-600: 180 48% 47%;  /* 更深的主色调 */
+    --primary-700: 180 48% 37%;  /* 最深的主色调 */
+    
     --secondary: 0 0% 96%;
     --secondary-foreground: 180 48% 27%; /* 深蓝绿色 #207178 */
     
@@ -62,6 +66,10 @@
     
     --primary: 180 48% 42%;     /* 暗色模式下稍深的蓝绿色 #4A9393 */
     --primary-foreground: 0 0% 100%;
+    
+    /* 添加主色调变体 */
+    --primary-600: 180 48% 35%;  /* 更深的主色调 */
+    --primary-700: 180 48% 25%;  /* 最深的主色调 */
     
     --secondary: 210 20% 20%;
     --secondary-foreground: 180 48% 72%; /* 亮蓝绿色 #A0DFDF */
@@ -134,4 +142,112 @@
   .transition-all {
     transition-duration: 0.3s;
   }
+}
+
+/* Ghiblit.ai 专用组件样式 */
+@layer components {
+  /* 卡片样式 */
+  .ghibli-card {
+    @apply bg-card/70 rounded-xl border border-border shadow-ghibli-sm 
+           hover:shadow-ghibli transition-all duration-300;
+  }
+  
+  /* 按钮样式 */
+  .ghibli-btn {
+    @apply transition-all duration-300 shadow-ghibli-sm hover:shadow-ghibli 
+           hover:translate-y-[-1px] font-quicksand;
+  }
+  
+  .ghibli-btn-primary {
+    @apply ghibli-btn bg-gradient-to-br from-primary to-primary-600 
+           hover:from-primary-600 hover:to-primary-700 text-primary-foreground;
+  }
+  
+  .ghibli-btn-outline {
+    @apply ghibli-btn border border-primary/30 hover:bg-primary/10 
+           hover:text-primary hover:border-primary/50;
+  }
+  
+  /* 输入框样式 */
+  .ghibli-input {
+    @apply bg-card/60 border border-border rounded-lg shadow-ghibli-sm
+           focus-within:border-primary/50 focus-within:shadow-ghibli
+           transition-all duration-300;
+  }
+  
+  /* 标题样式 */
+  .ghibli-title {
+    @apply font-quicksand bg-gradient-to-r from-primary to-primary-700 
+           bg-clip-text text-transparent;
+  }
+  
+  /* 图片容器样式 */
+  .ghibli-image-container {
+    @apply border border-border rounded-xl overflow-hidden shadow-ghibli-sm
+           hover:shadow-ghibli transition-all duration-300 hover:border-primary/30
+           hover:translate-y-[-2px];
+  }
+}
+
+/* 自定义动画 */
+@layer utilities {
+  /* 淡入动画 */
+  .animate-fade-in {
+    animation: fadeIn 0.5s ease-out forwards;
+  }
+  
+  /* 缩放入场动画 */
+  .animate-scale-in {
+    animation: scaleIn 0.3s ease-out forwards;
+  }
+  
+  /* 上浮入场动画 */
+  .animate-float-in {
+    animation: floatIn 0.4s ease-out forwards;
+  }
+  
+  /* 持续轻微上下浮动动画 */
+  .animate-float {
+    animation: float 4s ease-in-out infinite;
+  }
+  
+  /* 轻柔的脉冲动画 */
+  .animate-pulse-soft {
+    animation: pulseSoft 3s ease-in-out infinite;
+  }
+  
+  /* 加载旋转动画 */
+  .animate-spin-slow {
+    animation: spin 3s linear infinite;
+  }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes scaleIn {
+  from { transform: scale(0.9); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+
+@keyframes floatIn {
+  from { transform: translateY(10px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-5px); }
+}
+
+@keyframes pulseSoft {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.8; }
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
