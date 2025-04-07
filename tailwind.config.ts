@@ -126,6 +126,11 @@ const config = {
           '0%': { transform: 'translateY(10px)', opacity: '0' },
           '100%': { transform: 'translateY(0)', opacity: '1' },
         },
+        'grid': {
+          '0%': { transform: 'translateZ(0px)' },
+          '50%': { transform: 'translateZ(80px)' },
+          '100%': { transform: 'translateZ(0px)' }
+        },
   		},
   		animation: {
   			'accordion-down': 'accordion-down 0.2s ease-out',
@@ -136,6 +141,7 @@ const config = {
         'fade-in': 'fade-in 0.5s ease-out forwards',
         'scale-in': 'scale-in 0.3s ease-out forwards',
         'float-in': 'float-in 0.4s ease-out forwards',
+        'grid': 'grid 15s cubic-bezier(0.075, 0.82, 0.165, 1) infinite',
   		},
       backgroundImage: {
         'gradient-radial': 'radial-gradient(var(--tw-gradient-stops))',

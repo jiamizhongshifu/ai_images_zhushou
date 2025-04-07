@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import Image from "next/image";
 import Link from "next/link";
 import { useState } from "react";
+import { RetroGrid } from "@/components/ui/retro-grid";
 
 function Hero() {
   // 使用更简单的状态管理
@@ -31,7 +32,8 @@ function Hero() {
   };
 
   return (
-    <div className="w-full py-20 lg:py-40">
+    <div className="w-full pt-4 pb-12 lg:pt-8 lg:pb-24 relative">
+      <RetroGrid className="opacity-50" />
       <div className="container mx-auto">
         <div className="grid grid-cols-1 gap-8 items-center md:grid-cols-2">
           <div className="flex gap-4 flex-col">
@@ -61,7 +63,7 @@ function Hero() {
               </Link>
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-8">
+          <div className="grid grid-cols-2 gap-8 relative">
             {/* 第一个图片 */}
             <div className="bg-gradient-to-br from-primary/20 to-primary/5 rounded-md aspect-square relative overflow-hidden">
               <div className="absolute inset-0 flex items-center justify-center">
@@ -120,6 +122,18 @@ function Hero() {
                   />
                 </div>
               </div>
+            </div>
+            
+            {/* 添加卡通兔子装饰 */}
+            <div className="absolute -bottom-16 -right-12 md:-bottom-24 md:-right-16 lg:-bottom-32 lg:-right-24 w-72 h-72 md:w-96 md:h-96 lg:w-[30rem] lg:h-[30rem] z-10 animate-float">
+              <Image
+                src="/images/cute-rabbit.png"
+                alt="卡通兔子装饰"
+                width={480}
+                height={480}
+                className="w-full h-full object-contain drop-shadow-lg"
+                style={{ border: 'none', backgroundColor: 'transparent' }}
+              />
             </div>
           </div>
         </div>

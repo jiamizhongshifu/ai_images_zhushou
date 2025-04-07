@@ -251,3 +251,16 @@
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
 }
+
+@keyframes grid-zoom {
+  0% {
+    transform: translateZ(0) translateY(0);
+  }
+  100% {
+    transform: translateZ(120px) translateY(80px);
+  }
+}
+
+.retro-grid-animation {
+  animation: grid-zoom 3s cubic-bezier(0.1, 0, 0.9, 1) infinite alternate;
+}
