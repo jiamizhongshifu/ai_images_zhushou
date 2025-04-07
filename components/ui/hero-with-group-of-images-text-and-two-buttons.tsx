@@ -93,7 +93,7 @@ function Hero() {
               <div className="w-full h-full">
                 <div className="relative w-full h-full">
                   <Image 
-                    src="/images/feat_02.jpeg" 
+                    src="/images/feat_06.jpg" 
                     alt="AI生成的人物肖像"
                     fill
                     className="object-cover w-full h-full"
