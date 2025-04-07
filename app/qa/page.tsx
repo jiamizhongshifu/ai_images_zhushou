@@ -78,7 +78,7 @@ export default function QAPage() {
               <p>
                 如果您在使用过程中遇到任何问题，可以通过以下方式获取帮助：
                 <br />1. 查看本页面的常见问题解答。
-                <br />2. 发送邮件至 support@imgtootor.com 联系客服团队。
+                <br />2. 发送邮件至 121185809@qq.com 联系客服团队。
                 <br />3. 在工作日 9:00-18:00 通过网站右下角的聊天窗口获取实时支持。
               </p>
             </CardContent>
