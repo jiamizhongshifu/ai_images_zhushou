@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@/utils/supabase/client";
 import { authService } from "@/utils/auth-service";
 import { ResponsiveContainer } from '@/components/ui/responsive-container';
+import { enhanceAuthResilience } from '@/utils/auth-resilience';
 
 export default function ProtectedLayout({
   children,
@@ -16,6 +17,12 @@ export default function ProtectedLayout({
   // 添加加载状态
   const [loading, setLoading] = useState(true); // 默认显示加载状态
   const [showAccessButton, setShowAccessButton] = useState(false);
+
+  // 启用认证弹性增强
+  useEffect(() => {
+    // 启用认证弹性增强（提供离线认证模式支持）
+    enhanceAuthResilience();
+  }, []);
 
   // 改进会话验证逻辑，使用多级恢复策略
   const validateSession = async () => {

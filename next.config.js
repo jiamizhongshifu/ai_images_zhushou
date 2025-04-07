@@ -15,6 +15,16 @@ const nextConfig = {
       allowedOrigins: ['localhost:3000', 'localhost:3001'],
       bodySizeLimit: '2mb'
     },
+    proxyTimeout: 60000, // 增加代理超时时间到60秒
+  },
+  // 添加Supabase认证代理
+  async rewrites() {
+    return [
+      {
+        source: '/auth/:path*',
+        destination: `${process.env.NEXT_PUBLIC_SUPABASE_URL}/auth/:path*`,
+      }
+    ]
   },
   // 配置允许的图片域名
   images: {

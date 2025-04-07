@@ -60,6 +60,23 @@ export const updateSession = async (request: NextRequest) => {
       },
     });
 
+    // 检查是否有认证连接问题的标记
+    const authConnectionIssue = request.cookies.get('auth_connection_issue');
+    if (authConnectionIssue && authConnectionIssue.value === 'true') {
+      // 如果有连接问题并且是保护路由，应用离线模式
+      if (request.nextUrl.pathname.startsWith('/protected')) {
+        logger.warn('检测到认证连接问题，允许以离线模式访问受保护页面');
+        // 确保有一个较长的临时访问token
+        response.cookies.set('force_login', 'true', {
+          path: '/',
+          maxAge: 60 * 60, // 1小时有效期
+          httpOnly: true,
+          sameSite: 'lax'
+        });
+        return response;
+      }
+    }
+
     // 检查是否为POST登录请求，如果是，不在中间件中干预
     if (request.nextUrl.pathname === '/sign-in' && request.method === 'POST') {
       logger.debug('检测到登录POST请求，跳过中间件重定向检查');
@@ -495,11 +512,48 @@ export const updateSession = async (request: NextRequest) => {
 
     return response;
   } catch (e) {
-    logger.error(`Supabase客户端创建失败: ${e instanceof Error ? e.message : String(e)}`);
-    return NextResponse.next({
+    // 记录详细错误信息
+    const errorMessage = e instanceof Error ? e.message : String(e);
+    const errorStack = e instanceof Error && e.stack ? e.stack : 'No stack trace';
+    logger.error(`Supabase客户端创建失败: ${errorMessage}`);
+    logger.debug(`错误详情: ${errorStack}`);
+    
+    // 检查是否为连接超时错误
+    const isConnectTimeoutError = 
+      errorMessage.includes('ConnectTimeoutError') || 
+      errorMessage.includes('connect timeout') ||
+      errorMessage.includes('fetch failed');
+      
+    // 创建响应
+    const response = NextResponse.next({
       request: {
         headers: request.headers,
       },
     });
+    
+    if (isConnectTimeoutError) {
+      logger.warn('检测到认证服务连接超时，设置认证连接问题标记');
+      
+      // 设置认证连接问题标记
+      response.cookies.set('auth_connection_issue', 'true', {
+        path: '/',
+        maxAge: 60 * 30, // 30分钟有效
+        httpOnly: true,
+        sameSite: 'lax'
+      });
+      
+      // 如果是受保护路由，设置临时访问令牌
+      if (request.nextUrl.pathname.startsWith('/protected')) {
+        logger.info('应用离线模式，允许访问受保护页面');
+        response.cookies.set('force_login', 'true', {
+          path: '/',
+          maxAge: 60 * 60, // 1小时有效
+          httpOnly: true,
+          sameSite: 'lax'
+        });
+      }
+    }
+    
+    return response;
   }
 };
