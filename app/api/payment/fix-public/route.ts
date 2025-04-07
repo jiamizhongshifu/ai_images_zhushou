@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createTransactionalAdminClient } from '@/utils/supabase/admin';
 import { handleError, ErrorLevel } from '@/utils/error-handler';
 import { withRateLimit } from '@/utils/rate-limiter';
+import { verifyPaymentStatus } from '@/utils/payment-validator';
 
 /**
  * 公开的订单修复接口，支付完成后页面自动调用
@@ -65,7 +66,25 @@ const handleFixPublic = async (request: NextRequest) => {
           return { message: '订单已处理', order };
         }
         
-        // 2. 更新订单状态为成功
+        // 2. 验证支付状态 - 新增验证步骤
+        const paymentVerified = await verifyPaymentStatus(orderNo);
+        
+        if (!paymentVerified) {
+          // 记录处理历史，但不标记订单为成功
+          await logPaymentProcessHistory(client, orderNo, 'fix-public', 'skipped', {
+            reason: '支付验证未通过',
+            time: new Date().toISOString()
+          });
+          
+          // 返回订单状态，但不修改
+          return { 
+            message: '订单验证中，请等待支付完成', 
+            order,
+            status: 'pending' 
+          };
+        }
+        
+        // 3. 更新订单状态为成功
         const { error: updateError } = await client
           .from('ai_images_creator_payments')
           .update({
@@ -73,7 +92,8 @@ const handleFixPublic = async (request: NextRequest) => {
             paid_at: new Date().toISOString(),
             callback_data: {
               method: 'fix-public',
-              time: new Date().toISOString()
+              time: new Date().toISOString(),
+              verified: true
             },
             updated_at: new Date().toISOString()
           })
@@ -83,7 +103,7 @@ const handleFixPublic = async (request: NextRequest) => {
           throw new Error(`更新订单状态失败: ${updateError.message}`);
         }
         
-        // 3. 检查是否已经增加过点数
+        // 4. 检查是否已经增加过点数
         const { data: creditLogs } = await client
           .from('ai_images_creator_credit_logs')
           .select('*')
@@ -99,7 +119,7 @@ const handleFixPublic = async (request: NextRequest) => {
           };
         }
         
-        // 4. 获取用户当前点数
+        // 5. 获取用户当前点数
         const { data: credits, error: creditsError } = await client
           .from('ai_images_creator_credits')
           .select('credits')
@@ -114,7 +134,7 @@ const handleFixPublic = async (request: NextRequest) => {
         const addCredits = order.credits || 0;
         const newCredits = oldCredits + addCredits;
         
-        // 5. 更新用户点数
+        // 6. 更新用户点数
         const { error: updateCreditsError } = await client
           .from('ai_images_creator_credits')
           .update({
@@ -127,23 +147,31 @@ const handleFixPublic = async (request: NextRequest) => {
           throw new Error(`更新用户点数失败: ${updateCreditsError.message}`);
         }
         
-        // 6. 记录点数变更日志
+        // 7. 记录点数变更日志
         const { error: logError } = await client
           .from('ai_images_creator_credit_logs')
           .insert({
             user_id: order.user_id,
-            operation_type: 'recharge',
-            credit_change: addCredits,
-            credits_before: oldCredits,
-            credits_after: newCredits,
             order_no: order.order_no,
-            note: `支付成功，增加${addCredits}点`,
-            created_at: new Date().toISOString()
+            operation_type: 'recharge',
+            old_value: oldCredits,
+            change_value: addCredits,
+            new_value: newCredits,
+            created_at: new Date().toISOString(),
+            note: `支付成功，增加${addCredits}点`
           });
         
         if (logError) {
           throw new Error(`记录点数变更日志失败: ${logError.message}`);
         }
+        
+        // 8. 记录处理历史
+        await logPaymentProcessHistory(client, orderNo, 'fix-public', 'success', {
+          oldCredits,
+          addCredits,
+          newCredits,
+          time: new Date().toISOString()
+        });
         
         return {
           message: '订单已修复，状态已更新为成功，点数已增加',
@@ -232,6 +260,27 @@ async function logPaymentCheck(client: any, orderNo: string, userId?: string, pr
   } catch (error) {
     // 只记录错误，不阻止主流程
     console.warn('记录支付操作日志失败:', error);
+    return false;
+  }
+}
+
+/**
+ * 记录支付处理历史
+ */
+async function logPaymentProcessHistory(client: any, orderNo: string, processType: string, status: string, details: any = {}) {
+  try {
+    await client.from('ai_images_creator_payment_process_history').insert({
+      order_no: orderNo,
+      process_type: processType,
+      status: status,
+      details: details,
+      created_at: new Date().toISOString()
+    });
+    
+    return true;
+  } catch (error) {
+    // 只记录错误，不阻止主流程
+    console.warn('记录支付处理历史失败:', error);
     return false;
   }
 } 

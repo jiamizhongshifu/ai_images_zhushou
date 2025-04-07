@@ -1,6 +1,6 @@
 "use client";
 
-import { MoveRight, PhoneCall, ImageIcon } from "lucide-react";
+import { MoveRight, ImageIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import Image from "next/image";
@@ -51,11 +51,6 @@ function Hero() {
               </p>
             </div>
             <div className="flex flex-row gap-4 relative z-20">
-              <Link href="/support">
-                <Button size="lg" className="gap-4 !opacity-100 !bg-background border-2 font-medium" variant="outline">
-                  联系我们 <PhoneCall className="w-4 h-4" />
-                </Button>
-              </Link>
               <Link href="/sign-in">
                 <Button size="lg" className="gap-4 !opacity-100 !bg-primary border-0 font-medium">
                   立即体验 <MoveRight className="w-4 h-4" />

@@ -25,12 +25,44 @@ export interface CreditPackage {
   name: string;
   credits: number;
   price: number;
+  baseCredits?: number;   // 基础点数
+  bonusCredits?: number;  // 赠送点数
+  recommended?: boolean;  // 是否推荐
+  bestValue?: boolean;    // 是否最划算
+  tag?: string;           // 套餐标签
 }
 
 // 预定义的点数套餐
 export const CREDIT_PACKAGES: CreditPackage[] = [
-  { id: 'basic', name: '基础套餐', credits: 1, price: 1 },
-  { id: 'standard', name: '标准套餐', credits: 5, price: 5 }
+  { 
+    id: 'basic', 
+    name: '普通套餐', 
+    credits: 35, 
+    baseCredits: 30,
+    bonusCredits: 5,
+    price: 30,
+    tag: '轻松起步'
+  },
+  { 
+    id: 'standard', 
+    name: '高级套餐', 
+    credits: 120, 
+    baseCredits: 98,
+    bonusCredits: 22,
+    price: 98,
+    recommended: true,
+    tag: '超值之选'
+  },
+  { 
+    id: 'premium', 
+    name: '至尊套餐', 
+    credits: 260, 
+    baseCredits: 198,
+    bonusCredits: 62,
+    price: 198,
+    bestValue: true,
+    tag: '最划算'
+  }
 ];
 
 /**
