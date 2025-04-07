@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/utils/supabase/client';
+import { createClient as createServerClient } from '@/utils/supabase/server';
 import { createAdminClient } from '@/utils/supabase/admin';
 
 /**
@@ -9,7 +9,8 @@ export enum AuthType {
   USER = 'user',       // 普通用户认证
   ADMIN = 'admin',     // 管理员认证
   API_KEY = 'api_key', // API密钥认证
-  NONE = 'none'        // 无需认证
+  NONE = 'none',       // 无需认证
+  OPTIONAL = 'optional' // 可选认证，有会话则使用，无会话也通过
 }
 
 /**
@@ -26,11 +27,12 @@ type AuthResult = {
 /**
  * API身份验证中间件
  * 
- * 支持四种认证模式:
+ * 支持五种认证模式:
  * - USER: 要求普通用户登录
  * - ADMIN: 要求管理员权限
  * - API_KEY: 使用API密钥验证
  * - NONE: 无需认证
+ * - OPTIONAL: 可选认证，有会话则使用，无会话也通过
  * 
  * @param request NextRequest请求对象
  * @param authType 认证类型
@@ -73,11 +75,18 @@ export async function authenticate(
   // 获取会话信息
   try {
     // 用户或管理员认证
-    const supabase = createClient();
+    const supabase = await createServerClient();
     const { data: { session }, error: sessionError } = await supabase.auth.getSession();
     
     if (sessionError) {
       console.error('获取会话信息失败:', sessionError);
+      
+      // 如果是可选认证，则尽管失败也通过
+      if (authType === AuthType.OPTIONAL) {
+        console.warn('可选认证模式: 会话获取失败但继续处理');
+        return { authenticated: true };
+      }
+      
       return {
         authenticated: false,
         error: '获取会话信息失败',
@@ -89,6 +98,12 @@ export async function authenticate(
     }
     
     if (!session) {
+      // 如果是可选认证，则尽管没有会话也通过
+      if (authType === AuthType.OPTIONAL) {
+        console.warn('可选认证模式: 无会话但继续处理');
+        return { authenticated: true };
+      }
+      
       return { 
         authenticated: false,
         error: '未登录',
@@ -142,6 +157,13 @@ export async function authenticate(
     return { authenticated: true, user: session.user };
   } catch (error) {
     console.error('认证过程发生未知错误:', error);
+    
+    // 如果是可选认证，则尽管出错也通过
+    if (authType === AuthType.OPTIONAL) {
+      console.warn('可选认证模式: 发生错误但继续处理');
+      return { authenticated: true };
+    }
+    
     return {
       authenticated: false,
       error: '认证过程发生错误',

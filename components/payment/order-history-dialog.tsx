@@ -1,9 +1,9 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Loader2, AlertCircle, CheckCircle, XCircle, Clock, RefreshCw } from "lucide-react";
 import { Badge } from "../ui/badge";
-import { formatRelative } from '@/utils/date-format';
+import { formatRelative } from '../../utils/date-format';
 
 // 订单类型定义
 interface Order {
@@ -24,10 +24,19 @@ interface OrderHistoryDialogProps {
   onClose: () => void;
   orders: Order[];
   loading: boolean;
+  onOrderUpdated?: () => void; // 新增: 订单更新后的回调
 }
 
-export default function OrderHistoryDialog({ isOpen, onClose, orders, loading }: OrderHistoryDialogProps) {
+export default function OrderHistoryDialog({ isOpen, onClose, orders: initialOrders, loading, onOrderUpdated }: OrderHistoryDialogProps) {
   const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+  const [orders, setOrders] = useState<Order[]>(initialOrders);
+  const [checkingOrderId, setCheckingOrderId] = useState<string | null>(null);
+  
+  // 当外部传入的orders变化时更新内部状态
+  useEffect(() => {
+    setOrders(initialOrders);
+  }, [initialOrders]);
 
   // 格式化日期
   const formatDate = (dateString: string) => {
@@ -67,21 +76,76 @@ export default function OrderHistoryDialog({ isOpen, onClose, orders, loading }:
     }
   };
 
+  // 清除消息
+  const clearMessages = () => {
+    setError(null);
+    setSuccess(null);
+  };
+
   // 检查订单状态
   const checkOrderStatus = async (orderNo: string) => {
     try {
-      setError(null);
+      clearMessages();
+      
+      // 查找对应的订单
+      const orderToCheck = orders.find(order => order.orderNo === orderNo);
+      if (!orderToCheck) {
+        throw new Error('未找到订单信息');
+      }
+      
+      // 设置正在检查的订单ID
+      setCheckingOrderId(orderToCheck.id);
       
       const response = await fetch(`/api/payment/check?order_no=${orderNo}`);
+      
       if (!response.ok) {
+        if (response.status === 401) {
+          // 401错误特殊处理，可能是会话过期
+          console.error('会话可能已过期，需要重新登录');
+          setError('会话可能已过期，请刷新页面或重新登录后再试');
+          
+          // 可以考虑自动刷新页面或重定向到登录页
+          setTimeout(() => {
+            window.location.reload();
+          }, 3000);
+          return;
+        }
+        
         throw new Error(`检查订单失败: ${response.status}`);
       }
       
       const data = await response.json();
       
       if (data.success) {
-        // 刷新整个订单列表
-        window.location.reload();
+        // 使用局部状态更新
+        const updatedOrder = data.order;
+        
+        // 检查API返回的订单状态是否有变化
+        if (updatedOrder.status !== orderToCheck.status) {
+          // 本地更新订单状态
+          const updatedOrders = orders.map(order => 
+            order.orderNo === orderNo 
+              ? {
+                  ...order,
+                  status: updatedOrder.status,
+                  updatedAt: updatedOrder.updated_at || order.updatedAt
+                }
+              : order
+          );
+          
+          setOrders(updatedOrders);
+          
+          // 显示状态变更消息
+          setSuccess(`订单 ${orderNo.substring(0, 8)}... 状态已变更为 ${updatedOrder.status === 'success' ? '支付成功' : updatedOrder.status}`);
+          
+          // 如果状态变为成功，通知父组件刷新点数
+          if (updatedOrder.status === 'success' && onOrderUpdated) {
+            onOrderUpdated();
+          }
+        } else {
+          // 订单状态未变
+          setSuccess(`订单 ${orderNo.substring(0, 8)}... 状态未变化`);
+        }
       } else {
         throw new Error(data.error || '订单状态未变化');
       }
@@ -89,6 +153,9 @@ export default function OrderHistoryDialog({ isOpen, onClose, orders, loading }:
       console.error('检查订单状态出错:', error);
       const errorMessage = error instanceof Error ? error.message : String(error);
       setError(`检查订单失败: ${errorMessage}`);
+    } finally {
+      // 清除正在检查的状态
+      setCheckingOrderId(null);
     }
   };
 
@@ -107,6 +174,15 @@ export default function OrderHistoryDialog({ isOpen, onClose, orders, loading }:
             <div className="flex items-center text-red-500 text-sm p-2 bg-red-50 rounded-md">
               <AlertCircle className="h-4 w-4 mr-2" />
               <span>{error}</span>
+            </div>
+          </div>
+        )}
+        
+        {success && (
+          <div className="my-2">
+            <div className="flex items-center text-green-500 text-sm p-2 bg-green-50 rounded-md">
+              <CheckCircle className="h-4 w-4 mr-2" />
+              <span>{success}</span>
             </div>
           </div>
         )}
@@ -163,8 +239,13 @@ export default function OrderHistoryDialog({ isOpen, onClose, orders, loading }:
                             size="icon" 
                             className="h-6 w-6"
                             onClick={() => checkOrderStatus(order.orderNo)}
+                            disabled={checkingOrderId === order.id}
                           >
-                            <RefreshCw className="h-3 w-3" />
+                            {checkingOrderId === order.id ? (
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                            ) : (
+                              <RefreshCw className="h-3 w-3" />
+                            )}
                           </Button>
                         )}
                       </div>

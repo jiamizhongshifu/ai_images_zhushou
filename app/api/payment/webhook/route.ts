@@ -282,8 +282,6 @@ async function processWechatPaymentSuccess(
           status: 'success',
           paid_at: new Date().toISOString(),
           transaction_id: transactionId,
-          trade_state: tradeState,
-          trade_state_desc: tradeStateDesc,
           payment_response: wechatPayInfo,
           updated_at: new Date().toISOString()
         })
@@ -469,8 +467,6 @@ async function updateOrderStatusFailed(
         status: 'failed',
         paid_at: null,
         transaction_id: transactionId,
-        trade_state: tradeState,
-        trade_state_desc: tradeStateDesc,
         payment_response: wechatPayInfo,
         updated_at: new Date().toISOString()
       })
@@ -618,6 +614,15 @@ async function processPaymentCallback(params: Record<string, any>) {
             })
             .eq('order_no', orderNo);
             
+          // 更新订单标记为已更新点数
+          await client
+            .from('ai_images_creator_payments')
+            .update({
+              credits_updated: true,
+              updated_at: new Date().toISOString()
+            })
+            .eq('order_no', orderNo);
+            
           return new Response("success", { status: 200 });
         }
         
@@ -671,7 +676,7 @@ async function processPaymentCallback(params: Record<string, any>) {
             process_id: processLog?.id || `auto_${Date.now()}`
           })
           .eq('order_no', orderNo)
-          .eq('status', 'processing'); // 确保只更新我们刚刚锁定的订单
+          .eq('status', 'processing');
           
         if (updateError) {
           console.error("更新订单状态失败:", updateError);
@@ -784,6 +789,15 @@ async function processPaymentCallback(params: Record<string, any>) {
         // 更新回调日志状态
         await updateCallbackStatus(orderNo, 'success', isNewCreditRecord ? 
           '新建用户点数记录并增加点数' : `更新用户点数: ${currentCredits} -> ${currentCredits + orderData.credits}`);
+        
+        // 更新订单标记为已更新点数
+        await client
+          .from('ai_images_creator_payments')
+          .update({
+            credits_updated: true,
+            updated_at: new Date().toISOString()
+          })
+          .eq('order_no', orderNo);
         
         console.log("支付处理成功:", {
           orderNo,

@@ -168,6 +168,19 @@ export async function GET(request: NextRequest) {
               throw new Error(`创建点数变更日志失败: ${logInsertError.message}`);
             }
             
+            // 更新订单标记
+            const { error: updateMarkError } = await client
+              .from('ai_images_creator_payments')
+              .update({
+                credits_updated: true,
+                updated_at: new Date().toISOString()
+              })
+              .eq('order_no', order.order_no);
+              
+            if (updateMarkError) {
+              throw new Error(`更新订单标记失败: ${updateMarkError.message}`);
+            }
+            
             // 更新订单状态为成功
             const { error: updateError } = await client
               .from('ai_images_creator_payments')
@@ -175,8 +188,6 @@ export async function GET(request: NextRequest) {
                 status: 'success',
                 paid_at: new Date().toISOString(),
                 transaction_id: `cron_check_${Date.now()}`,
-                trade_state: 'SUCCESS',
-                trade_state_desc: '定时任务主动查询',
                 updated_at: new Date().toISOString()
               })
               .eq('order_no', order.order_no);

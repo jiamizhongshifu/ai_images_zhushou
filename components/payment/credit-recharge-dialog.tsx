@@ -713,6 +713,13 @@ export default function CreditRechargeDialog({ isOpen, onClose, onSuccess }: Cre
         onClose={() => setShowOrderHistory(false)} 
         orders={orderHistory}
         loading={loadingHistory}
+        onOrderUpdated={() => {
+          // 刷新点数信息
+          ensureCreditsRefreshed();
+          if (onSuccess) {
+            onSuccess();
+          }
+        }}
       />
     </>
   );

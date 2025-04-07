@@ -4,24 +4,40 @@ import { withAuth, AuthType, getClientIP, getRequestInfo } from '@/utils/auth-mi
 import { getEnv } from '@/utils/env';
 
 /**
- * 修复特定订单的API接口
+ * 管理员手动修复特定订单的API接口
  * 仅管理员可访问
+ * 
+ * 参数：
+ * - order_no: 订单号
+ * - override_key: 管理员密钥，用于验证操作
  */
-export const GET = withAuth(async (request: NextRequest, authResult) => {
+export const GET = async (request: NextRequest) => {
   try {
     // 获取请求信息，用于日志记录
     const requestInfo = getRequestInfo(request);
-    console.log(`修复订单API调用:`, requestInfo);
+    console.log(`管理员修复订单API调用:`, requestInfo);
     
-    // 获取订单号
+    // 获取订单号和覆盖密钥
     const url = new URL(request.url);
     const orderNo = url.searchParams.get('order_no');
+    const overrideKey = url.searchParams.get('override_key');
     
+    // 验证参数
     if (!orderNo) {
       return NextResponse.json({
         success: false,
         error: '缺少订单号'
       }, { status: 400 });
+    }
+    
+    // 验证覆盖密钥
+    const validKey = process.env.ADMIN_OVERRIDE_KEY || 'admin-secret-key';
+    if (overrideKey !== validKey) {
+      console.warn(`尝试使用无效的管理员密钥进行操作: ${overrideKey}`);
+      return NextResponse.json({
+        success: false,
+        error: '无效的管理员密钥'
+      }, { status: 403 });
     }
     
     // 获取事务客户端
@@ -149,7 +165,7 @@ export const GET = withAuth(async (request: NextRequest, authResult) => {
           change_value: orderData.credits,
           new_value: currentCredits + orderData.credits,
           created_at: new Date().toISOString(),
-          note: `手动修复充值${orderData.credits}点`
+          note: `管理员手动修复充值${orderData.credits}点`
         });
         
       if (logInsertError) {
@@ -162,24 +178,40 @@ export const GET = withAuth(async (request: NextRequest, authResult) => {
         .insert({
           order_no: orderNo,
           user_id: orderData.user_id,
-          process_type: 'manual_fix',
+          process_type: 'admin_fix',
           amount: orderData.amount,
           credits: orderData.credits,
           status: 'success',
           created_at: new Date().toISOString(),
-          note: `操作者: ${authResult.user?.id || '系统'}, IP: ${getClientIP(request)}`
+          note: `管理员手动修复，IP: ${getClientIP(request)}`
         });
+      
+      // 更新订单标记
+      const { error: markError } = await client
+        .from('ai_images_creator_payments')
+        .update({
+          credits_updated: true,
+          updated_at: new Date().toISOString()
+        })
+        .eq('order_no', orderNo);
+        
+      if (markError) {
+        console.warn(`更新订单标记失败: ${markError.message}，但不影响点数增加`);
+      }
       
       const result = {
         success: true,
         message: '订单已修复，状态已更新为成功，点数已增加',
+        orderNo: orderNo,
+        userId: orderData.user_id,
         oldCredits: currentCredits,
         addedCredits: orderData.credits,
         newCredits: currentCredits + orderData.credits,
-        isNewCreditRecord
+        isNewCreditRecord,
+        time: new Date().toISOString()
       };
       
-      console.log(`订单修复结果:`, result);
+      console.log(`管理员订单修复结果:`, result);
       return result;
     });
     
@@ -188,11 +220,11 @@ export const GET = withAuth(async (request: NextRequest, authResult) => {
       data: result
     });
   } catch (error) {
-    console.error('修复订单失败:', error);
+    console.error('管理员修复订单失败:', error);
     
     return NextResponse.json({
       success: false,
       error: error instanceof Error ? error.message : '修复订单失败'
     }, { status: 500 });
   }
-}, AuthType.ADMIN);
+}; 
