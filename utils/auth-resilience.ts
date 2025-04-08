@@ -39,6 +39,38 @@ const clearAuthConnectionIssue = () => {
 };
 
 /**
+ * 检查是否启用了离线模式
+ * @returns {boolean} 是否启用离线模式
+ */
+export const isOfflineModeEnabled = (): boolean => {
+  try {
+    if (typeof document !== 'undefined') {
+      return document.cookie.includes('force_login=true');
+    }
+    return false;
+  } catch (error) {
+    console.error('[认证弹性] 检查离线模式状态时出错:', error);
+    return false;
+  }
+};
+
+/**
+ * 处理存储访问失败情况
+ * 在隐私模式或存储不可用时调用
+ */
+export const handleStorageAccessFailure = (): void => {
+  try {
+    console.warn('[认证弹性] 处理存储访问失败，可能在隐私模式下');
+    // 设置Cookie标记
+    if (typeof document !== 'undefined') {
+      document.cookie = 'storage_access_failed=true;path=/;max-age=' + (60 * 30); // 30分钟有效期
+    }
+  } catch (error) {
+    console.error('[认证弹性] 处理存储访问失败时出错:', error);
+  }
+};
+
+/**
  * 记录认证连接失败
  * @returns 当前失败计数
  */
