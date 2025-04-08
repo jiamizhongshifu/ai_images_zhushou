@@ -27,6 +27,38 @@
       credits={creditState.credits || 0}  // 添加了缺失的credits属性
     />
     ```
+12. 在`utils/env.ts`中将`TuziConfig`类型改为`export interface`并修复了`getApiConfig`函数的类型声明：
+    ```typescript
+    // 将TuziConfig改为导出的接口
+    export interface TuziConfig {
+      apiUrl: string;
+      apiKey: string;
+      model: string;
+      isConfigComplete: boolean;
+    }
+    
+    // 指定函数返回类型
+    export function getApiConfig(type: 'security' | 'tuzi' | 'all' = 'security'): SecurityConfig | TuziConfig | {
+      tuzi: TuziConfig;
+      cronApiKey: string;
+      paymentWebhookSecret: string;
+      maxRequestSize: number;
+      maxUploadSize: number;
+    } { ... }
+    ```
+13. 在`temp/part1.ts`中通过类型断言和导入解决了`apiKey`属性访问错误：
+    ```typescript
+    import { getApiConfig, TuziConfig } from '@/utils/env';
+    
+    function createTuziClient() {
+      // 获取环境配置并明确其类型
+      const apiConfig = getApiConfig('tuzi') as TuziConfig;
+      
+      // 现在可以安全地访问TuziConfig的属性
+      const apiKey = apiConfig.apiKey || process.env.TUZI_API_KEY;
+      // ...
+    }
+    ```
 
 ## 部署步骤
 
@@ -85,4 +117,5 @@ https://[your-vercel-domain]/toast-demo
 5. 创建一个有效的`.env`文件，确保必要的环境变量在构建过程中可用
 6. 确认`package.json`中包含了所有必要的依赖，特别是UI组件库的依赖 
 7. 确保`pnpm-lock.yaml`文件与`package.json`保持同步，避免"frozen-lockfile"错误 
-8. 查看props传递是否完整，特别是组件接口中定义为必需的属性 
+8. 查看props传递是否完整，特别是组件接口中定义为必需的属性
+9. 在使用泛型类型或联合类型时，通过类型断言（`as Type`）明确指定具体类型 
