@@ -1,3 +1,5 @@
+"use client"
+
 // 基于enhanced-toast.tsx封装的方便使用的Hook
 import { useState, useEffect, useCallback, ReactNode } from 'react';
 import { v4 as uuidv4 } from 'uuid';
