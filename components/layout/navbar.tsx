@@ -14,80 +14,25 @@ export function Navbar() {
   const [isClient, setIsClient] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
-  const supabase = await createClient();
+  const supabase = createClient();
 
   useEffect(() => {
     // 标记为客户端环境
     setIsClient(true);
     
-    // 初始化时检查认证状态
-    const checkAuthState = async () => {
-      setIsLoading(true);
-      
+    // 验证用户登录状态
+    const checkUser = async () => {
       try {
-        // 1. 首先检查AuthService中的缓存状态
-        const cachedAuthState = authService.isAuthenticated();
-        
-        // 2. 如果缓存无效，直接从Supabase检查会话
-        if (!cachedAuthState) {
-          const { data, error } = await supabase.auth.getSession();
-          if (error) {
-            console.error("[Navbar] 获取会话失败:", error.message);
-          } else if (data && data.session) {
-            console.log("[Navbar] 从Supabase直接检测到有效会话");
-            // 强制更新AuthService状态并设置本地状态
-            authService.manualAuthenticate();
-            setIsAuthenticated(true);
-          } else {
-            console.log("[Navbar] Supabase会话检查结果: 未登录");
-            setIsAuthenticated(false);
-          }
-        } else {
-          console.log("[Navbar] 使用缓存的认证状态: 已登录");
-          setIsAuthenticated(true);
-        }
+        const { data } = await supabase.auth.getSession();
+        setIsAuthenticated(data.session?.user !== null);
+        setIsLoading(false);
       } catch (error) {
-        console.error("[Navbar] 检查认证状态时出错:", error);
-        setIsAuthenticated(false);
-      } finally {
+        console.error('验证用户状态出错:', error);
         setIsLoading(false);
       }
     };
     
-    // 执行初始检查
-    checkAuthState();
-    
-    // 订阅认证状态变化
-    const unsubscribe = authService.subscribe((authState) => {
-      console.log("[Navbar] 收到认证状态更新:", authState.isAuthenticated);
-      setIsAuthenticated(authState.isAuthenticated);
-    });
-
-    // 监听Supabase身份验证状态变化
-    const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
-      console.log(`[Navbar] Supabase Auth Event: ${event}`);
-      if (event === 'SIGNED_IN' && session) {
-        console.log("[Navbar] 用户已登录");
-        setIsAuthenticated(true);
-      } else if (event === 'SIGNED_OUT') {
-        console.log("[Navbar] 用户已登出");
-        setIsAuthenticated(false);
-      }
-    });
-    
-    // 添加窗口大小变化监听，在大屏幕上自动关闭移动菜单
-    const handleResize = () => {
-      if (window.innerWidth >= 768) {
-        setIsMobileMenuOpen(false);
-      }
-    };
-    window.addEventListener('resize', handleResize);
-
-    return () => {
-      unsubscribe(); // 清理认证订阅
-      window.removeEventListener('resize', handleResize); // 清理窗口大小监听
-      authListener.subscription.unsubscribe(); // 清理Supabase认证监听
-    };
+    checkUser();
   }, [supabase]);
 
   // 处理登录按钮点击

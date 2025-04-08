@@ -6,14 +6,19 @@ import { createClient } from "@/utils/supabase/client";
 import { authService } from "@/utils/auth-service";
 import { ResponsiveContainer } from '@/components/ui/responsive-container';
 import { enhanceAuthResilience } from '@/utils/auth-resilience';
+import { Button } from '@/components/ui/button';
 
+/**
+ * 受保护区域的布局组件
+ * 负责验证用户是否已登录，并根据登录状态显示不同内容
+ */
 export default function ProtectedLayout({
   children,
-}: Readonly<{
+}: {
   children: React.ReactNode;
-}>) {
+}) {
   const router = useRouter();
-  const supabase = await createClient();
+  const supabase = createClient();
   // 添加加载状态
   const [loading, setLoading] = useState(true); // 默认显示加载状态
   const [showAccessButton, setShowAccessButton] = useState(false);
@@ -23,6 +28,31 @@ export default function ProtectedLayout({
     // 启用认证弹性增强（提供离线认证模式支持）
     enhanceAuthResilience();
   }, []);
+
+  useEffect(() => {
+    const checkUser = async () => {
+      try {
+        // 检查用户会话
+        const { data: { user } } = await supabase.auth.getUser();
+        
+        if (user) {
+          // 用户已登录，不显示加载状态
+          setLoading(false);
+        } else {
+          // 用户未登录，显示访问按钮
+          setShowAccessButton(true);
+          setLoading(false);
+        }
+      } catch (error) {
+        console.error('检查用户会话出错:', error);
+        // 出错时也显示访问按钮
+        setShowAccessButton(true);
+        setLoading(false);
+      }
+    };
+    
+    checkUser();
+  }, [supabase]);
 
   // 改进会话验证逻辑，使用多级恢复策略
   const validateSession = async () => {
@@ -151,31 +181,24 @@ export default function ProtectedLayout({
     setShowAccessButton(false);
   };
 
-  // 如果正在加载，显示加载状态
   if (loading) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-screen">
-        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-primary mb-4"></div>
-        <p className="text-lg mb-2">验证登录状态...</p>
-        {showAccessButton && (
-          <div className="mt-6 text-center">
-            <p className="text-sm text-muted-foreground mb-3">
-              登录验证遇到问题？您可以：
-            </p>
-            <button
-              onClick={handleDirectAccess}
-              className="px-4 py-2 bg-primary text-white rounded-md hover:bg-primary/90"
-            >
-              继续访问
-            </button>
-            <p className="text-xs text-muted-foreground mt-2">
-              或者
-              <a href="/sign-in" className="text-primary hover:underline ml-1">
-                重新登录
-              </a>
-            </p>
-          </div>
-        )}
+      <div className="flex justify-center items-center h-[calc(100vh-4rem)]">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
+      </div>
+    );
+  }
+
+  if (showAccessButton) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[calc(100vh-4rem)] p-4">
+        <div className="text-center mb-6">
+          <h1 className="text-2xl font-bold">需要登录</h1>
+          <p className="text-gray-600 mt-2">您需要登录才能访问此页面</p>
+        </div>
+        <Button onClick={() => router.push('/sign-in')} className="px-6 py-2">
+          登录账户
+        </Button>
       </div>
     );
   }
