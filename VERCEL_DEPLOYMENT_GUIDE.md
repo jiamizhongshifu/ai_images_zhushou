@@ -6,6 +6,7 @@
 
 1. 添加了`"use client"`指令到`components/ui/use-toast.tsx`和`components/ui/enhanced-toast.tsx`文件，以解决React hooks在非客户端组件中使用的问题。
 2. 添加了`.env.example`文件作为环境变量配置模板。
+3. 修复了类型错误：在`ToastProps`接口中添加了`variant`和`className`属性，解决了`enhanced-toast.tsx`中使用这些属性的类型错误问题。
 
 ## 部署步骤
 
@@ -17,11 +18,11 @@
 # 在新目录中解包bundle
 mkdir temp_deploy
 cd temp_deploy
-git clone toast_fix_with_env.bundle .
+git clone deploy_ready.bundle .
 
 # 或者直接在本地仓库中应用更改
-git bundle verify toast_fix_with_env.bundle
-git fetch toast_fix_with_env.bundle main:fix-toast-branch
+git bundle verify deploy_ready.bundle
+git fetch deploy_ready.bundle main:fix-toast-branch
 git checkout fix-toast-branch
 ```
 
@@ -62,4 +63,6 @@ https://[your-vercel-domain]/toast-demo
 
 1. 确认所有React组件文件中使用hooks的都已添加`"use client"`指令
 2. 验证所有必要的环境变量都已设置
-3. 检查Vercel构建日志中是否有其他错误 
+3. 检查类型兼容性问题，尤其是在组件之间传递属性时
+4. 处理Sharp库的警告可能需要在Vercel项目设置中配置相应的构建命令
+5. 创建一个有效的`.env`文件，确保必要的环境变量在构建过程中可用 
