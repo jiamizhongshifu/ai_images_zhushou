@@ -2,11 +2,23 @@ import { NextRequest } from 'next/server';
 import { createAdminClient } from '@/utils/supabase/admin';
 import { OpenAI } from 'openai';
 import { getApiConfig, getOfficialOpenAIConfig, getApiPreference } from '@/utils/env';
+import { createClient } from '@/utils/supabase/server';
 
 // 网络请求配置
 const MAX_RETRIES = 3;
 const RETRY_DELAY = 2000; // 毫秒
 const TIMEOUT = 600000; // 10分钟超时
+
+// 定义TuziConfig类型
+interface TuziConfig {
+  apiUrl: string;
+  apiKey: string;
+  model: string;
+  isConfigComplete: boolean;
+}
+
+// 正在处理的任务追踪，避免重复处理
+const processingTasks = new Set<string>();
 
 /**
  * 处理图像生成任务API（仅内部使用，需要适当保护）
@@ -289,7 +301,7 @@ async function processTask(taskId: string, preserveAspectRatio: boolean = false)
     if (apiPreference.preferTuzi && apiPreference.tuziConfigComplete) {
       // 使用TUZI API
       console.log('根据配置，优先使用TUZI API');
-      apiConfig = getApiConfig();
+      apiConfig = getApiConfig('tuzi') as TuziConfig;
       isOfficialOpenAI = false;
     } else if (apiPreference.openaiConfigComplete) {
       // 使用OpenAI官方API
@@ -299,7 +311,7 @@ async function processTask(taskId: string, preserveAspectRatio: boolean = false)
     } else if (apiPreference.tuziConfigComplete) {
       // 回退到TUZI API
       console.log('OpenAI官方API配置不完整，回退到TUZI API');
-      apiConfig = getApiConfig();
+      apiConfig = getApiConfig('tuzi') as TuziConfig;
       isOfficialOpenAI = false;
     } else {
       // 两种API都配置不完整
