@@ -8,6 +8,14 @@ import { Button } from '@/components/ui/button';
 import { User, LogOut, LogIn } from 'lucide-react';
 import UserCreditDisplay from '@/components/user-credit-display';
 import { authService } from '@/utils/auth-service';
+import { User as SupabaseUser } from '@supabase/supabase-js';
+
+// 定义积分信息类型
+interface CreditsInfo {
+  totalCredits: number;
+  usedCredits: number;
+  availableCredits: number;
+}
 
 export default function UserNav() {
   const router = useRouter();
@@ -15,7 +23,31 @@ export default function UserNav() {
   const [isLoading, setIsLoading] = useState(true);
   const [isSigningOut, setIsSigningOut] = useState(false);
   const [forceShowUser, setForceShowUser] = useState(false); // 强制显示用户状态的标志
-  const supabase = await createClient();
+  const [open, setOpen] = useState(false);
+  const [userInfo, setUserInfo] = useState<SupabaseUser | null>(null);
+  const [creditsInfo, setCreditsInfo] = useState<CreditsInfo | null>(null);
+  const supabase = createClient();
+  
+  useEffect(() => {
+    fetchUserInfo();
+  }, []);
+  
+  const fetchUserInfo = async () => {
+    try {
+      const { data } = await supabase.auth.getUser();
+      setUserInfo(data.user);
+      
+      if (data.user) {
+        const response = await fetch('/api/credits/get');
+        if (response.ok) {
+          const creditsData = await response.json();
+          setCreditsInfo(creditsData);
+        }
+      }
+    } catch (error) {
+      console.error('获取用户信息失败:', error);
+    }
+  };
   
   useEffect(() => {
     async function getUser() {

@@ -27,8 +27,11 @@ export function MainNav({ providedAuthState }: MainNavProps) {
   const pathname = usePathname();
   const router = useRouter();
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [userEmail, setUserEmail] = useState<string | null>(null);
+  const [credits, setCredits] = useState<number | null>(null);
   const [isClient, setIsClient] = useState(false);
-  const supabase = await createClient();
+  const [isLoading, setIsLoading] = useState(true);
+  const supabase = createClient();
   const [isSigningOut, setIsSigningOut] = useState(false);
 
   // 导航项配置
@@ -56,47 +59,42 @@ export function MainNav({ providedAuthState }: MainNavProps) {
   useEffect(() => {
     setIsClient(true);
     
-    // 如果父组件提供了认证状态，直接使用
+    // 优先使用传入的认证状态
     if (providedAuthState !== undefined) {
       setIsAuthenticated(providedAuthState);
-      return;
+      setIsLoading(false);
+    } else {
+      // 如果没有提供状态，则自行检查
+      checkAuth();
     }
-    
-    // 否则，初始化时检查认证状态
-    const checkAuthState = async () => {
-      try {
-        // 先检查缓存状态
-        if (authService.isAuthenticated()) {
-          setIsAuthenticated(true);
-          return;
+  }, [providedAuthState]);
+  
+  const checkAuth = async () => {
+    try {
+      const { data } = await supabase.auth.getSession();
+      const user = data.session?.user;
+      
+      setIsAuthenticated(!!user);
+      setUserEmail(user?.email || null);
+      
+      if (user) {
+        // 获取用户积分信息
+        try {
+          const creditsResponse = await fetch('/api/credits/get');
+          if (creditsResponse.ok) {
+            const creditsData = await creditsResponse.json();
+            setCredits(creditsData.availableCredits || 0);
+          }
+        } catch (error) {
+          console.error('获取积分信息失败:', error);
         }
-        
-        // 缓存无效，直接查询Supabase会话
-        const { data } = await supabase.auth.getSession();
-        if (data && data.session) {
-          setIsAuthenticated(true);
-          // 更新AuthService缓存
-          authService.manualAuthenticate();
-        } else {
-          setIsAuthenticated(false);
-        }
-      } catch (error) {
-        console.error("[MainNav] 检查认证状态时出错:", error);
-        setIsAuthenticated(false);
       }
-    };
-    
-    checkAuthState();
-
-    // 订阅认证状态变化
-    const unsubscribe = authService.subscribe((authState) => {
-      setIsAuthenticated(authState.isAuthenticated);
-    });
-
-    return () => {
-      unsubscribe(); // 清理订阅
-    };
-  }, [providedAuthState, supabase]);
+    } catch (error) {
+      console.error('验证用户状态失败:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   // 处理导航项点击
   const handleNavClick = (e: React.MouseEvent, item: NavItem) => {

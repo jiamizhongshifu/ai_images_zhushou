@@ -1,5 +1,7 @@
 import { TutorialStep } from "./tutorial-step";
 import { CodeBlock } from "./code-block";
+import { createClient } from '@/utils/supabase/client'
+import { useEffect, useState } from 'react'
 
 const create = `create table notes (
   id bigserial primary key,
@@ -29,22 +31,61 @@ import { createClient } from '@/utils/supabase/client'
 import { useEffect, useState } from 'react'
 
 export default function Page() {
-  const [notes, setNotes] = useState<any[] | null>(null)
-  const supabase = await createClient()
-
+  const [todos, setTodos] = useState<any[]>([]);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const supabase = createClient();
+  
   useEffect(() => {
-    const getData = async () => {
-      const { data } = await supabase.from('notes').select()
-      setNotes(data)
+    fetchTodos();
+  }, []);
+  
+  const fetchTodos = async () => {
+    setIsRefreshing(true);
+    
+    try {
+      const { data, error } = await supabase
+        .from('todos')
+        .select('*')
+        .order('id', { ascending: false });
+        
+      if (error) {
+        throw error;
+      }
+      
+      setTodos(data || []);
+    } catch (error) {
+      console.error('Error fetching todos:', error);
+    } finally {
+      setIsRefreshing(false);
     }
-    getData()
-  }, [])
+  };
 
-  return <pre>{JSON.stringify(notes, null, 2)}</pre>
+  return <pre>{JSON.stringify(todos, null, 2)}</pre>
 }
 `.trim();
 
-export default function FetchDataSteps() {
+export function FetchDataSteps() {
+  const [todos, setTodos] = useState<any[]>([]);
+  const supabase = createClient();
+
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        const { data, error } = await supabase.from('todos').select('*');
+        if (error) {
+          console.error('Error fetching todos:', error);
+          return;
+        }
+        setTodos(data || []);
+      } catch (error) {
+        console.error('Exception when fetching todos:', error);
+      }
+    };
+
+    fetchData();
+  }, [supabase]);
+
   return (
     <ol className="flex flex-col gap-6">
       <TutorialStep title="Create some tables and insert some data">
@@ -86,6 +127,21 @@ export default function FetchDataSteps() {
         <CodeBlock code={server} />
         <p>Alternatively, you can use a Client Component.</p>
         <CodeBlock code={client} />
+      </TutorialStep>
+
+      <TutorialStep title="Fetch data from your database">
+        <p>
+          Use the Supabase client to fetch data from your database.
+        </p>
+        <CodeBlock code={client} />
+        {todos.length > 0 && (
+          <>
+            <p className="text-sm font-medium">Fetched data will appear below:</p>
+            <pre className="bg-gray-800 text-white p-4 rounded-md text-sm overflow-auto">
+              {JSON.stringify(todos, null, 2)}
+            </pre>
+          </>
+        )}
       </TutorialStep>
 
       <TutorialStep title="Build in a weekend and scale to millions!">
