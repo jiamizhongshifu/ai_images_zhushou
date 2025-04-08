@@ -20,7 +20,7 @@ import { useToast } from "@/components/ui/use-toast";
  * 提供更丰富的通知类型和交互体验
  */
 export const useEnhancedToast = () => {
-  const { toast } = useToast();
+  const { toast, dismiss: dismissToast } = useToast();
   
   // 成功通知
   const success = (title: string, description?: string) => {
@@ -181,7 +181,7 @@ export const useEnhancedToast = () => {
   
   // 关闭特定通知
   const dismiss = (id?: string) => {
-    return toast.dismiss(id);
+    return dismissToast(id);
   };
   
   return {
