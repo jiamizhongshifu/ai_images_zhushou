@@ -1,6 +1,32 @@
 import { createServerClient } from "@supabase/ssr";
 import { type NextRequest, NextResponse } from "next/server";
 
+// 创建Supabase中间件客户端函数
+export function createClient(request: NextRequest) {
+  // 从环境变量中读取URL和ANON KEY
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL as string;
+  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY as string;
+
+  // 创建一个不自动设置cookies的客户端
+  return createServerClient(
+    supabaseUrl,
+    supabaseAnonKey,
+    {
+      cookies: {
+        get(name) {
+          return request.cookies.get(name)?.value;
+        },
+        set(name, value, options) {
+          // 中间件只能在响应中设置cookie，这里我们不需要实现
+        },
+        remove(name, options) {
+          // 中间件只能在响应中删除cookie，这里我们不需要实现
+        },
+      },
+    }
+  );
+}
+
 // 设置日志级别常量
 const LOG_LEVELS = {
   ERROR: 0,    // 只显示错误
