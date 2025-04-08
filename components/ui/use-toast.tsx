@@ -12,6 +12,8 @@ export interface ToastProps {
   description?: string | ReactNode;
   type: ToastType;
   duration?: number;
+  variant?: 'default' | 'destructive';
+  className?: string;
 }
 
 export function useToast() {
