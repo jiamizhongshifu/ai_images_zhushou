@@ -171,7 +171,8 @@ export async function compressImageServer(
 ): Promise<string> {
     try {
         // 动态导入sharp库，仅在服务器端使用
-        const sharp = await import('sharp');
+        // 使用类型断言来解决类型问题
+        const sharp = await import('sharp') as any;
         
         // 提取base64数据和MIME类型
         const matches = base64Image.match(/^data:([A-Za-z-+/]+);base64,(.+)$/);
