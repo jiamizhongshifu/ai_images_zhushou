@@ -50,27 +50,61 @@ export default function FixLogin({
     try {
       console.log('尝试修复登录状态');
       
+      // 清除登出标记
+      if (typeof window !== 'undefined') {
+        localStorage.removeItem('force_logged_out');
+        sessionStorage.removeItem('isLoggedOut');
+        console.log('[FixLogin] 已清除登出标记');
+      }
+      
       // 检查本地存储中是否有会话数据
       const localStorageSession = localStorage.getItem('supabase.auth.token');
       
       if (localStorageSession) {
         console.log('找到本地会话数据，尝试恢复');
         
-        // 使用本地数据设置会话
-        await supabase.auth.setSession(JSON.parse(localStorageSession));
-        
-        // 重新检查用户
-        const { data: { user } } = await supabase.auth.getUser();
-        
-        if (user) {
-          console.log('成功恢复登录状态，准备重定向');
+        try {
+          // 使用本地数据设置会话
+          await supabase.auth.setSession(JSON.parse(localStorageSession));
+          
+          // 重新检查用户
+          const { data: { user } } = await supabase.auth.getUser();
+          
+          if (user) {
+            console.log('成功恢复登录状态，准备重定向');
+            if (redirectPath) {
+              router.push(redirectPath);
+            } else {
+              router.push(redirectUrl);
+            }
+            return;
+          } else {
+            console.log('会话恢复失败，未获取到用户信息');
+          }
+        } catch (error) {
+          console.error('恢复会话时出错:', error);
+        }
+      } else {
+        console.log('未找到本地会话数据');
+      }
+      
+      // 尝试直接获取当前会话
+      try {
+        console.log('[FixLogin] 尝试直接获取当前会话');
+        const { data: sessionData } = await supabase.auth.getSession();
+        if (sessionData.session) {
+          console.log('[FixLogin] 发现有效会话，准备重定向');
           if (redirectPath) {
             router.push(redirectPath);
           } else {
             router.push(redirectUrl);
           }
           return;
+        } else {
+          console.log('[FixLogin] 未找到有效会话');
         }
+      } catch (sessionError) {
+        console.error('[FixLogin] 获取会话出错:', sessionError);
       }
       
       // 如果没有恢复成功，重定向到登录页面

@@ -67,6 +67,26 @@ export function MainNav({ providedAuthState }: MainNavProps) {
       // 如果没有提供状态，则自行检查
       checkAuth();
     }
+    
+    // 添加额外的安全保障：检查localStorage和sessionStorage中的登出标记
+    const checkLogoutFlags = () => {
+      try {
+        if (typeof window !== 'undefined') {
+          const forcedLogout = localStorage.getItem('force_logged_out') === 'true';
+          const sessionLogout = sessionStorage.getItem('isLoggedOut') === 'true';
+          
+          // 如果检测到登出标记，强制设置为未登录状态
+          if (forcedLogout || sessionLogout) {
+            console.log('[MainNav] 检测到登出标记，强制设置为未登录状态');
+            setIsAuthenticated(false);
+          }
+        }
+      } catch (error) {
+        console.error('[MainNav] 检查登出标记出错:', error);
+      }
+    };
+    
+    checkLogoutFlags();
   }, [providedAuthState]);
   
   const checkAuth = async () => {
