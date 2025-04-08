@@ -34,7 +34,7 @@ export async function POST(request: NextRequest) {
     }
 
     // 创建Supabase管理员客户端
-    const supabase = createAdminClient();
+    const supabase = await createAdminClient();
 
     // 查询用户当前点数
     const { data: currentCredits, error: fetchError } = await supabase
