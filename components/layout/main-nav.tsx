@@ -386,7 +386,23 @@ export function MainNav({ providedAuthState }: MainNavProps) {
     const performAuthCheck = () => {
       console.log('[MainNav] 执行认证状态检查');
       
-      // 避免在锁定状态下执行
+      // **优先检查登出标记**
+      if (typeof document !== 'undefined') {
+        const forceLoggedOut = localStorage.getItem('force_logged_out') === 'true';
+        const isLoggedOut = sessionStorage.getItem('isLoggedOut') === 'true';
+        
+        if (forceLoggedOut || isLoggedOut) {
+          console.log('[MainNav] 检测到登出标记，强制设置为未登录状态');
+          setIsAuthenticated(false);
+          setAuthStateLocked(false); // 解锁状态
+          // 清除标记，避免下次检查时再次误判
+          localStorage.removeItem('force_logged_out');
+          sessionStorage.removeItem('isLoggedOut');
+          return; // 阻止后续检查
+        }
+      }
+      
+      // 避免在锁定状态下执行 (如果未被登出标记阻止)
       if (authStateLocked) {
         console.log('[MainNav] 认证状态已锁定，跳过检查');
         return;
