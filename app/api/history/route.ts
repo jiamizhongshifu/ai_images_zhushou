@@ -1,15 +1,20 @@
 import { createClient } from '@/utils/supabase/server';
 import { NextRequest, NextResponse } from 'next/server';
 
+// 历史记录最大数量限制
+const MAX_HISTORY_RECORDS = 100;
+
 // 获取历史记录的API端点
 export async function GET(request: NextRequest) {
   try {
     // 创建Supabase客户端
-    const supabase = createClient();
+    const supabase = await createClient();
 
     // 获取限制和偏移参数
     const searchParams = request.nextUrl.searchParams;
-    const limit = parseInt(searchParams.get('limit') || '100', 10);
+    // 限制最大返回记录数为MAX_HISTORY_RECORDS
+    const requestedLimit = parseInt(searchParams.get('limit') || String(MAX_HISTORY_RECORDS), 10);
+    const limit = Math.min(requestedLimit, MAX_HISTORY_RECORDS);
     const offset = parseInt(searchParams.get('offset') || '0', 10);
 
     // 查询用户
@@ -25,7 +30,7 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    console.log(`获取历史记录，限制: ${limit}条，偏移: ${offset}`);
+    console.log(`获取历史记录，请求限制: ${requestedLimit}条，实际限制: ${limit}条，偏移: ${offset}`);
 
     // 查询历史记录 - 按照创建时间降序排列，最新的在前面
     const { data: history, error: historyError } = await supabase
@@ -82,11 +87,17 @@ export async function GET(request: NextRequest) {
 }`);
     }
 
-    console.log(`成功获取${processedHistory.length}条历史记录`);
+    console.log(`成功获取${processedHistory.length}条历史记录，最多显示${MAX_HISTORY_RECORDS}条`);
     
     return NextResponse.json({
       success: true,
-      history: processedHistory
+      history: processedHistory,
+      meta: {
+        limit,
+        offset,
+        total_records: processedHistory.length,
+        max_limit: MAX_HISTORY_RECORDS
+      }
     });
   } catch (error) {
     console.error('历史记录API出错:', error);

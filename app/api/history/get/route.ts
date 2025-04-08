@@ -1,6 +1,9 @@
 import { NextRequest } from 'next/server';
 import { createClient } from '@/utils/supabase/server';
 
+// 历史记录最大数量限制
+const MAX_HISTORY_RECORDS = 100;
+
 /**
  * 获取用户图片生成历史记录
  * 
@@ -27,10 +30,12 @@ export async function GET(request: NextRequest) {
   try {
     // 获取请求参数
     const { searchParams } = new URL(request.url);
-    const limit = parseInt(searchParams.get('limit') || '100');
+    // 限制最大返回记录数为MAX_HISTORY_RECORDS
+    const requestedLimit = parseInt(searchParams.get('limit') || String(MAX_HISTORY_RECORDS));
+    const limit = Math.min(requestedLimit, MAX_HISTORY_RECORDS);
     const offset = parseInt(searchParams.get('offset') || '0');
     
-    console.log(`获取历史记录，限制: ${limit}条，偏移: ${offset}`);
+    console.log(`获取历史记录，请求限制: ${requestedLimit}条，实际限制: ${limit}条，偏移: ${offset}`);
     
     // 获取当前用户
     const supabase = await createClient();
@@ -99,7 +104,7 @@ export async function GET(request: NextRequest) {
     });
     
     // 返回结果
-    console.log(`成功获取${processedData.length}条历史记录`);
+    console.log(`成功获取${processedData.length}条历史记录，最多显示${MAX_HISTORY_RECORDS}条`);
     console.log('首条记录示例:', processedData.length > 0 ? {
       id: processedData[0].id,
       image_url: processedData[0].image_url,
@@ -108,7 +113,13 @@ export async function GET(request: NextRequest) {
     
     return new Response(JSON.stringify({ 
       success: true, 
-      history: processedData
+      history: processedData,
+      meta: {
+        limit,
+        offset,
+        total_records: processedData.length,
+        max_limit: MAX_HISTORY_RECORDS
+      }
     }), {
       status: 200,
       headers: {

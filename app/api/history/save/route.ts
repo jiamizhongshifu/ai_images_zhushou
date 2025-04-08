@@ -2,6 +2,9 @@ import { NextRequest } from 'next/server';
 import { createClient } from '@/utils/supabase/server';
 import { createAdminClient } from '@/utils/supabase/admin';
 
+// 历史记录最大存储数量
+const MAX_HISTORY_RECORDS = 100;
+
 /**
  * 保存用户图片生成历史记录
  * 
@@ -44,7 +47,49 @@ export async function POST(request: NextRequest) {
     }
     
     // 使用管理员客户端插入记录（避免RLS策略限制）
-    const supabaseAdmin = createAdminClient();
+    const supabaseAdmin = await createAdminClient();
+    
+    // 检查用户当前历史记录数量
+    const { count, error: countError } = await supabaseAdmin
+      .from('ai_images_creator_history')
+      .select('*', { count: 'exact', head: true })
+      .eq('user_id', userId);
+    
+    if (countError) {
+      console.error('查询历史记录数量失败:', countError);
+    } else {
+      console.log(`用户 ${userId} 当前历史记录数量: ${count || 0}`);
+      
+      // 如果记录数量达到或超过最大限制，删除最早的记录
+      if (count !== null && count >= MAX_HISTORY_RECORDS) {
+        console.log(`用户历史记录数量(${count})已达到最大限制(${MAX_HISTORY_RECORDS})，将删除最早的记录`);
+        
+        // 查询最早的记录
+        const { data: oldestRecords, error: queryError } = await supabaseAdmin
+          .from('ai_images_creator_history')
+          .select('id')
+          .eq('user_id', userId)
+          .order('created_at', { ascending: true })
+          .limit(count - MAX_HISTORY_RECORDS + 1); // 删除超出限制的记录数量
+        
+        if (queryError) {
+          console.error('查询最早的历史记录失败:', queryError);
+        } else if (oldestRecords && oldestRecords.length > 0) {
+          // 删除最早的记录
+          const recordIds = oldestRecords.map(record => record.id);
+          const { error: deleteError } = await supabaseAdmin
+            .from('ai_images_creator_history')
+            .delete()
+            .in('id', recordIds);
+          
+          if (deleteError) {
+            console.error('删除最早的历史记录失败:', deleteError);
+          } else {
+            console.log(`成功删除 ${recordIds.length} 条最早的历史记录`);
+          }
+        }
+      }
+    }
     
     // 插入历史记录
     const { data, error } = await supabaseAdmin

@@ -5,6 +5,8 @@ import { cacheService, CACHE_PREFIXES } from '@/utils/cache-service';
 // 缓存键和过期时间
 const HISTORY_CACHE_KEY = CACHE_PREFIXES.HISTORY + ':recent';
 const HISTORY_CACHE_TTL = 10 * 60 * 1000; // 10分钟
+// 历史记录最大数量限制
+const MAX_HISTORY_RECORDS = 100;
 
 export interface ImageHistoryItem {
   id: string;
@@ -27,6 +29,7 @@ export interface UseImageHistoryResult {
 
 /**
  * 自定义Hook用于获取和管理图片历史记录
+ * 注：最多显示最近的100条历史记录，超过限制的记录将被自动清理
  */
 export default function useImageHistory(): UseImageHistoryResult {
   const router = useRouter();
@@ -109,7 +112,8 @@ export default function useImageHistory(): UseImageHistoryResult {
       const historyData = await cacheService.getOrFetch(
         HISTORY_CACHE_KEY,
         async () => {
-          const response = await fetch('/api/history/get', {
+          // 请求参数中确保限制记录数量
+          const response = await fetch(`/api/history/get?limit=${MAX_HISTORY_RECORDS}`, {
             headers: { 'Cache-Control': 'no-cache' }
           });
           

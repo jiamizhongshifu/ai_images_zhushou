@@ -134,6 +134,7 @@ export default function HistoryPage() {
           <h1 className="text-3xl md:text-4xl font-bold text-foreground mb-2 md:mb-3 font-quicksand bg-gradient-to-r from-primary to-primary-700 bg-clip-text text-transparent">生成历史</h1>
           <p className="text-base md:text-lg text-muted-foreground text-center max-w-2xl font-nunito">
             查看您的历史生成内容，下载或删除不需要的图片
+            <span className="block mt-1 text-xs text-muted-foreground">系统最多保存最近生成的100张图片</span>
           </p>
         </div>
         

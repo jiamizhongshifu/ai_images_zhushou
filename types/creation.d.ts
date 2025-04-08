@@ -69,6 +69,8 @@ declare module '@/components/creation/generated-image-gallery' {
     onDownloadImage: (imageUrl: string) => void;
     onDeleteImage?: (imageUrl: string) => Promise<void>;
     hideViewMoreButton?: boolean;
+    isLargerSize?: boolean;
+    maxRows?: number;
   }
   
   const GeneratedImageGallery: FC<GeneratedImageGalleryProps>;

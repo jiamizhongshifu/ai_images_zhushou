@@ -245,13 +245,14 @@ export default function ProtectedPage() {
             <div className="p-6 pt-0 font-nunito">
               {/* 生成结果展示 */}
               <GeneratedImageGallery
-                images={generatedImages.slice(0, 8)}
+                images={generatedImages.slice(0, 4)}
                 isLoading={isGenerating}
                 onImageLoad={handleImageLoad}
                 onImageError={handleImageError}
                 onDownloadImage={downloadImage}
                 onDeleteImage={deleteImage}
                 hideViewMoreButton={true}
+                maxRows={1}
               />
             </div>
           </div>
@@ -260,12 +261,13 @@ export default function ProtectedPage() {
         {/* 积分充值对话框 */}
         {showCreditRechargeDialog && (
           <CreditRechargeDialog
-            isOpen={showCreditRechargeDialog}
+            isOpen={true}
             onClose={() => setShowCreditRechargeDialog(false)}
             onSuccess={() => {
               refreshCredits(true, false);
               showNotification("充值成功，您的积分已更新");
             }}
+            credits={credits || 0}
           />
         )}
       </div>

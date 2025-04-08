@@ -663,7 +663,54 @@ export async function POST(request: NextRequest) {
 // 保存生成历史到数据库，捕获但不传播错误
 async function saveGenerationHistory(userId: string, prompt: string, imageUrl: string, style: string | null = null, aspectRatio: string | null = null, standardAspectRatio: string | null = null) {
   try {
+    // 历史记录最大存储数量
+    const MAX_HISTORY_RECORDS = 100;
+    
     const supabaseAdmin = await createAdminClient();
+    
+    // 检查用户当前历史记录数量
+    const { count, error: countError } = await supabaseAdmin
+      .from('ai_images_creator_history')
+      .select('*', { count: 'exact', head: true })
+      .eq('user_id', userId);
+    
+    if (countError) {
+      logger.warn(`查询历史记录数量失败: ${countError.message}`);
+    } else {
+      logger.info(`用户 ${userId} 当前历史记录数量: ${count || 0}`);
+      
+      // 如果记录数量达到或超过最大限制，删除最早的记录
+      if (count !== null && count >= MAX_HISTORY_RECORDS) {
+        logger.info(`用户历史记录数量(${count})已达到最大限制(${MAX_HISTORY_RECORDS})，将删除最早的记录`);
+        
+        // 查询最早的记录
+        const { data: oldestRecords, error: queryError } = await supabaseAdmin
+          .from('ai_images_creator_history')
+          .select('id')
+          .eq('user_id', userId)
+          .order('created_at', { ascending: true })
+          .limit(count - MAX_HISTORY_RECORDS + 1); // 删除超出限制的记录数量
+        
+        if (queryError) {
+          logger.warn(`查询最早的历史记录失败: ${queryError.message}`);
+        } else if (oldestRecords && oldestRecords.length > 0) {
+          // 删除最早的记录
+          const recordIds = oldestRecords.map(record => record.id);
+          const { error: deleteError } = await supabaseAdmin
+            .from('ai_images_creator_history')
+            .delete()
+            .in('id', recordIds);
+          
+          if (deleteError) {
+            logger.warn(`删除最早的历史记录失败: ${deleteError.message}`);
+          } else {
+            logger.info(`成功删除 ${recordIds.length} 条最早的历史记录`);
+          }
+        }
+      }
+    }
+    
+    // 插入新的历史记录
     const { error: historyError } = await supabaseAdmin
       .from('ai_images_creator_history')
       .insert({

@@ -14,6 +14,7 @@ interface GeneratedImageGalleryProps {
   onDeleteImage?: (imageUrl: string) => Promise<void>;
   hideViewMoreButton?: boolean;
   isLargerSize?: boolean;
+  maxRows?: number;
 }
 
 export default function GeneratedImageGallery({
@@ -24,7 +25,8 @@ export default function GeneratedImageGallery({
   onDownloadImage,
   onDeleteImage,
   hideViewMoreButton = false,
-  isLargerSize = false
+  isLargerSize = false,
+  maxRows
 }: GeneratedImageGalleryProps) {
   const router = useRouter();
   const [previewImage, setPreviewImage] = useState<string | null>(null);
@@ -78,10 +80,16 @@ export default function GeneratedImageGallery({
     ? "grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6 relative" 
     : "grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4 relative";
 
+  // 基于maxRows限制计算额外的样式
+  const gridStyle = maxRows ? { 
+    maxHeight: maxRows === 1 ? 'auto' : `calc(${maxRows} * (100% / 4 + 1rem))`, 
+    overflow: 'hidden' 
+  } : {};
+
   return (
     <div className="relative">
       {/* 显示图片网格或加载状态 */}
-      <div className={gridClassName}>
+      <div className={gridClassName} style={gridStyle}>
         {/* 加载状态 */}
         {isLoading && (
           <div className={`col-span-full flex items-center justify-center py-14`}>
