@@ -1,10 +1,13 @@
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useRef, useEffect } from "react";
 import { Loader2, X, Download, Trash2, ChevronRight, ImageIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { LazyImage } from "@/components/ui/lazy-image";
 import { ImageError, ImageLoading } from "@/components/ui/loading-states";
 import { useRouter } from "next/navigation";
 import { ImageGenerationSkeleton, GenerationStage } from "@/components/ui/skeleton-generation";
+
+// 一次性渲染的最大图片数量
+const MAX_VISIBLE_IMAGES = 12;
 
 interface GeneratedImageGalleryProps {
   images: string[];
@@ -41,6 +44,45 @@ export default function GeneratedImageGallery({
   const [previewImage, setPreviewImage] = useState<string | null>(null);
   const [loadedImages, setLoadedImages] = useState<Record<string, boolean>>({});
   const [errorImages, setErrorImages] = useState<Record<string, boolean>>({});
+  const [visibleCount, setVisibleCount] = useState<number>(MAX_VISIBLE_IMAGES);
+  
+  const gridRef = useRef<HTMLDivElement>(null);
+  const observerRef = useRef<IntersectionObserver | null>(null);
+  const loadMoreRef = useRef<HTMLDivElement>(null);
+  
+  // 处理加载更多图片
+  const handleLoadMore = useCallback(() => {
+    setVisibleCount(prevCount => prevCount + MAX_VISIBLE_IMAGES);
+  }, []);
+  
+  // 设置交叉观察器监听"加载更多"元素
+  useEffect(() => {
+    if (!loadMoreRef.current) return;
+    
+    observerRef.current = new IntersectionObserver(
+      (entries) => {
+        const [entry] = entries;
+        if (entry.isIntersecting && !isLoading && images.length > visibleCount) {
+          handleLoadMore();
+        }
+      },
+      { threshold: 0.1 }
+    );
+    
+    observerRef.current.observe(loadMoreRef.current);
+    
+    return () => {
+      if (observerRef.current) {
+        observerRef.current.disconnect();
+      }
+    };
+  }, [isLoading, images.length, visibleCount, handleLoadMore]);
+  
+  // 图片列表变更时重置可见图片数量
+  useEffect(() => {
+    if (images.length === 0) return;
+    setVisibleCount(MAX_VISIBLE_IMAGES);
+  }, [images]);
   
   // 查看更多，跳转到历史页
   const handleViewMore = () => {
@@ -97,11 +139,24 @@ export default function GeneratedImageGallery({
 
   // 判断是否显示骨架屏 - 修改为始终在生成过程中显示
   const shouldShowSkeleton = isGenerating;
+  
+  // 计算要显示的图片
+  let displayImages = images;
+  if (maxRows) {
+    const limit = maxRows * (isLargerSize ? 3 : 4) - (shouldShowSkeleton ? 1 : 0);
+    displayImages = images.slice(0, limit);
+  } else {
+    // 限制同时加载的图片数量
+    displayImages = images.slice(0, visibleCount);
+  }
+  
+  // 是否还有更多图片可以加载
+  const hasMoreImages = !maxRows && images.length > visibleCount;
 
   return (
     <div className="relative">
       {/* 显示图片网格或加载状态 */}
-      <div className={gridClassName} style={gridStyle}>
+      <div className={gridClassName} style={gridStyle} ref={gridRef}>
         {/* 生成中骨架屏 - 始终显示在第一位 */}
         {shouldShowSkeleton && (
           <div className="col-span-1">
@@ -116,7 +171,7 @@ export default function GeneratedImageGallery({
         
         {/* 加载状态 - 不影响骨架屏显示 */}
         {isLoading && !shouldShowSkeleton && (
-          <div className={`col-span-full flex items-center justify-center py-14`}>
+          <div className="col-span-full flex items-center justify-center py-14">
             <div className="flex flex-col items-center bg-card/60 p-6 rounded-xl border border-border shadow-ghibli-sm animate-pulse-soft">
               <Loader2 className="h-8 w-8 animate-spin text-primary mb-3" />
               <p className="text-foreground/90 font-quicksand">正在加载图片，请稍候...</p>
@@ -126,7 +181,7 @@ export default function GeneratedImageGallery({
         
         {/* 空状态 - 只在没有生成中和没有图片时显示 */}
         {!isLoading && !isGenerating && images.length === 0 && (
-          <div className={`col-span-full py-14 flex flex-col items-center justify-center`}>
+          <div className="col-span-full py-14 flex flex-col items-center justify-center">
             <div className="bg-card/60 p-6 rounded-xl border border-border flex flex-col items-center shadow-ghibli-sm">
               <div className="bg-muted/50 rounded-full p-3 mb-3">
                 <ImageIcon className="h-6 w-6 text-primary/60" />
@@ -137,8 +192,8 @@ export default function GeneratedImageGallery({
           </div>
         )}
         
-        {/* 所有图片 - 直接全部显示，会自动排在骨架屏后面 */}
-        {images.slice(0, maxRows ? maxRows * (isLargerSize ? 3 : 4) - (shouldShowSkeleton ? 1 : 0) : undefined).map((imageUrl, index) => (
+        {/* 优化后的图片渲染 - 只渲染可见范围内的图片 */}
+        {displayImages.map((imageUrl, index) => (
           <div
             key={`${imageUrl}-${index}`}
             className="ghibli-image-container aspect-square relative overflow-hidden rounded-xl border border-border/40 cursor-pointer shadow-ghibli-sm hover:shadow-ghibli transition-all duration-300 hover:border-border/60 animate-fade-in"
@@ -167,6 +222,8 @@ export default function GeneratedImageGallery({
                 onImageError={() => handleImageError(imageUrl)}
                 fadeIn={true}
                 blurEffect={true}
+                // 设置最前面几张图片为高优先级
+                priority={index < 4}
               />
             </div>
             
@@ -203,6 +260,20 @@ export default function GeneratedImageGallery({
           </div>
         ))}
       </div>
+      
+      {/* 加载更多指示器 */}
+      {hasMoreImages && (
+        <div 
+          ref={loadMoreRef}
+          className="w-full flex justify-center items-center py-8 mt-4 opacity-80 cursor-pointer"
+          onClick={handleLoadMore}
+        >
+          <div className="flex flex-col items-center">
+            <Loader2 className="h-5 w-5 animate-spin text-primary mb-1" />
+            <p className="text-sm text-primary">加载更多图片</p>
+          </div>
+        </div>
+      )}
       
       {/* 查看更多按钮 - 只在需要时显示 */}
       {!hideViewMoreButton && !isLoading && images.length > 0 && (
@@ -244,35 +315,40 @@ export default function GeneratedImageGallery({
                   className="max-w-full max-h-[70vh] object-contain"
                   fadeIn={true}
                   blurEffect={true}
+                  priority={true}
                 />
               </div>
               
               {/* 图片操作栏 */}
-              <div className="p-4 flex justify-between items-center border-t border-border/50">
-                <div className="truncate text-sm text-muted-foreground font-quicksand">
-                  预览图片
+              <div className="bg-card/90 border-t border-border/30 p-4 flex justify-between items-center">
+                <div className="text-sm text-muted-foreground">
+                  {/* 显示当前预览的是第几张图片，总共几张 */}
+                  {images.indexOf(previewImage) !== -1 && (
+                    <span>图片 {images.indexOf(previewImage) + 1} / {images.length}</span>
+                  )}
                 </div>
-                
                 <div className="flex gap-2">
-                  <Button 
-                    variant="outline" 
-                    size="sm" 
-                    className="bg-primary/10 text-primary hover:bg-primary/20 border-none shadow-ghibli-sm hover:shadow-ghibli transition-all duration-300"
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="bg-background/80 hover:bg-background/60 text-foreground"
                     onClick={() => onDownloadImage(previewImage)}
                   >
                     <Download className="h-4 w-4 mr-1" />
-                    <span>下载</span>
+                    下载
                   </Button>
-                  
                   {onDeleteImage && (
-                    <Button 
-                      variant="destructive" 
-                      size="sm" 
-                      className="shadow-ghibli-sm hover:shadow-ghibli transition-all duration-300"
-                      onClick={() => handleDeleteImage(previewImage)}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="bg-destructive/10 hover:bg-destructive/20 text-destructive border-destructive/20"
+                      onClick={() => {
+                        handleDeleteImage(previewImage);
+                        setPreviewImage(null);
+                      }}
                     >
                       <Trash2 className="h-4 w-4 mr-1" />
-                      <span>删除</span>
+                      删除
                     </Button>
                   )}
                 </div>

@@ -4,9 +4,11 @@ import { cacheService, CACHE_PREFIXES } from '@/utils/cache-service';
 
 // 缓存键和过期时间
 const HISTORY_CACHE_KEY = CACHE_PREFIXES.HISTORY + ':recent';
-const HISTORY_CACHE_TTL = 10 * 60 * 1000; // 10分钟
+const HISTORY_CACHE_TTL = 30 * 60 * 1000; // 提高到30分钟
 // 历史记录最大数量限制
 const MAX_HISTORY_RECORDS = 100;
+// 分批加载的默认批次大小
+const DEFAULT_BATCH_SIZE = 20;
 
 export interface ImageHistoryItem {
   id: string;
@@ -25,19 +27,30 @@ export interface UseImageHistoryResult {
   isCached: boolean;
   refetch: (forceRefresh?: boolean, showLoading?: boolean) => Promise<void>;
   deleteImage: (imageUrl: string) => Promise<void>;
+  loadMore: () => Promise<boolean>; // 新增加载更多方法
+  hasMore: boolean; // 新增是否有更多数据
+  batchSize: number; // 新增批次大小
 }
 
 /**
  * 自定义Hook用于获取和管理图片历史记录
- * 注：最多显示最近的100条历史记录，超过限制的记录将被自动清理
+ * 注：支持分批加载和虚拟滚动优化
  */
-export default function useImageHistory(): UseImageHistoryResult {
+export default function useImageHistory(initialBatchSize = DEFAULT_BATCH_SIZE): UseImageHistoryResult {
   const router = useRouter();
   const [historyItems, setHistoryItems] = useState<ImageHistoryItem[]>([]);
   const [images, setImages] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const isCached = useRef<boolean>(false);
+  
+  // 分页相关状态
+  const [offset, setOffset] = useState<number>(0);
+  const [hasMore, setHasMore] = useState<boolean>(true);
+  const [batchSize, setBatchSize] = useState<number>(initialBatchSize);
+  
+  // 存储完整的历史记录数据
+  const allHistoryItems = useRef<ImageHistoryItem[]>([]);
 
   // 增强的图片URL验证与清理
   const validateImageUrl = useCallback((url: string): string | null => {
@@ -51,13 +64,11 @@ export default function useImageHistory(): UseImageHistoryResult {
       if (cleanUrl.startsWith('/')) {
         // 将相对URL转换为绝对URL
         cleanUrl = `${window.location.origin}${cleanUrl}`;
-        console.log('转换相对URL为绝对URL:', cleanUrl);
         return cleanUrl;
       }
       
       // 3. 检查URL是否包含http协议
       if (!cleanUrl.startsWith('http://') && !cleanUrl.startsWith('https://')) {
-        console.log('URL缺少协议，添加https://', cleanUrl);
         cleanUrl = `https://${cleanUrl}`;
       }
       
@@ -82,11 +93,11 @@ export default function useImageHistory(): UseImageHistoryResult {
         new URL(cleanUrl);
         return cleanUrl;
       } catch (parseError) {
-        console.error('URL格式无效:', cleanUrl, parseError);
+        console.error('URL格式无效:', cleanUrl);
         return null;
       }
     } catch (error) {
-      console.error('验证URL过程中出错:', url, error);
+      console.error('验证URL过程中出错:', url);
       return null;
     }
   }, []);
@@ -108,13 +119,20 @@ export default function useImageHistory(): UseImageHistoryResult {
         return;
       }
       
+      // 重置分页状态
+      setOffset(0);
+      setHasMore(true);
+      
       // 使用缓存服务获取数据
       const historyData = await cacheService.getOrFetch(
         HISTORY_CACHE_KEY,
         async () => {
-          // 请求参数中确保限制记录数量
-          const response = await fetch(`/api/history/get?limit=${MAX_HISTORY_RECORDS}`, {
-            headers: { 'Cache-Control': 'no-cache' }
+          // 首次加载只获取一批数据
+          const response = await fetch(`/api/history/get?limit=${batchSize}&offset=0`, {
+            headers: { 
+              'Cache-Control': 'no-cache',
+              'X-Requested-With': 'XMLHttpRequest' // 防止重复请求
+            }
           });
           
           if (!response.ok) {
@@ -143,7 +161,6 @@ export default function useImageHistory(): UseImageHistoryResult {
       isCached.current = !forceRefresh && cacheService.checkStatus(HISTORY_CACHE_KEY) !== 'none';
       
       if (historyData.success) {
-        // 直接打印历史记录，帮助调试
         console.log(`[useImageHistory] 获取到历史记录数据: ${historyData.history.length} 条 ${isCached.current ? '(来自缓存)' : '(来自API)'}`);
         
         if (!Array.isArray(historyData.history)) {
@@ -153,11 +170,18 @@ export default function useImageHistory(): UseImageHistoryResult {
           return;
         }
         
+        // 检查是否还有更多数据
+        setHasMore(historyData.history.length >= batchSize);
+        
+        // 更新offset
+        setOffset(prev => prev + historyData.history.length);
+        
         if (historyData.history.length === 0) {
           console.log('[useImageHistory] 历史记录为空');
           setHistoryItems([]);
           setImages([]);
           setError(null);
+          allHistoryItems.current = [];
           setIsLoading(false);
           return;
         }
@@ -173,13 +197,14 @@ export default function useImageHistory(): UseImageHistoryResult {
         
         console.log('[useImageHistory] 处理后的有效图片数据:', validImages.length, '条');
         
-        // 先更新历史记录状态
+        // 保存完整数据
+        allHistoryItems.current = validImages;
+        
+        // 更新历史记录状态
         setHistoryItems(validImages);
         
         // 确保有历史记录时更新生成图片状态
         if (validImages.length > 0) {
-          console.log('[历史钩子] 从历史记录加载图片到展示区域');
-          
           // 按创建时间排序图片，最新的在前面
           const sortedImages = [...validImages].sort((a, b) => {
             // 如果没有创建时间，默认放在末尾
@@ -195,11 +220,16 @@ export default function useImageHistory(): UseImageHistoryResult {
           
           // 防止出现重复URL
           const uniqueUrls = Array.from(new Set(imageUrls)) as string[];
-          console.log('[历史钩子] 处理后的唯一URL数量:', uniqueUrls.length);
           
           // 设置生成图片状态
           setImages(uniqueUrls);
           console.log('[历史钩子] 成功设置历史图片到展示区');
+          
+          // 预加载第一批图片（最多5张）
+          uniqueUrls.slice(0, 5).forEach(url => {
+            const img = new Image();
+            img.src = url;
+          });
         } else {
           console.warn('[历史钩子] 处理后没有有效的图片URL');
         }
@@ -227,6 +257,7 @@ export default function useImageHistory(): UseImageHistoryResult {
               }))
               .filter((item: any) => item.image_url);
             
+            allHistoryItems.current = validImages;
             setHistoryItems(validImages);
             
             if (validImages.length > 0) {
@@ -239,22 +270,111 @@ export default function useImageHistory(): UseImageHistoryResult {
         }
       }
     } finally {
-      // 短延时确保DOM更新
-      setTimeout(() => {
-        if (showLoading) {
-          setIsLoading(false);
-        }
-        console.log('[useImageHistory] 历史记录加载完成');
-      }, 500);
+      // 设置加载结束状态
+      if (showLoading) {
+        setIsLoading(false);
+      }
+      console.log('[useImageHistory] 历史记录加载完成');
     }
-  }, [router, validateImageUrl]);
+  }, [router, validateImageUrl, batchSize]);
 
-  // 删除图片的方法
+  // 加载更多历史记录
+  const loadMore = useCallback(async (): Promise<boolean> => {
+    if (!hasMore || isLoading) return false;
+    
+    try {
+      console.log(`[useImageHistory] 加载更多历史记录，当前偏移量: ${offset}`);
+      setIsLoading(true);
+      
+      // 使用IndexedDB缓存检查是否有后续批次的缓存
+      const cacheKey = `${HISTORY_CACHE_KEY}:offset_${offset}`;
+      const historyData = await cacheService.getOrFetch(
+        cacheKey,
+        async () => {
+          const response = await fetch(`/api/history/get?limit=${batchSize}&offset=${offset}`, {
+            headers: { 
+              'Cache-Control': 'no-cache',
+              'X-Requested-With': 'XMLHttpRequest'
+            }
+          });
+          
+          if (!response.ok) {
+            throw new Error(`获取更多历史记录失败: HTTP ${response.status}`);
+          }
+          
+          return await response.json();
+        },
+        {
+          expiresIn: HISTORY_CACHE_TTL,
+          forceRefresh: false
+        }
+      );
+      
+      if (historyData.success && Array.isArray(historyData.history)) {
+        console.log(`[useImageHistory] 加载更多历史记录成功，获取${historyData.history.length}条`);
+        
+        // 检查是否还有更多数据
+        setHasMore(historyData.history.length >= batchSize);
+        
+        // 更新偏移量
+        setOffset(prev => prev + historyData.history.length);
+        
+        if (historyData.history.length === 0) {
+          setIsLoading(false);
+          return false;
+        }
+        
+        // 处理新加载的数据
+        const validImages = historyData.history
+          .filter((item: any) => item && item.image_url)
+          .map((item: any) => ({
+            ...item,
+            image_url: validateImageUrl(item.image_url)
+          }))
+          .filter((item: any) => item.image_url);
+        
+        // 合并新旧数据
+        const combinedHistoryItems = [...allHistoryItems.current, ...validImages];
+        allHistoryItems.current = combinedHistoryItems;
+        
+        // 更新状态
+        setHistoryItems(combinedHistoryItems);
+        
+        // 更新图片URL数组
+        if (validImages.length > 0) {
+          const newImageUrls = validImages.map((item: any) => item.image_url);
+          setImages(prev => {
+            const combined = [...prev, ...newImageUrls];
+            return Array.from(new Set(combined));
+          });
+        }
+        
+        setIsLoading(false);
+        return true;
+      } else {
+        console.error('[useImageHistory] 加载更多历史记录失败:', historyData.error || '未知错误');
+        setHasMore(false);
+        setIsLoading(false);
+        return false;
+      }
+    } catch (error) {
+      console.error('[useImageHistory] 加载更多历史记录出错:', error);
+      setHasMore(false);
+      setIsLoading(false);
+      return false;
+    }
+  }, [hasMore, isLoading, offset, batchSize, validateImageUrl]);
+
+  // 删除图片
   const deleteImage = useCallback(async (imageUrl: string): Promise<void> => {
     try {
-      // 先在本地状态中移除，提供即时反馈
+      console.log('[useImageHistory] 删除图片:', imageUrl);
+      
+      // 先从本地状态移除
+      const newHistoryItems = allHistoryItems.current.filter(item => item.image_url !== imageUrl);
+      allHistoryItems.current = newHistoryItems;
+      setHistoryItems(newHistoryItems);
       setImages(prev => prev.filter(url => url !== imageUrl));
-      setHistoryItems(prev => prev.filter(item => item.image_url !== imageUrl));
       
       // 调用API删除
       const response = await fetch('/api/history/delete', {
@@ -265,36 +385,29 @@ export default function useImageHistory(): UseImageHistoryResult {
         body: JSON.stringify({ imageUrl }),
       });
       
-      const data = await response.json();
-      if (!data.success) {
-        throw new Error(data.error || '删除图片失败');
+      if (!response.ok) {
+        throw new Error(`删除图片失败: HTTP ${response.status}`);
       }
       
-      console.log('[useImageHistory] 成功删除图片:', imageUrl);
-      
-      // 刷新历史记录缓存
+      // 删除缓存
       cacheService.delete(HISTORY_CACHE_KEY);
+      // 删除所有分页缓存
+      for (let i = 0; i < offset; i += batchSize) {
+        cacheService.delete(`${HISTORY_CACHE_KEY}:offset_${i}`);
+      }
+      
+      console.log('[useImageHistory] 删除图片成功');
     } catch (error) {
       console.error('[useImageHistory] 删除图片失败:', error);
-      // 不恢复UI状态，保持删除体验
+      // 恢复删除前的状态 - 可选
+      await fetchImageHistory(true, false);
+      throw error;
     }
-  }, []);
+  }, [batchSize, fetchImageHistory, offset]);
 
-  // 初始化时获取历史记录
+  // 初始加载
   useEffect(() => {
-    fetchImageHistory();
-    
-    // 监听缓存更新事件
-    const unsubscribe = cacheService.onRefresh(HISTORY_CACHE_KEY, () => {
-      console.log('[useImageHistory] 检测到历史记录缓存更新，刷新状态');
-      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
-        fetchImageHistory(false, false);
-      }
-    });
-    
-    return () => {
-      unsubscribe();
-    };
+    fetchImageHistory(false, true);
   }, [fetchImageHistory]);
 
   return {
@@ -304,6 +417,9 @@ export default function useImageHistory(): UseImageHistoryResult {
     error,
     isCached: isCached.current,
     refetch: fetchImageHistory,
-    deleteImage
+    deleteImage,
+    loadMore,
+    hasMore,
+    batchSize
   };
 } 

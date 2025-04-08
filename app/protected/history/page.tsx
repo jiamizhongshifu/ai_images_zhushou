@@ -1,8 +1,8 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { Loader2, AlertCircle, ChevronRight, ChevronLeft } from "lucide-react";
+import { Loader2, AlertCircle, ChevronRight, ChevronLeft, ArrowDown, ImageIcon } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import React from "react";
@@ -15,18 +15,27 @@ import useNotification from "@/hooks/useNotification";
 import GeneratedImageGallery from "@/components/creation/generated-image-gallery";
 import { ResponsiveContainer, ResponsiveSection, ResponsiveGrid } from "@/components/ui/responsive-container";
 
+// 优化参数 - 每批加载的图片数量
+const ITEMS_PER_BATCH = 12;
+
 export default function HistoryPage() {
   const router = useRouter();
   
   // 状态管理
   const [error, setError] = useState("");
   const [dataChecked, setDataChecked] = useState(false);
-  const [currentPage, setCurrentPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(1);
-  const ITEMS_PER_PAGE = 12;
+  const observerRef = useRef<IntersectionObserver | null>(null);
+  const loadMoreRef = useRef<HTMLDivElement>(null);
   
-  // 使用自定义hooks
-  const { images, isLoading, refetch: refreshHistory, deleteImage } = useImageHistory();
+  // 使用自定义hooks - 使用优化后的每批加载数量
+  const { 
+    images, 
+    isLoading, 
+    refetch: refreshHistory, 
+    deleteImage,
+    loadMore,
+    hasMore
+  } = useImageHistory(ITEMS_PER_BATCH);
   
   const { 
     handleImageLoad, 
@@ -35,9 +44,6 @@ export default function HistoryPage() {
   } = useImageHandling();
   
   const { showNotification } = useNotification();
-  
-  // 存储按页码分好组的历史记录
-  const [historyItems, setHistoryItems] = useState<string[]>([]);
   
   // 刷新历史记录
   const handleRefresh = async () => {
@@ -50,6 +56,17 @@ export default function HistoryPage() {
     }
   };
   
+  // 处理加载更多
+  const handleLoadMore = useCallback(async () => {
+    if (isLoading || !hasMore) return;
+    try {
+      await loadMore();
+    } catch (err) {
+      console.error("加载更多历史记录失败:", err);
+      setError("加载更多图片失败，请稍后再试");
+    }
+  }, [isLoading, hasMore, loadMore]);
+  
   // 初始加载和数据处理
   useEffect(() => {
     // 初始加载
@@ -57,74 +74,31 @@ export default function HistoryPage() {
       handleRefresh();
       setDataChecked(true);
     }
+  }, [dataChecked]);
+  
+  // 设置交叉观察器，实现无限滚动
+  useEffect(() => {
+    if (!loadMoreRef.current) return;
     
-    // 计算总页数
-    const total = Math.ceil(images.length / ITEMS_PER_PAGE);
-    setTotalPages(total > 0 ? total : 1);
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const [entry] = entries;
+        if (entry.isIntersecting && !isLoading && hasMore) {
+          handleLoadMore();
+        }
+      },
+      { threshold: 0.1 } // 当10%的元素可见时触发
+    );
     
-    // 分页显示历史记录
-    const startIdx = (currentPage - 1) * ITEMS_PER_PAGE;
-    const endIdx = startIdx + ITEMS_PER_PAGE;
+    observer.observe(loadMoreRef.current);
+    observerRef.current = observer;
     
-    // 处理历史记录图片
-    const paginatedImages = images.slice(startIdx, endIdx);
-    const urls = paginatedImages.map(item => {
-      // 检查是字符串还是对象
-      if (typeof item === 'string') {
-        return item;
-      } else if (item && typeof item === 'object') {
-        // 如果是对象，尝试获取image_url属性
-        // @ts-ignore - 忽略类型错误，因为我们已经做了运行时检查
-        return item.image_url || '';
+    return () => {
+      if (observerRef.current) {
+        observerRef.current.disconnect();
       }
-      return '';
-    }).filter(url => url !== ''); // 过滤掉空字符串
-    
-    setHistoryItems(urls);
-    
-  }, [images, currentPage, dataChecked]);
-  
-  // 处理页码变化
-  const handlePageChange = (page: number) => {
-    if (page < 1 || page > totalPages) return;
-    setCurrentPage(page);
-    // 页面滚动到顶部
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
-  
-  // 生成页码数组
-  const generatePageNumbers = (): (number | string)[] => {
-    const pages: (number | string)[] = [];
-    
-    // 总是显示第一页
-    pages.push(1);
-    
-    // 显示当前页码周围的2页
-    const startPage = Math.max(2, currentPage - 1);
-    const endPage = Math.min(totalPages - 1, currentPage + 1);
-    
-    // 添加省略号
-    if (startPage > 2) {
-      pages.push('...');
-    }
-    
-    // 添加中间页码
-    for (let i = startPage; i <= endPage; i++) {
-      pages.push(i);
-    }
-    
-    // 添加省略号
-    if (endPage < totalPages - 1) {
-      pages.push('...');
-    }
-    
-    // 添加最后一页(如果总页数大于1)
-    if (totalPages > 1) {
-      pages.push(totalPages);
-    }
-    
-    return pages;
-  };
+    };
+  }, [isLoading, hasMore, handleLoadMore]);
 
   return (
     <div className="flex-1 w-full flex flex-col items-center">
@@ -153,74 +127,82 @@ export default function HistoryPage() {
           <div className="flex flex-col space-y-1.5 p-6 font-quicksand">
             <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center">
               <h2 className="text-xl font-bold leading-none tracking-tight font-quicksand text-foreground mb-1 sm:mb-0">我的历史图片</h2>
-              <p className="text-sm text-muted-foreground">共 {images.length} 张图片，当前第 {currentPage} 页，每页显示 {ITEMS_PER_PAGE} 张</p>
+              <div className="flex items-center">
+                <p className="text-sm text-muted-foreground">已加载 {images.length} 张图片</p>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="ml-2 text-primary hover:text-primary/80 hover:bg-primary/10"
+                  onClick={handleRefresh}
+                  disabled={isLoading}
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  </svg>
+                </Button>
+              </div>
             </div>
           </div>
           
           <div className="p-6 pt-0 font-nunito">
             {/* 使用现有的GeneratedImageGallery组件，确保功能一致性 */}
             <GeneratedImageGallery
-              images={historyItems}
-              isLoading={isLoading}
+              images={images}
+              isLoading={isLoading && images.length === 0} // 只在初始加载时显示加载状态
               onImageLoad={handleImageLoad}
               onImageError={handleImageError}
               onDownloadImage={downloadImage}
               onDeleteImage={deleteImage}
               hideViewMoreButton={true}
+              isLargerSize={false}
             />
+            
+            {/* 加载更多指示器 */}
+            {hasMore && (
+              <div 
+                ref={loadMoreRef}
+                className={`w-full flex justify-center items-center py-8 mt-4 ${isLoading ? 'opacity-100' : 'opacity-80'}`}
+              >
+                {isLoading ? (
+                  <div className="flex flex-col items-center">
+                    <Loader2 className="h-6 w-6 animate-spin text-primary mb-2" />
+                    <p className="text-sm text-muted-foreground">加载更多图片...</p>
+                  </div>
+                ) : (
+                  <div className="flex flex-col items-center cursor-pointer" onClick={handleLoadMore}>
+                    <ArrowDown className="h-5 w-5 text-primary mb-1" />
+                    <p className="text-sm text-primary">点击加载更多</p>
+                  </div>
+                )}
+              </div>
+            )}
+            
+            {/* 没有更多图片提示 */}
+            {!hasMore && images.length > 0 && (
+              <div className="w-full text-center py-6 mt-4">
+                <p className="text-sm text-muted-foreground">已加载全部图片</p>
+              </div>
+            )}
+            
+            {/* 无图片提示 */}
+            {!isLoading && images.length === 0 && (
+              <div className="w-full flex flex-col items-center justify-center py-16">
+                <div className="bg-muted/50 rounded-full p-4 mb-3">
+                  <ImageIcon className="h-8 w-8 text-muted-foreground/60" />
+                </div>
+                <p className="text-foreground/80 mb-2 font-quicksand text-lg">暂无历史图片</p>
+                <p className="text-sm text-muted-foreground mb-4">您尚未生成任何图片</p>
+                <Button
+                  variant="default"
+                  onClick={() => router.push("/protected")}
+                  className="bg-primary/90 hover:bg-primary shadow-ghibli-sm hover:shadow-ghibli transition-all duration-300"
+                >
+                  去创建图片
+                </Button>
+              </div>
+            )}
           </div>
         </div>
-        
-        {/* 分页控制 */}
-        {totalPages > 1 && (
-          <div className="flex justify-center mb-6">
-            <div className="flex items-center gap-2 bg-card/60 rounded-xl border border-border shadow-ghibli-sm p-2 md:p-3">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => handlePageChange(currentPage - 1)}
-                disabled={currentPage === 1 || isLoading}
-                className="h-8 px-2 md:px-3 bg-background/60 hover:bg-primary/5 hover:text-primary border-border/50"
-              >
-                <ChevronLeft className="h-4 w-4" />
-              </Button>
-              
-              <div className="flex items-center gap-1">
-                {generatePageNumbers().map((page, index) => (
-                  <React.Fragment key={index}>
-                    {page === '...' ? (
-                      <span className="text-muted-foreground px-2">...</span>
-                    ) : (
-                      <Button
-                        variant={currentPage === page ? "default" : "outline"}
-                        size="sm"
-                        onClick={() => handlePageChange(page as number)}
-                        disabled={isLoading}
-                        className={`h-8 w-8 p-0 ${
-                          currentPage === page 
-                            ? "bg-primary text-primary-foreground shadow-ghibli-sm" 
-                            : "bg-background/60 hover:bg-primary/5 hover:text-primary border-border/50"
-                        }`}
-                      >
-                        {page}
-                      </Button>
-                    )}
-                  </React.Fragment>
-                ))}
-              </div>
-              
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => handlePageChange(currentPage + 1)}
-                disabled={currentPage === totalPages || isLoading}
-                className="h-8 px-2 md:px-3 bg-background/60 hover:bg-primary/5 hover:text-primary border-border/50"
-              >
-                <ChevronRight className="h-4 w-4" />
-              </Button>
-            </div>
-          </div>
-        )}
         
         {/* 返回创作页按钮 */}
         <div className="flex justify-center">

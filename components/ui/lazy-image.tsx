@@ -1,6 +1,66 @@
 import React, { useState, useEffect, useRef, ImgHTMLAttributes } from 'react';
 import { Loader2, ImageIcon } from 'lucide-react';
 
+// 全局预加载队列管理
+const PreloadManager = {
+  queue: [] as string[],
+  inProgress: new Set<string>(),
+  maxConcurrent: 5, // 最大并发加载数
+  
+  // 添加到预加载队列
+  add(url: string): void {
+    if (!url || this.queue.includes(url) || this.inProgress.has(url)) return;
+    this.queue.push(url);
+    this.processQueue();
+  },
+  
+  // 处理队列
+  processQueue(): void {
+    if (this.inProgress.size >= this.maxConcurrent) return;
+    
+    const url = this.queue.shift();
+    if (!url) return;
+    
+    this.preloadImage(url);
+  },
+  
+  // 预加载图片
+  preloadImage(url: string): void {
+    this.inProgress.add(url);
+    
+    const img = new Image();
+    img.src = url;
+    
+    const handleComplete = () => {
+      this.inProgress.delete(url);
+      this.processQueue();
+    };
+    
+    img.onload = handleComplete;
+    img.onerror = handleComplete;
+  }
+};
+
+// 图片缓存管理
+const ImageCache = {
+  cache: new Map<string, boolean>(),
+  
+  // 检查图片是否已缓存
+  has(url: string): boolean {
+    return this.cache.has(url);
+  },
+  
+  // 添加到缓存
+  add(url: string): void {
+    this.cache.set(url, true);
+  },
+  
+  // 从缓存中移除
+  remove(url: string): void {
+    this.cache.delete(url);
+  }
+};
+
 interface LazyImageProps extends Omit<ImgHTMLAttributes<HTMLImageElement>, 'onLoad' | 'onError'> {
   src: string;
   alt: string;
@@ -14,6 +74,7 @@ interface LazyImageProps extends Omit<ImgHTMLAttributes<HTMLImageElement>, 'onLo
   onImageError?: () => void;
   blurEffect?: boolean;
   fadeIn?: boolean;
+  priority?: boolean; // 高优先级图片，立即加载
 }
 
 /**
@@ -33,55 +94,134 @@ export function LazyImage({
   onImageError,
   blurEffect = true,
   fadeIn = true,
+  priority = false,
   ...props
 }: LazyImageProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const observerRef = useRef<IntersectionObserver | null>(null);
+  const imageRef = useRef<HTMLImageElement | null>(null);
+  const imageLoadedRef = useRef<boolean>(false);
+  const onImageLoadRef = useRef(onImageLoad);
+  const onImageErrorRef = useRef(onImageError);
+  
   const [loaded, setLoaded] = useState<boolean>(false);
   const [error, setError] = useState<boolean>(false);
-  const [inView, setInView] = useState<boolean>(false);
-  const imgRef = useRef<HTMLImageElement>(null);
-  const observerRef = useRef<IntersectionObserver | null>(null);
+  const [inView, setInView] = useState<boolean>(priority);
   
-  // 处理图片加载
-  const handleImageLoad = () => {
-    setLoaded(true);
-    setError(false);
-    if (onImageLoad) onImageLoad();
-  };
-  
-  // 处理图片加载错误
-  const handleImageError = () => {
-    setLoaded(false);
-    setError(true);
-    if (onImageError) onImageError();
-  };
-  
-  // 设置交叉观察器监听元素可见性
+  // 更新回调引用以避免无限循环
   useEffect(() => {
-    observerRef.current = new IntersectionObserver((entries) => {
+    onImageLoadRef.current = onImageLoad;
+    onImageErrorRef.current = onImageError;
+  }, [onImageLoad, onImageError]);
+  
+  // 仅在挂载时检查缓存，避免循环更新
+  useEffect(() => {
+    // 检查图片是否已在缓存中
+    if (src && ImageCache.has(src)) {
+      if (!imageLoadedRef.current) {
+        imageLoadedRef.current = true;
+        setLoaded(true);
+        
+        // 使用引用来调用回调，避免循环更新
+        if (onImageLoadRef.current) {
+          setTimeout(() => onImageLoadRef.current && onImageLoadRef.current(), 0);
+        }
+      }
+    }
+  }, [src]); // 只依赖src变化，不依赖回调函数
+  
+  // 修改图片加载逻辑，避免重复加载和回调
+  useEffect(() => {
+    if (!inView || !src || imageLoadedRef.current) return;
+    
+    if (ImageCache.has(src)) {
+      if (!loaded) {
+        setLoaded(true);
+        imageLoadedRef.current = true;
+        
+        // 使用引用来调用回调，避免循环更新
+        if (onImageLoadRef.current) {
+          setTimeout(() => onImageLoadRef.current && onImageLoadRef.current(), 0);
+        }
+      }
+      return;
+    }
+    
+    // 使用预加载管理器
+    PreloadManager.add(src);
+    
+    const img = new Image();
+    img.src = src;
+    imageRef.current = img;
+    
+    const handleLoad = () => {
+      if (!imageLoadedRef.current) {
+        imageLoadedRef.current = true;
+        setLoaded(true);
+        setError(false);
+        ImageCache.add(src);
+        
+        // 使用引用来调用回调，避免循环更新
+        if (onImageLoadRef.current) {
+          setTimeout(() => onImageLoadRef.current && onImageLoadRef.current(), 0);
+        }
+      }
+    };
+    
+    const handleError = () => {
+      setLoaded(false);
+      setError(true);
+      
+      // 使用引用来调用回调，避免循环更新
+      if (onImageErrorRef.current) {
+        setTimeout(() => onImageErrorRef.current && onImageErrorRef.current(), 0);
+      }
+    };
+    
+    img.onload = handleLoad;
+    img.onerror = handleError;
+    
+    return () => {
+      // 清理事件监听
+      if (imageRef.current) {
+        imageRef.current.onload = null;
+        imageRef.current.onerror = null;
+      }
+    };
+  }, [inView, src, loaded]); // 不依赖回调函数，避免循环更新
+  
+  // 优化交叉观察器
+  useEffect(() => {
+    if (priority) {
+      setInView(true);
+      return;
+    }
+    
+    const observer = new IntersectionObserver((entries) => {
       entries.forEach((entry) => {
         if (entry.isIntersecting) {
           setInView(true);
           // 一旦元素可见，停止观察
-          if (observerRef.current && imgRef.current) {
-            observerRef.current.unobserve(imgRef.current);
+          if (containerRef.current) {
+            observer.unobserve(containerRef.current);
           }
         }
       });
     }, {
-      rootMargin: '200px', // 提前200px开始加载图片
-      threshold: 0.01 // 只需要1%可见就开始加载
+      rootMargin: '300px',
+      threshold: 0.01
     });
     
-    if (imgRef.current) {
-      observerRef.current.observe(imgRef.current);
+    if (containerRef.current) {
+      observer.observe(containerRef.current);
     }
     
+    observerRef.current = observer;
+    
     return () => {
-      if (observerRef.current) {
-        observerRef.current.disconnect();
-      }
+      observer.disconnect();
     };
-  }, []);
+  }, [priority]); // 仅在priority变化时重新设置观察器
   
   // 基础图片样式
   const baseImageClass = `${className} ${fadeIn ? 'transition-opacity duration-500' : ''}`;
@@ -111,25 +251,35 @@ export function LazyImage({
   // 渲染加载中的预览或错误状态
   if (error) {
     return (
-      <div ref={imgRef} className={`relative ${placeholderClassName}`} style={props.style}>
+      <div ref={containerRef} className={`relative ${placeholderClassName}`} style={props.style}>
         {errorElement || defaultErrorElement}
       </div>
     );
   }
   
   return (
-    <div ref={imgRef} className={`relative ${placeholderClassName}`} style={props.style}>
+    <div ref={containerRef} className={`relative ${placeholderClassName}`} style={props.style}>
       {/* 加载状态 */}
       {!loaded && (inView ? loadingElement || defaultLoadingElement : null)}
       
-      {/* 只有在视口中才加载图片 */}
+      {/* 只有在视口中或高优先级时才加载图片 */}
       {inView && (
         <img
           src={src}
           alt={alt}
           className={imageClass}
-          onLoad={handleImageLoad}
-          onError={handleImageError}
+          onLoad={() => {
+            // 使用引用中的回调函数，避免重新渲染导致的无限循环
+            if (onImageLoadRef.current) {
+              onImageLoadRef.current();
+            }
+          }}
+          onError={() => {
+            // 使用引用中的回调函数，避免重新渲染导致的无限循环
+            if (onImageErrorRef.current) {
+              onImageErrorRef.current();
+            }
+          }}
           {...props}
         />
       )}
@@ -152,61 +302,130 @@ export function LazyBackgroundImage({
   fadeIn = true,
   children,
   style,
+  priority = false,
+  onImageLoad,
+  onImageError,
   ...props
 }: Omit<LazyImageProps, 'alt'> & { children?: React.ReactNode }) {
-  const [loaded, setLoaded] = useState<boolean>(false);
-  const [error, setError] = useState<boolean>(false);
-  const [inView, setInView] = useState<boolean>(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const observerRef = useRef<IntersectionObserver | null>(null);
+  const imageLoadedRef = useRef<boolean>(false);
+  const onImageLoadRef = useRef(onImageLoad);
+  const onImageErrorRef = useRef(onImageError);
   
-  // 预加载图片
+  const [loaded, setLoaded] = useState<boolean>(false);
+  const [error, setError] = useState<boolean>(false);
+  const [inView, setInView] = useState<boolean>(priority);
+  
+  // 更新回调引用以避免无限循环
   useEffect(() => {
-    if (!inView || !src) return;
+    onImageLoadRef.current = onImageLoad;
+    onImageErrorRef.current = onImageError;
+  }, [onImageLoad, onImageError]);
+  
+  // 仅在挂载时检查缓存，避免循环更新
+  useEffect(() => {
+    if (src && ImageCache.has(src)) {
+      if (!imageLoadedRef.current) {
+        imageLoadedRef.current = true;
+        setLoaded(true);
+        
+        // 使用引用来调用回调，避免循环更新
+        if (onImageLoadRef.current) {
+          setTimeout(() => onImageLoadRef.current && onImageLoadRef.current(), 0);
+        }
+      }
+    }
+  }, [src]); // 只依赖src变化，不依赖回调函数
+  
+  // 修改图片加载逻辑，避免重复加载和回调
+  useEffect(() => {
+    if (!inView || !src || imageLoadedRef.current) return;
+    
+    if (ImageCache.has(src)) {
+      if (!loaded) {
+        setLoaded(true);
+        imageLoadedRef.current = true;
+        
+        // 使用引用来调用回调，避免循环更新
+        if (onImageLoadRef.current) {
+          setTimeout(() => onImageLoadRef.current && onImageLoadRef.current(), 0);
+        }
+      }
+      return;
+    }
+    
+    // 使用预加载管理器
+    PreloadManager.add(src);
     
     const img = new Image();
     img.src = src;
     
-    img.onload = () => {
-      setLoaded(true);
-      setError(false);
-      if (props.onImageLoad) props.onImageLoad();
+    const handleLoad = () => {
+      if (!imageLoadedRef.current) {
+        imageLoadedRef.current = true;
+        setLoaded(true);
+        setError(false);
+        ImageCache.add(src);
+        
+        // 使用引用来调用回调，避免循环更新
+        if (onImageLoadRef.current) {
+          setTimeout(() => onImageLoadRef.current && onImageLoadRef.current(), 0);
+        }
+      }
     };
     
-    img.onerror = () => {
+    const handleError = () => {
       setLoaded(false);
       setError(true);
-      if (props.onImageError) props.onImageError();
+      
+      // 使用引用来调用回调，避免循环更新
+      if (onImageErrorRef.current) {
+        setTimeout(() => onImageErrorRef.current && onImageErrorRef.current(), 0);
+      }
     };
-  }, [inView, src, props.onImageLoad, props.onImageError]);
+    
+    img.onload = handleLoad;
+    img.onerror = handleError;
+    
+    return () => {
+      img.onload = null;
+      img.onerror = null;
+    };
+  }, [inView, src, loaded]); // 不依赖回调函数，避免循环更新
   
-  // 设置交叉观察器
+  // 优化交叉观察器
   useEffect(() => {
-    observerRef.current = new IntersectionObserver((entries) => {
+    if (priority) {
+      setInView(true);
+      return;
+    }
+    
+    const observer = new IntersectionObserver((entries) => {
       entries.forEach((entry) => {
         if (entry.isIntersecting) {
           setInView(true);
           // 一旦元素可见，停止观察
-          if (observerRef.current && containerRef.current) {
-            observerRef.current.unobserve(containerRef.current);
+          if (containerRef.current) {
+            observer.unobserve(containerRef.current);
           }
         }
       });
     }, {
-      rootMargin: '200px',
+      rootMargin: '300px',
       threshold: 0.01
     });
     
     if (containerRef.current) {
-      observerRef.current.observe(containerRef.current);
+      observer.observe(containerRef.current);
     }
     
+    observerRef.current = observer;
+    
     return () => {
-      if (observerRef.current) {
-        observerRef.current.disconnect();
-      }
+      observer.disconnect();
     };
-  }, []);
+  }, [priority]); // 仅在priority变化时重新设置观察器
   
   // 样式计算
   const containerStyle: React.CSSProperties = {
@@ -248,7 +467,7 @@ export function LazyBackgroundImage({
       {...props}
     >
       {/* 加载状态 */}
-      {inView && !loaded && !error && (loadingElement || defaultLoadingElement)}
+      {!loaded && inView && (loadingElement || defaultLoadingElement)}
       
       {/* 错误状态 */}
       {error && (errorElement || defaultErrorElement)}

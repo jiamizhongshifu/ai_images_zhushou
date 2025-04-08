@@ -3,12 +3,14 @@ import { createClient } from '@/utils/supabase/server';
 
 // 历史记录最大数量限制
 const MAX_HISTORY_RECORDS = 100;
+// 缓存控制参数
+const CACHE_MAX_AGE = 300; // 5分钟缓存
 
 /**
  * 获取用户图片生成历史记录
  * 
  * GET 参数:
- * - limit: 可选，限制返回记录数量，默认100条
+ * - limit: 可选，限制返回记录数量，默认20条
  * - offset: 可选，分页偏移量，默认0
  * 
  * 返回:
@@ -27,11 +29,15 @@ const MAX_HISTORY_RECORDS = 100;
  * }
  */
 export async function GET(request: NextRequest) {
+  // 检查是否是重复请求
+  const requestId = request.headers.get('X-Request-ID') || '';
+  const isXHR = request.headers.get('X-Requested-With') === 'XMLHttpRequest';
+  
   try {
     // 获取请求参数
     const { searchParams } = new URL(request.url);
-    // 限制最大返回记录数为MAX_HISTORY_RECORDS
-    const requestedLimit = parseInt(searchParams.get('limit') || String(MAX_HISTORY_RECORDS));
+    // 默认每页20条，限制最大返回记录数为MAX_HISTORY_RECORDS
+    const requestedLimit = parseInt(searchParams.get('limit') || '20');
     const limit = Math.min(requestedLimit, MAX_HISTORY_RECORDS);
     const offset = parseInt(searchParams.get('offset') || '0');
     
@@ -105,11 +111,20 @@ export async function GET(request: NextRequest) {
     
     // 返回结果
     console.log(`成功获取${processedData.length}条历史记录，最多显示${MAX_HISTORY_RECORDS}条`);
-    console.log('首条记录示例:', processedData.length > 0 ? {
-      id: processedData[0].id,
-      image_url: processedData[0].image_url,
-      prompt: processedData[0].prompt?.substring(0, 30) + '...'
-    } : 'No records');
+    if (processedData.length > 0) {
+      console.log('首条记录示例:', {
+        id: processedData[0].id,
+        image_url: processedData[0].image_url,
+        prompt: processedData[0].prompt?.substring(0, 30) + '...'
+      });
+    }
+    
+    // 设置缓存控制头
+    const headers = {
+      'Content-Type': 'application/json',
+      'Cache-Control': `public, max-age=${CACHE_MAX_AGE}`,
+      'ETag': `"history-${user.id}-${offset}-${limit}-${Date.now()}"`,
+    };
     
     return new Response(JSON.stringify({ 
       success: true, 
@@ -118,13 +133,12 @@ export async function GET(request: NextRequest) {
         limit,
         offset,
         total_records: processedData.length,
+        has_more: processedData.length >= limit,
         max_limit: MAX_HISTORY_RECORDS
       }
     }), {
       status: 200,
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers
     });
   } catch (error) {
     console.error('获取历史记录出错:', error);
