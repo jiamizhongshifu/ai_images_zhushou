@@ -56,7 +56,7 @@ export async function POST(request: NextRequest) {
     }
     
     // 获取任务信息
-    const supabase = createAdminClient();
+    const supabase = await createAdminClient();
     const { data: task, error: taskError } = await supabase
       .from('ai_images_creator_tasks')
       .select('*')
@@ -136,7 +136,7 @@ export async function POST(request: NextRequest) {
  * 异步处理任务
  */
 async function processTask(taskId: string, preserveAspectRatio: boolean = false) {
-  const supabase = createAdminClient();
+  const supabase = await createAdminClient();
   
   // 优化取消任务检查逻辑，增加错误处理
   const checkTaskCancelled = async (): Promise<boolean> => {
@@ -712,7 +712,7 @@ async function updateTaskStatus(
   resultUrl: string | null = null,
   errorMessage: string | null = null
 ) {
-  const supabase = createAdminClient();
+  const supabase = await createAdminClient();
   
   const updateData: any = {
     status,
@@ -743,7 +743,7 @@ async function updateTaskStatus(
  * 更新任务退款状态
  */
 async function updateTaskRefundStatus(taskId: string, refunded: boolean) {
-  const supabase = createAdminClient();
+  const supabase = await createAdminClient();
   
   const { error } = await supabase
     .from('ai_images_creator_tasks')
@@ -762,7 +762,7 @@ async function updateTaskRefundStatus(taskId: string, refunded: boolean) {
  * 退还用户点数
  */
 async function refundCredits(userId: string) {
-  const supabase = createAdminClient();
+  const supabase = await createAdminClient();
   
   try {
     // 方法1: 先使用safe_decrement_credits RPC函数（如果存在）
@@ -846,7 +846,7 @@ async function saveImageHistory(
   modelUsed: string = 'gpt-4o-all',
   generationSettings: any = {}
 ) {
-  const supabase = createAdminClient();
+  const supabase = await createAdminClient();
   
   const { error } = await supabase
     .from('ai_images_creator_history')

@@ -14,7 +14,7 @@ export function Navbar() {
   const [isClient, setIsClient] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
-  const supabase = createClient();
+  const supabase = await createClient();
 
   useEffect(() => {
     // 标记为客户端环境

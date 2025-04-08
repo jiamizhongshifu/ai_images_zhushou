@@ -357,7 +357,7 @@ export async function POST(request: NextRequest) {
     console.log(`[${requestType}] 接收到图像生成请求:`, { prompt, hasImage, style });
 
     // 在扣除用户点数前先检查点数记录是否存在，如果不存在则创建
-    const supabaseAdmin = createAdminClient();
+    const supabaseAdmin = await createAdminClient();
     const { data: existingCredits, error: checkError } = await supabaseAdmin
       .from('ai_images_creator_credits')
       .select('*')

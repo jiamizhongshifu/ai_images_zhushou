@@ -13,7 +13,7 @@ export default function ProtectedLayout({
   children: React.ReactNode;
 }>) {
   const router = useRouter();
-  const supabase = createClient();
+  const supabase = await createClient();
   // 添加加载状态
   const [loading, setLoading] = useState(true); // 默认显示加载状态
   const [showAccessButton, setShowAccessButton] = useState(false);

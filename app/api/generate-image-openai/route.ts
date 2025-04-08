@@ -29,7 +29,7 @@ function getEffectiveOpenAIConfig() {
 // 更新用户点数
 async function updateUserCredits(userId: string, action: 'deduct' | 'add', amount = 1): Promise<boolean> {
   try {
-    const supabaseAdmin = createAdminClient();
+    const supabaseAdmin = await createAdminClient();
     
     if (action === 'deduct') {
       // 检查用户是否有足够的点数
@@ -78,7 +78,7 @@ async function saveImageHistory(
   status: string = 'completed'
 ): Promise<boolean> {
   try {
-    const supabaseAdmin = createAdminClient();
+    const supabaseAdmin = await createAdminClient();
     
     const { error } = await supabaseAdmin
       .from('ai_images_creator_history')
@@ -149,7 +149,7 @@ export async function POST(request: NextRequest) {
     console.log('收到图片生成请求:', { prompt, size, style });
     
     // 在扣除用户点数前先检查点数记录是否存在，如果不存在则创建
-    const supabaseAdmin = createAdminClient();
+    const supabaseAdmin = await createAdminClient();
     const { data: existingCredits, error: checkError } = await supabaseAdmin
       .from('ai_images_creator_credits')
       .select('*')

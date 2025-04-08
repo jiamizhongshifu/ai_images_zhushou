@@ -28,7 +28,7 @@ export function MainNav({ providedAuthState }: MainNavProps) {
   const router = useRouter();
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isClient, setIsClient] = useState(false);
-  const supabase = createClient();
+  const supabase = await createClient();
   const [isSigningOut, setIsSigningOut] = useState(false);
 
   // 导航项配置

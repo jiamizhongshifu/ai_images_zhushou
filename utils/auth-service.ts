@@ -516,7 +516,7 @@ class AuthService {
         }
         
         // 创建Supabase客户端
-        const supabase = createClient();
+        const supabase = await createClient();
         
         // 先检查当前会话
         const sessionResult = await supabase.auth.getSession();

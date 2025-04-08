@@ -12,7 +12,7 @@ export default function FixLogin() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const redirectPath = searchParams?.get('redirect') || null;
-  const supabase = createClient();
+  const supabase = await createClient();
   
   useEffect(() => {
     const checkAndFixLogin = async () => {

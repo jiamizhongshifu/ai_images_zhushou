@@ -27,7 +27,7 @@ export function createAdminClient() {
  */
 export async function userExists(userId: string): Promise<boolean> {
   try {
-    const supabase = createAdminClient();
+    const supabase = await createAdminClient();
     const { data, error } = await supabase
       .from('users')
       .select('id')
@@ -51,7 +51,7 @@ export async function userExists(userId: string): Promise<boolean> {
  */
 export async function getUserRole(userId: string): Promise<string | null> {
   try {
-    const supabase = createAdminClient();
+    const supabase = await createAdminClient();
     const { data, error } = await supabase
       .from('user_roles')
       .select('role')

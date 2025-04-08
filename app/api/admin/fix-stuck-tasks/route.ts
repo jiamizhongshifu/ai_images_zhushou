@@ -18,7 +18,7 @@ const isAuthorized = (req: NextRequest): boolean => {
 // 退还用户点数
 const refundCredits = async (userId: string) => {
   try {
-    const supabase = createAdminClient();
+    const supabase = await createAdminClient();
     
     // 获取当前点数
     const { data: currentData, error: fetchError } = await supabase
@@ -54,7 +54,7 @@ const refundCredits = async (userId: string) => {
 
 // 更新任务退款状态
 const updateTaskRefundStatus = async (taskId: string, refunded: boolean) => {
-  const supabase = createAdminClient();
+  const supabase = await createAdminClient();
   await supabase
     .from('ai_images_creator_tasks')
     .update({ 
@@ -79,7 +79,7 @@ export async function POST(req: NextRequest) {
     const cutoffTime = new Date();
     cutoffTime.setMinutes(cutoffTime.getMinutes() - timeThresholdMinutes);
     
-    const supabase = createAdminClient();
+    const supabase = await createAdminClient();
     
     // 获取所有卡在processing状态超过指定时间的任务
     const { data: stuckTasks, error: fetchError } = await supabase
@@ -203,7 +203,7 @@ export async function GET(req: NextRequest) {
     const cutoffTime = new Date();
     cutoffTime.setMinutes(cutoffTime.getMinutes() - timeThresholdMinutes);
     
-    const supabase = createAdminClient();
+    const supabase = await createAdminClient();
     
     // 获取卡住任务的数量
     const { count, error: countError } = await supabase

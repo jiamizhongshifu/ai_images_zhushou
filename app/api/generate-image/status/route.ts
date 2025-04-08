@@ -55,7 +55,7 @@ export async function GET(request: Request) {
         }
         
         // 使用管理员客户端直接查询任务，不需要用户ID
-        const supabase = createAdminClient();
+        const supabase = await createAdminClient();
         const { data: task, error } = await supabase
           .from('ai_images_creator_tasks')
           .select('*')

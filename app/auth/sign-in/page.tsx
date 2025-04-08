@@ -11,7 +11,7 @@ export default function SignIn() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const router = useRouter();
-  const supabase = createClient();
+  const supabase = await createClient();
 
   const handleSignIn = async (e: React.FormEvent) => {
     e.preventDefault();

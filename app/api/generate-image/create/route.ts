@@ -64,7 +64,7 @@ export async function POST(request: NextRequest) {
       
       // 如果用户没有点数记录，创建一个初始记录
       if (creditsError.code === 'PGRST116') {
-        const supabaseAdmin = createAdminClient();
+        const supabaseAdmin = await createAdminClient();
         await supabaseAdmin
           .from('ai_images_creator_credits')
           .insert({
@@ -116,7 +116,7 @@ export async function POST(request: NextRequest) {
     const taskId = `task_${uuidv4()}`;
     
     // 创建任务记录
-    const supabaseAdmin = createAdminClient();
+    const supabaseAdmin = await createAdminClient();
     const { error: taskError } = await supabaseAdmin
       .from('ai_images_creator_tasks')
       .insert({

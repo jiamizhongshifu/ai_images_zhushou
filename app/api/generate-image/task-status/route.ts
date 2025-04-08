@@ -58,7 +58,7 @@ export async function GET(request: NextRequest) {
     // 用户级别查询没有找到记录，尝试使用管理员权限查询
     // 这对于调试和管理员访问很有用
     try {
-      const adminClient = createAdminClient();
+      const adminClient = await createAdminClient();
       
       const { data: adminData, error: adminError } = await adminClient
         .from('ai_images_creator_tasks')

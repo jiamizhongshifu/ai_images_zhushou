@@ -23,7 +23,7 @@ export async function GET(req: Request) {
         }
         
         // 使用管理员客户端查询所有待处理任务
-        const supabase = createAdminClient();
+        const supabase = await createAdminClient();
         const { data: pendingTasks, error } = await supabase
           .from('ai_images_creator_tasks')
           .select('*')

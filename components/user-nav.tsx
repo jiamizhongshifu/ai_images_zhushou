@@ -15,7 +15,7 @@ export default function UserNav() {
   const [isLoading, setIsLoading] = useState(true);
   const [isSigningOut, setIsSigningOut] = useState(false);
   const [forceShowUser, setForceShowUser] = useState(false); // 强制显示用户状态的标志
-  const supabase = createClient();
+  const supabase = await createClient();
   
   useEffect(() => {
     async function getUser() {

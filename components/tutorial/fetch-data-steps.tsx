@@ -30,7 +30,7 @@ import { useEffect, useState } from 'react'
 
 export default function Page() {
   const [notes, setNotes] = useState<any[] | null>(null)
-  const supabase = createClient()
+  const supabase = await createClient()
 
   useEffect(() => {
     const getData = async () => {

@@ -40,7 +40,7 @@ export async function POST(request: NextRequest) {
     // 获取Supabase客户端
     const supabase = await createClient();
     // 同时创建管理员客户端用于备用和验证
-    const adminSupabase = createAdminClient();
+    const adminSupabase = await createAdminClient();
     
     // 验证用户身份
     const { data: { user }, error: authError } = await supabase.auth.getUser();

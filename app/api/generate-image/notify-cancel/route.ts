@@ -59,7 +59,7 @@ export async function POST(request: NextRequest) {
     cancelledTaskIds.add(taskId);
     
     // 使用管理员客户端查询最新任务状态
-    const supabase = createAdminClient();
+    const supabase = await createAdminClient();
     const { data: task, error } = await supabase
       .from('ai_images_creator_tasks')
       .select('status, updated_at')
@@ -133,7 +133,7 @@ export async function GET(request: NextRequest) {
     const isCancelledInMemory = cancelledTaskIds.has(taskId);
     
     // 使用管理员客户端查询数据库状态
-    const supabase = createAdminClient();
+    const supabase = await createAdminClient();
     const { data: task, error } = await supabase
       .from('ai_images_creator_tasks')
       .select('status')
