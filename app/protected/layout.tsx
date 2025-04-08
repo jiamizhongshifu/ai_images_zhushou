@@ -32,14 +32,44 @@ export default function ProtectedLayout({
   useEffect(() => {
     const checkUser = async () => {
       try {
+        // 检查URL参数是否有跳过检查标记
+        const urlParams = new URLSearchParams(window.location.search);
+        const skipCheck = urlParams.get('skip_middleware') === 'true';
+        
+        if (skipCheck) {
+          console.log('[受保护页面] 检测到跳过检查参数，直接允许访问');
+          setLoading(false);
+          return;
+        }
+        
+        // 检查cookie中的认证标记
+        const hasAuthCookie = document.cookie.includes('user_authenticated=true');
+        if (hasAuthCookie) {
+          console.log('[受保护页面] 检测到认证cookie，允许访问');
+          setLoading(false);
+          return;
+        }
+        
+        // 检查强制登录标记
+        const hasForceLogin = document.cookie.includes('force_login=true');
+        if (hasForceLogin) {
+          console.log('[受保护页面] 检测到强制登录cookie，允许访问');
+          setLoading(false);
+          return;
+        }
+        
         // 检查用户会话
         const { data: { user } } = await supabase.auth.getUser();
         
         if (user) {
           // 用户已登录，不显示加载状态
+          console.log('[受保护页面] 用户已登录，允许访问');
+          // 设置认证cookie，便于后续快速检查
+          document.cookie = 'user_authenticated=true; path=/; max-age=86400';
           setLoading(false);
         } else {
           // 用户未登录，显示访问按钮
+          console.log('[受保护页面] 用户未登录，显示访问按钮');
           setShowAccessButton(true);
           setLoading(false);
         }

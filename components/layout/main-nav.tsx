@@ -80,6 +80,12 @@ export function MainNav({ providedAuthState }: MainNavProps) {
             console.log('[MainNav] 检测到登出标记，强制设置为未登录状态');
             setIsAuthenticated(false);
           }
+          
+          // 检查cookie中的认证标记
+          if (document.cookie.includes('user_authenticated=true')) {
+            console.log('[MainNav] 检测到用户认证cookie，设置为已登录状态');
+            setIsAuthenticated(true);
+          }
         }
       } catch (error) {
         console.error('[MainNav] 检查登出标记出错:', error);
@@ -87,7 +93,50 @@ export function MainNav({ providedAuthState }: MainNavProps) {
     };
     
     checkLogoutFlags();
-  }, [providedAuthState]);
+    
+    // 添加会话状态变化监听
+    const setupSessionListener = async () => {
+      try {
+        // 添加认证状态变化监听器
+        const { data: { subscription } } = await supabase.auth.onAuthStateChange(
+          (event, session) => {
+            console.log(`[MainNav] 认证状态变化: ${event}`);
+            // 根据会话事件更新状态
+            const newIsAuthenticated = !!session;
+            setIsAuthenticated(newIsAuthenticated);
+            setUserEmail(session?.user?.email || null);
+            
+            // 如果用户登录，尝试获取积分
+            if (newIsAuthenticated) {
+              fetchCredits();
+            }
+          }
+        );
+        
+        // 组件卸载时取消订阅
+        return () => {
+          subscription.unsubscribe();
+        };
+      } catch (error) {
+        console.error('[MainNav] 设置认证状态监听器出错:', error);
+      }
+    };
+    
+    setupSessionListener();
+  }, [providedAuthState, supabase]);
+  
+  // 获取用户积分
+  const fetchCredits = async () => {
+    try {
+      const creditsResponse = await fetch('/api/credits/get');
+      if (creditsResponse.ok) {
+        const creditsData = await creditsResponse.json();
+        setCredits(creditsData.availableCredits || 0);
+      }
+    } catch (error) {
+      console.error('[MainNav] 获取积分信息失败:', error);
+    }
+  };
   
   const checkAuth = async () => {
     try {
