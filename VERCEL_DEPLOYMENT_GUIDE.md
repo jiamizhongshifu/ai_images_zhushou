@@ -18,6 +18,15 @@
    ```
 9. 安装了缺失的依赖`@radix-ui/react-tooltip`，解决了`tooltip.tsx`组件的导入错误。
 10. 更新了`pnpm-lock.yaml`文件，确保与`package.json`中的依赖保持同步，解决了Vercel部署时的"frozen-lockfile"错误。
+11. 添加了缺失的`credits`属性到`components/user-credit-display.tsx`中的`CreditRechargeDialog`组件：
+    ```tsx
+    <CreditRechargeDialog
+      isOpen={showCreditRechargeDialog}
+      onClose={() => setShowCreditRechargeDialog(false)}
+      onSuccess={handleRechargeSuccess}
+      credits={creditState.credits || 0}  // 添加了缺失的credits属性
+    />
+    ```
 
 ## 部署步骤
 
@@ -76,3 +85,4 @@ https://[your-vercel-domain]/toast-demo
 5. 创建一个有效的`.env`文件，确保必要的环境变量在构建过程中可用
 6. 确认`package.json`中包含了所有必要的依赖，特别是UI组件库的依赖 
 7. 确保`pnpm-lock.yaml`文件与`package.json`保持同步，避免"frozen-lockfile"错误 
+8. 查看props传递是否完整，特别是组件接口中定义为必需的属性 
