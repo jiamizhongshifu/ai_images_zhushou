@@ -12,7 +12,7 @@ export async function GET(req: Request) {
     
     if (authHeader && authHeader.startsWith('Bearer ')) {
       const token = authHeader.substring(7);
-      const validSecretKey = process.env.TASK_PROCESS_SECRET_KEY || 'your-secret-key-here';
+      const validSecretKey = process.env.TASK_PROCESS_SECRET_KEY || '';
       
       // 如果是系统秘钥，直接使用admin客户端查询所有任务
       if (token === validSecretKey) {

@@ -27,7 +27,7 @@ $model = isset($_GET['model']) ? $_GET['model'] : "gpt-4o-all";
 // 这个不用改
 $api_url = "https://api.tu-zi.com/v1/chat/completions";
 // 这个请到 https://api.tu-zi.com/token 自己创建
-$api_token = "sk-jITadcbUQUAvg5vVb4XoVqPvabBKZ9ZrDB63GFvMfy7XudFG";
+$api_token = "sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
 
 // 准备请求数据
 $data = [

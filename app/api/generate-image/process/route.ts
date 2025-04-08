@@ -31,8 +31,9 @@ export async function POST(request: NextRequest) {
     // 存储preserveAspectRatio以便在processTask中使用
     const shouldPreserveAspectRatio = preserveAspectRatio === true;
     
-    // 验证安全密钥（实际环境中应使用更安全的方式）
-    const validSecretKey = process.env.TASK_PROCESS_SECRET_KEY || 'your-secret-key-here';
+    // 检查认证
+    const authHeader = request.headers.get('authorization');
+    const validSecretKey = process.env.TASK_PROCESS_SECRET_KEY || '';
     if (secretKey !== validSecretKey) {
       return new Response(JSON.stringify({ 
         success: false, 

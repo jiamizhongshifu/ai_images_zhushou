@@ -44,7 +44,7 @@ export async function GET(request: Request) {
     
     if (authHeader && authHeader.startsWith('Bearer ')) {
       const token = authHeader.substring(7);
-      const validSecretKey = process.env.TASK_PROCESS_SECRET_KEY || 'your-secret-key-here';
+      const validSecretKey = process.env.TASK_PROCESS_SECRET_KEY || '';
       
       // 如果是系统秘钥，使用管理员权限访问任务
       if (token === validSecretKey) {

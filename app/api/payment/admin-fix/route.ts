@@ -20,7 +20,8 @@ export const GET = async (request: NextRequest) => {
     // 获取订单号和覆盖密钥
     const url = new URL(request.url);
     const orderNo = url.searchParams.get('order_no');
-    const overrideKey = url.searchParams.get('override_key');
+    const refundFlag = url.searchParams.get('refund') === 'true';
+    const adminKey = url.searchParams.get('key');
     
     // 验证参数
     if (!orderNo) {
@@ -31,9 +32,9 @@ export const GET = async (request: NextRequest) => {
     }
     
     // 验证覆盖密钥
-    const validKey = process.env.ADMIN_OVERRIDE_KEY || 'admin-secret-key';
-    if (overrideKey !== validKey) {
-      console.warn(`尝试使用无效的管理员密钥进行操作: ${overrideKey}`);
+    const validKey = process.env.ADMIN_OVERRIDE_KEY || '';
+    if (adminKey !== validKey) {
+      console.warn(`尝试使用无效的管理员密钥进行操作: ${adminKey}`);
       return NextResponse.json({
         success: false,
         error: '无效的管理员密钥'

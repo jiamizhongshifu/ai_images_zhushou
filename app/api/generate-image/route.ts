@@ -7,7 +7,7 @@ import { createAdminClient } from '@/utils/supabase/admin';
 
 // 备用API配置（仅在环境变量不可用时使用）
 const BACKUP_API_URL = "https://api.tu-zi.com/v1";
-const BACKUP_API_KEY = "sk-RQiRhGQHfgT0Cjk7RQTZE8iNf192x6IdHKYlfWJfPVcNeChE";
+const BACKUP_API_KEY = process.env.TUZI_API_KEY || '';
 const BACKUP_MODEL = "gpt-4o-all";
 
 // 网络请求配置

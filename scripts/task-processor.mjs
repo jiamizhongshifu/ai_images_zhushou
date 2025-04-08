@@ -51,7 +51,7 @@ function createTimeoutSignal(ms) {
 // 配置项
 const POLL_INTERVAL = 5000; // 轮询间隔（毫秒）
 const MAX_CONCURRENT_TASKS = 3; // 最大并发处理任务数
-const SECRET_KEY = process.env.TASK_PROCESS_SECRET_KEY || 'your-secret-key-here';
+const SECRET_KEY = process.env.TASK_PROCESS_SECRET_KEY || '';
 const MAX_RETRIES = 3; // 任务处理最大重试次数
 const TASK_TIMEOUT = 10 * 60 * 1000; // 任务超时时间（10分钟）
 const TASK_PROCESSING_MAX_TIME = 15 * 60 * 1000; // 任务处理最长时间（15分钟，减少等待时间）

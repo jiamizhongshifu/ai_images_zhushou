@@ -17,7 +17,7 @@ export const GET = async (request: NextRequest) => {
     const overrideKey = url.searchParams.get('override_key');
     
     // 安全检查
-    const validKey = process.env.ADMIN_OVERRIDE_KEY || 'admin-secret-key';
+    const validKey = process.env.ADMIN_OVERRIDE_KEY || '';
     if (overrideKey !== validKey) {
       console.warn(`尝试使用无效的管理员密钥进行操作: ${overrideKey}`);
       return NextResponse.json({
