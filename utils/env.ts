@@ -45,12 +45,12 @@ export function getDbConfig() {
 /**
  * TUZI API配置类型
  */
-type TuziConfig = {
+export interface TuziConfig {
   apiUrl: string;
   apiKey: string;
   model: string;
   isConfigComplete: boolean;
-};
+}
 
 /**
  * 安全配置类型

@@ -1,21 +1,13 @@
-import { NextRequest } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/utils/supabase/admin';
 import { OpenAI } from 'openai';
-import { getApiConfig, getOfficialOpenAIConfig, getApiPreference } from '@/utils/env';
+import { getApiConfig, getOfficialOpenAIConfig, getApiPreference, TuziConfig } from '@/utils/env';
 import { createClient } from '@/utils/supabase/server';
 
 // 网络请求配置
 const MAX_RETRIES = 3;
 const RETRY_DELAY = 2000; // 毫秒
 const TIMEOUT = 600000; // 10分钟超时
-
-// 定义TuziConfig类型
-interface TuziConfig {
-  apiUrl: string;
-  apiKey: string;
-  model: string;
-  isConfigComplete: boolean;
-}
 
 // 正在处理的任务追踪，避免重复处理
 const processingTasks = new Set<string>();
@@ -97,224 +89,31 @@ export async function POST(request: NextRequest) {
       });
     }
     
-    // 更新任务状态为处理中
-    const { error: updateError } = await supabase
-      .from('ai_images_creator_tasks')
-      .update({
-        status: 'processing',
-        processing_started_at: new Date().toISOString()
-      })
-      .eq('task_id', taskId);
-    
-    if (updateError) {
-      console.error('更新任务状态失败:', updateError);
-      return new Response(JSON.stringify({ 
-        success: false, 
-        error: '更新任务状态失败' 
-      }), {
-        status: 500,
-        headers: { 'Content-Type': 'application/json' },
+    // 判断任务是否已经被取消
+    if (await isTaskCancelled(taskId)) {
+      // 如果任务已经被取消，更新任务状态并记录日志
+      log.info(`任务${taskId}被取消，退款并更新状态`);
+      await updateCancelledTaskStatus(taskId);
+      return NextResponse.json({
+        success: true,
+        message: "任务已取消，已退回积分",
       });
     }
     
-    // 启动异步处理，传入保持比例参数
-    processTask(taskId, shouldPreserveAspectRatio).catch(err => {
-      console.error(`处理任务 ${taskId} 时发生错误:`, err);
-    });
-    
-    // 返回成功响应
-    return new Response(JSON.stringify({ 
-      success: true, 
-      message: '任务处理已启动' 
-    }), {
-      status: 200,
-      headers: { 'Content-Type': 'application/json' },
-    });
-    
-  } catch (error: any) {
-    console.error('处理任务处理请求时出错:', error);
-    
-    return new Response(JSON.stringify({ 
-      success: false, 
-      error: error.message || '服务器内部错误' 
-    }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json' },
-    });
-  }
-}
+    // 获取API偏好
+    let apiPreference = task.api_preference?.toLowerCase() || "tuzi";
+    log.info(`用户API偏好: ${apiPreference}, 任务ID: ${taskId}`);
 
-/**
- * 异步处理任务
- */
-async function processTask(taskId: string, preserveAspectRatio: boolean = false) {
-  const supabase = await createAdminClient();
-  
-  // 优化取消任务检查逻辑，增加错误处理
-  const checkTaskCancelled = async (): Promise<boolean> => {
-    try {
-      // 先检查任务是否已经被取消
-      const { data, error } = await supabase
-        .from('ai_images_creator_tasks')
-        .select('status')
-        .eq('task_id', taskId)
-        .single();
-      
-      if (error) {
-        console.error(`检查任务 ${taskId} 状态时出错:`, error);
-        return false; // 查询错误时默认为未取消
-      }
-      
-      // 任务状态为cancelled说明已被取消
-      if (data && data.status === 'cancelled') {
-        console.log(`任务 ${taskId} 已被取消`);
-        return true;
-      }
+    // 根据API偏好获取API配置
+    let apiConfig: TuziConfig;
+    if (apiPreference === "tuzi") {
+      apiConfig = getApiConfig("tuzi") as TuziConfig;
+    } else {
+      apiConfig = getApiConfig("tuzi") as TuziConfig;
+    }
 
-      // 尝试从取消通知API获取信息(可选的额外检查)
-      try {
-        const response = await fetch(`${process.env.NEXT_PUBLIC_SITE_URL}/api/generate-image/notify-cancel?taskId=${taskId}`, {
-          method: 'GET',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${process.env.TASK_PROCESS_SECRET_KEY || ''}`,
-          },
-          signal: AbortSignal.timeout(5000) // 使用5秒超时
-        });
-        
-        if (response.ok) {
-          const notifyData = await response.json();
-          if (notifyData.cancelled) {
-            console.log(`通过通知API确认任务 ${taskId} 已被取消`);
-            return true;
-          }
-        }
-      } catch (notifyError) {
-        console.warn(`检查取消通知API时出错:`, notifyError);
-        // 通知API查询失败不影响主流程
-      }
-      
-      return false; // 默认为未取消
-    } catch (e) {
-      console.error(`检查任务取消状态时发生异常:`, e);
-      return false; // 发生异常时默认为未取消
-    }
-  };
-  
-  try {
-    // 获取任务信息
-    const { data: task, error: taskError } = await supabase
-      .from('ai_images_creator_tasks')
-      .select('*')
-      .eq('task_id', taskId)
-      .single();
-    
-    if (taskError || !task) {
-      console.error(`任务 ${taskId} 不存在:`, taskError);
-      return;
-    }
-    
-    // 检查任务状态
-    if (task.status !== 'processing') {
-      console.log(`任务 ${taskId} 状态为 ${task.status}，跳过处理`);
-      return;
-    }
-    
-    // 首次检查任务是否已被取消
-    if (await checkTaskCancelled()) {
-      console.log(`任务 ${taskId} 已被取消，停止处理`);
-      return;
-    }
-    
-    // 检查是否已经扣除过点数，避免重复扣除
-    if (task.credits_deducted) {
-      console.log(`任务 ${taskId} 已扣除过点数，跳过扣点环节`);
-    } else {
-      // 扣除用户点数 - 使用安全的方式
-      let deductError: any = null;
-      let deductedData = null;
-      
-      try {
-        // 方法1: 先获取当前点数，然后更新
-        const { data: currentData, error: fetchError } = await supabase
-          .from('ai_images_creator_credits')
-          .select('credits')
-          .eq('user_id', task.user_id)
-          .single();
-        
-        if (fetchError) {
-          console.error('获取用户点数失败:', fetchError);
-          deductError = fetchError;
-        } else if (currentData) {
-          // 确保点数不会低于0
-          const newCredits = Math.max(0, (currentData.credits || 0) - 1);
-          
-          const { data: updateData, error: updateError } = await supabase
-            .from('ai_images_creator_credits')
-            .update({ credits: newCredits })
-            .eq('user_id', task.user_id)
-            .select('credits')
-            .single();
-            
-          if (updateError) {
-            console.error('更新用户点数失败:', updateError);
-            deductError = updateError;
-          } else {
-            deductedData = updateData;
-          }
-        }
-      } catch (err) {
-        console.error('扣除点数过程中出错:', err);
-        deductError = err;
-      }
-      
-      if (deductError) {
-        console.error(`扣除用户点数失败:`, deductError);
-        await updateTaskStatus(taskId, 'failed', null, '扣除点数失败');
-        return;
-      }
-      
-      // 更新任务状态，标记已扣除点数
-      await supabase
-        .from('ai_images_creator_tasks')
-        .update({
-          credits_deducted: true
-        })
-        .eq('task_id', taskId);
-    }
-    
-    // 再次检查任务是否已被取消
-    if (await checkTaskCancelled()) {
-      console.log(`任务 ${taskId} 在扣点后被取消，停止处理并退还点数`);
-      await refundCredits(task.user_id);
-      await updateTaskRefundStatus(taskId, true);
-      return;
-    }
-    
-    // 获取API配置和偏好设置
-    const apiPreference = getApiPreference();
-    
-    // 根据API偏好决定使用哪种API
-    let apiConfig: { apiKey: string; apiUrl?: string; model?: string; isConfigComplete: boolean };
-    let isOfficialOpenAI = false;
-    
-    if (apiPreference.preferTuzi && apiPreference.tuziConfigComplete) {
-      // 使用TUZI API
-      console.log('根据配置，优先使用TUZI API');
-      apiConfig = getApiConfig('tuzi') as TuziConfig;
-      isOfficialOpenAI = false;
-    } else if (apiPreference.openaiConfigComplete) {
-      // 使用OpenAI官方API
-      console.log('根据配置，使用OpenAI官方API');
-      apiConfig = { ...getOfficialOpenAIConfig(), model: 'dall-e-3' };
-      isOfficialOpenAI = true;
-    } else if (apiPreference.tuziConfigComplete) {
-      // 回退到TUZI API
-      console.log('OpenAI官方API配置不完整，回退到TUZI API');
-      apiConfig = getApiConfig('tuzi') as TuziConfig;
-      isOfficialOpenAI = false;
-    } else {
-      // 两种API都配置不完整
+    // 确保API配置完整
+    if (!apiConfig.isConfigComplete) {
       console.error('API配置不完整，无法处理任务');
       await updateTaskStatus(taskId, 'failed', null, 'API配置不完整');
       await refundCredits(task.user_id);
@@ -357,7 +156,7 @@ async function processTask(taskId: string, preserveAspectRatio: boolean = false)
     console.log(`最终使用输出尺寸: ${size}`);
 
     // 创建OpenAI客户端前再次检查任务是否已被取消
-    if (await checkTaskCancelled()) {
+    if (await isTaskCancelled(taskId)) {
       console.log(`任务 ${taskId} 在获取API配置后被取消，停止处理并退还点数`);
       await refundCredits(task.user_id);
       await updateTaskRefundStatus(taskId, true);
@@ -367,7 +166,7 @@ async function processTask(taskId: string, preserveAspectRatio: boolean = false)
     // 创建OpenAI客户端
     const openai = new OpenAI({
       apiKey: apiConfig.apiKey,
-      ...(isOfficialOpenAI ? {} : { baseURL: apiConfig.apiUrl })
+      ...(apiConfig.apiUrl ? { baseURL: apiConfig.apiUrl } : {})
     });
     
     try {
@@ -392,7 +191,7 @@ async function processTask(taskId: string, preserveAspectRatio: boolean = false)
       });
       
       // 在调用API前最后检查一次任务是否已被取消
-      if (await checkTaskCancelled()) {
+      if (await isTaskCancelled(taskId)) {
         console.log(`任务 ${taskId} 在调用API前被取消，停止处理并退还点数`);
         await refundCredits(task.user_id);
         await updateTaskRefundStatus(taskId, true);
@@ -401,14 +200,15 @@ async function processTask(taskId: string, preserveAspectRatio: boolean = false)
       
       let imageUrl: string | null = null;
       
-      if (isOfficialOpenAI) {
+      // 使用OpenAI官方API
+      if (apiConfig.apiUrl) {
         console.log('使用OpenAI官方API，直接调用images.generate');
         
         // 设置中断检查定时器 - 每3秒检查一次任务是否被取消
         let isCancelled = false;
         const cancelCheckInterval = setInterval(async () => {
           try {
-            if (await checkTaskCancelled()) {
+            if (await isTaskCancelled(taskId)) {
               isCancelled = true;
               clearInterval(cancelCheckInterval);
               console.log(`任务 ${taskId} 在API调用期间被取消，将尝试中止处理`);
@@ -444,7 +244,7 @@ async function processTask(taskId: string, preserveAspectRatio: boolean = false)
         clearTimeout(timeoutId);
         
         // 检查是否在API调用期间被取消
-        if (isCancelled || await checkTaskCancelled()) {
+        if (isCancelled || await isTaskCancelled(taskId)) {
           console.log(`任务 ${taskId} 在API调用期间或之后被取消，停止处理并退还点数`);
           await refundCredits(task.user_id);
           await updateTaskRefundStatus(taskId, true);
@@ -501,7 +301,7 @@ async function processTask(taskId: string, preserveAspectRatio: boolean = false)
         let isCancelled = false;
         const cancelCheckInterval = setInterval(async () => {
           try {
-            if (await checkTaskCancelled()) {
+            if (await isTaskCancelled(taskId)) {
               isCancelled = true;
               clearInterval(cancelCheckInterval);
               console.log(`任务 ${taskId} 在API调用期间被取消，将尝试中止处理`);
@@ -537,7 +337,7 @@ async function processTask(taskId: string, preserveAspectRatio: boolean = false)
         clearTimeout(timeoutId);
         
         // 检查是否在API调用期间被取消
-        if (isCancelled || await checkTaskCancelled()) {
+        if (isCancelled || await isTaskCancelled(taskId)) {
           console.log(`任务 ${taskId} 在API调用期间或之后被取消，停止处理并退还点数`);
           await refundCredits(task.user_id);
           await updateTaskRefundStatus(taskId, true);
@@ -624,7 +424,7 @@ async function processTask(taskId: string, preserveAspectRatio: boolean = false)
       }
       
       // 最后一次检查任务是否已被取消
-      if (await checkTaskCancelled()) {
+      if (await isTaskCancelled(taskId)) {
         console.log(`任务 ${taskId} 在获取图片URL后被取消，停止处理并退还点数`);
         await refundCredits(task.user_id);
         await updateTaskRefundStatus(taskId, true);
@@ -648,18 +448,18 @@ async function processTask(taskId: string, preserveAspectRatio: boolean = false)
         task.user_id,
         imageUrl,
         task.prompt,
-        isOfficialOpenAI ? 'dall-e-3' : (apiConfig.model || 'gpt-4o-all'),
+        apiConfig.model || 'gpt-4o-all',
         { 
           style: task.style,
           size: size,
-          api: isOfficialOpenAI ? 'openai' : 'tuzi'
+          api: apiConfig.apiUrl ? 'openai' : 'tuzi'
         }
       );
       
       console.log(`任务 ${taskId} : 图片生成成功`);
     } catch (error: any) {
       // 再次检查任务是否已被取消，如果是，则不需要记录错误
-      if (await checkTaskCancelled()) {
+      if (await isTaskCancelled(taskId)) {
         console.log(`任务 ${taskId} 在发生错误时检测到已被取消，不记录错误`);
         return;
       }
@@ -685,7 +485,7 @@ async function processTask(taskId: string, preserveAspectRatio: boolean = false)
     // 尝试更新任务状态为失败
     try {
       // 先检查任务是否已被取消
-      const isCancelled = await checkTaskCancelled();
+      const isCancelled = await isTaskCancelled(taskId);
       if (isCancelled) {
         console.log(`任务 ${taskId} 在处理过程中已被取消，不记录错误`);
         return;
