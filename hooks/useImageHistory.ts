@@ -27,7 +27,7 @@ export interface UseImageHistoryResult {
   isCached: boolean;
   refetch: (forceRefresh?: boolean, showLoading?: boolean) => Promise<void>;
   deleteImage: (imageUrl: string) => Promise<void>;
-  loadMore: () => Promise<boolean>; // 新增加载更多方法
+  loadMore: (specificOffset?: number) => Promise<boolean>; // 更新为支持特定偏移量
   hasMore: boolean; // 新增是否有更多数据
   batchSize: number; // 新增批次大小
 }
@@ -279,22 +279,27 @@ export default function useImageHistory(initialBatchSize = DEFAULT_BATCH_SIZE): 
   }, [router, validateImageUrl, batchSize]);
 
   // 加载更多历史记录
-  const loadMore = useCallback(async (): Promise<boolean> => {
-    if (!hasMore || isLoading) return false;
+  const loadMore = useCallback(async (specificOffset?: number): Promise<boolean> => {
+    if (!hasMore && !specificOffset) return false;
     
     try {
-      console.log(`[useImageHistory] 加载更多历史记录，当前偏移量: ${offset}`);
+      console.log(`[useImageHistory] 加载更多历史记录，当前偏移量: ${specificOffset !== undefined ? specificOffset : offset}`);
       setIsLoading(true);
       
+      // 使用指定的偏移量或当前存储的偏移量
+      const currentOffset = specificOffset !== undefined ? specificOffset : offset;
+      
       // 使用IndexedDB缓存检查是否有后续批次的缓存
-      const cacheKey = `${HISTORY_CACHE_KEY}:offset_${offset}`;
+      const cacheKey = `${HISTORY_CACHE_KEY}:offset_${currentOffset}`;
       const historyData = await cacheService.getOrFetch(
         cacheKey,
         async () => {
-          const response = await fetch(`/api/history/get?limit=${batchSize}&offset=${offset}`, {
+          console.log(`[useImageHistory] 发起API请求获取更多历史, limit=${batchSize}, offset=${currentOffset}`);
+          const response = await fetch(`/api/history/get?limit=${batchSize}&offset=${currentOffset}`, {
             headers: { 
               'Cache-Control': 'no-cache',
-              'X-Requested-With': 'XMLHttpRequest'
+              'X-Requested-With': 'XMLHttpRequest',
+              'X-Request-Time': new Date().getTime().toString() // 添加时间戳防止缓存
             }
           });
           
@@ -306,20 +311,28 @@ export default function useImageHistory(initialBatchSize = DEFAULT_BATCH_SIZE): 
         },
         {
           expiresIn: HISTORY_CACHE_TTL,
-          forceRefresh: false
+          forceRefresh: true // 强制刷新，确保获取最新数据
         }
       );
       
       if (historyData.success && Array.isArray(historyData.history)) {
-        console.log(`[useImageHistory] 加载更多历史记录成功，获取${historyData.history.length}条`);
+        console.log(`[useImageHistory] 加载更多历史记录成功，获取${historyData.history.length}条`,
+          historyData.history.map((i: any) => i.id).join(','));
         
         // 检查是否还有更多数据
-        setHasMore(historyData.history.length >= batchSize);
+        const newHasMore = historyData.history.length >= batchSize;
+        console.log(`[useImageHistory] 是否还有更多数据: ${newHasMore}`);
+        setHasMore(newHasMore);
         
-        // 更新偏移量
-        setOffset(prev => prev + historyData.history.length);
+        // 更新偏移量 - 仅当未指定特定偏移量时才更新
+        if (specificOffset === undefined) {
+          const newOffset = offset + historyData.history.length;
+          console.log(`[useImageHistory] 更新偏移量: ${offset} -> ${newOffset}`);
+          setOffset(newOffset);
+        }
         
         if (historyData.history.length === 0) {
+          console.log(`[useImageHistory] 没有更多历史记录`);
           setIsLoading(false);
           return false;
         }
@@ -333,20 +346,72 @@ export default function useImageHistory(initialBatchSize = DEFAULT_BATCH_SIZE): 
           }))
           .filter((item: any) => item.image_url);
         
-        // 合并新旧数据
-        const combinedHistoryItems = [...allHistoryItems.current, ...validImages];
-        allHistoryItems.current = combinedHistoryItems;
+        console.log(`[useImageHistory] 处理后的有效图片: ${validImages.length}条`);
         
-        // 更新状态
-        setHistoryItems(combinedHistoryItems);
-        
-        // 更新图片URL数组
-        if (validImages.length > 0) {
-          const newImageUrls = validImages.map((item: any) => item.image_url);
-          setImages(prev => {
-            const combined = [...prev, ...newImageUrls];
-            return Array.from(new Set(combined));
-          });
+        // 根据是否指定了特定偏移量决定如何合并数据
+        if (specificOffset !== undefined && specificOffset !== offset) {
+          // 对于特定页面加载，我们需要在正确的位置插入数据
+          const existingIds = new Set(allHistoryItems.current.map((item: ImageHistoryItem) => item.id));
+          const newItems = validImages.filter((item: ImageHistoryItem) => !existingIds.has(item.id));
+          
+          if (newItems.length > 0) {
+            // 创建一个新数组，确保长度足够
+            const newAllHistoryItems = [...allHistoryItems.current];
+            // 确保数组长度足够
+            while (newAllHistoryItems.length <= specificOffset + newItems.length) {
+              newAllHistoryItems.push(null as any);
+            }
+            
+            // 在指定位置插入新项
+            for (let i = 0; i < newItems.length; i++) {
+              newAllHistoryItems[specificOffset + i] = newItems[i];
+            }
+            
+            // 过滤掉null并更新存储
+            const filteredItems = newAllHistoryItems.filter(item => item !== null) as ImageHistoryItem[];
+            allHistoryItems.current = filteredItems;
+            setHistoryItems(filteredItems);
+            
+            // 更新图片URL数组
+            const imageUrls = filteredItems.map((item: ImageHistoryItem) => item.image_url);
+            const uniqueUrls = Array.from(new Set(imageUrls));
+            setImages(uniqueUrls);
+          }
+        } else {
+          // 标准的合并新旧数据
+          const combinedHistoryItems = [...allHistoryItems.current, ...validImages];
+          
+          // 检查去重，避免重复项
+          const uniqueHistoryItems = Array.from(
+            new Map(combinedHistoryItems.map(item => [item.id, item])).values()
+          );
+          console.log(`[useImageHistory] 合并后的历史记录: ${uniqueHistoryItems.length}条`);
+          
+          // 更新引用数据
+          allHistoryItems.current = uniqueHistoryItems;
+          
+          // 更新状态
+          setHistoryItems(uniqueHistoryItems);
+          
+          // 更新图片URL数组
+          if (validImages.length > 0) {
+            const newImageUrls = validImages.map((item: any) => item.image_url);
+            console.log(`[useImageHistory] 新增图片URL: ${newImageUrls.length}个`);
+            
+            setImages(prev => {
+              const combined = [...prev, ...newImageUrls];
+              // 确保URL唯一
+              const uniqueUrls = Array.from(new Set(combined));
+              console.log(`[useImageHistory] 更新后的图片总数: ${uniqueUrls.length}个`);
+              return uniqueUrls;
+            });
+            
+            // 预加载新加载的图片（最多5张）
+            newImageUrls.slice(0, 5).forEach((url: string) => {
+              const img = new Image();
+              img.src = url;
+            });
+          }
         }
         
         setIsLoading(false);

@@ -8,6 +8,17 @@ import { ImageGenerationSkeleton, GenerationStage } from "@/components/ui/skelet
 
 // 一次性渲染的最大图片数量
 const MAX_VISIBLE_IMAGES = 12;
+// 滚动防抖时间（毫秒）
+const SCROLL_DEBOUNCE_TIME = 150;
+
+// 防抖函数
+function debounce(fn: Function, ms: number) {
+  let timer: NodeJS.Timeout;
+  return function(...args: any[]) {
+    clearTimeout(timer);
+    timer = setTimeout(() => fn(...args), ms);
+  };
+}
 
 interface GeneratedImageGalleryProps {
   images: string[];
@@ -45,15 +56,33 @@ export default function GeneratedImageGallery({
   const [loadedImages, setLoadedImages] = useState<Record<string, boolean>>({});
   const [errorImages, setErrorImages] = useState<Record<string, boolean>>({});
   const [visibleCount, setVisibleCount] = useState<number>(MAX_VISIBLE_IMAGES);
+  const [activeImagesSet, setActiveImagesSet] = useState<Set<string>>(new Set());
   
   const gridRef = useRef<HTMLDivElement>(null);
   const observerRef = useRef<IntersectionObserver | null>(null);
   const loadMoreRef = useRef<HTMLDivElement>(null);
+  const imageRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   
-  // 处理加载更多图片
-  const handleLoadMore = useCallback(() => {
+  // 判断是否显示骨架屏 - 修改为始终在生成过程中显示
+  const shouldShowSkeleton = isGenerating;
+  
+  // 计算要显示的图片
+  let displayImages = images;
+  if (maxRows) {
+    const limit = maxRows * (isLargerSize ? 3 : 4) - (shouldShowSkeleton ? 1 : 0);
+    displayImages = images.slice(0, limit);
+  } else {
+    // 限制同时加载的图片数量
+    displayImages = images.slice(0, visibleCount);
+  }
+  
+  // 是否还有更多图片可以加载
+  const hasMoreImages = !maxRows && images.length > visibleCount;
+  
+  // 处理加载更多图片 - 使用防抖
+  const handleLoadMore = useCallback(debounce(() => {
     setVisibleCount(prevCount => prevCount + MAX_VISIBLE_IMAGES);
-  }, []);
+  }, SCROLL_DEBOUNCE_TIME), []);
   
   // 设置交叉观察器监听"加载更多"元素
   useEffect(() => {
@@ -66,7 +95,7 @@ export default function GeneratedImageGallery({
           handleLoadMore();
         }
       },
-      { threshold: 0.1 }
+      { threshold: 0.1, rootMargin: "200px" }
     );
     
     observerRef.current.observe(loadMoreRef.current);
@@ -78,10 +107,50 @@ export default function GeneratedImageGallery({
     };
   }, [isLoading, images.length, visibleCount, handleLoadMore]);
   
+  // 优化：图片可见性监控
+  useEffect(() => {
+    // 创建新的交叉观察器，专门用于跟踪每个图片是否可见
+    const imageObserver = new IntersectionObserver(
+      (entries) => {
+        const newActiveImages = new Set(activeImagesSet);
+        
+        entries.forEach(entry => {
+          const imageUrl = entry.target.getAttribute('data-image-url');
+          if (!imageUrl) return;
+          
+          if (entry.isIntersecting) {
+            newActiveImages.add(imageUrl);
+          } else {
+            // 仅当图片已不在视口，且已加载过时才从活动集合中移除
+            if (loadedImages[imageUrl]) {
+              newActiveImages.delete(imageUrl);
+            }
+          }
+        });
+        
+        setActiveImagesSet(newActiveImages);
+      },
+      { rootMargin: "100px", threshold: 0.1 }
+    );
+    
+    // 为所有图片容器注册观察器
+    imageRefs.current.forEach((ref, url) => {
+      if (ref) {
+        ref.setAttribute('data-image-url', url);
+        imageObserver.observe(ref);
+      }
+    });
+    
+    return () => {
+      imageObserver.disconnect();
+    };
+  }, [displayImages, loadedImages, activeImagesSet]);
+  
   // 图片列表变更时重置可见图片数量
   useEffect(() => {
     if (images.length === 0) return;
     setVisibleCount(MAX_VISIBLE_IMAGES);
+    setActiveImagesSet(new Set()); // 清空活动图片集合
   }, [images]);
   
   // 查看更多，跳转到历史页
@@ -137,21 +206,14 @@ export default function GeneratedImageGallery({
     overflow: 'hidden' 
   } : {};
 
-  // 判断是否显示骨架屏 - 修改为始终在生成过程中显示
-  const shouldShowSkeleton = isGenerating;
-  
-  // 计算要显示的图片
-  let displayImages = images;
-  if (maxRows) {
-    const limit = maxRows * (isLargerSize ? 3 : 4) - (shouldShowSkeleton ? 1 : 0);
-    displayImages = images.slice(0, limit);
-  } else {
-    // 限制同时加载的图片数量
-    displayImages = images.slice(0, visibleCount);
-  }
-  
-  // 是否还有更多图片可以加载
-  const hasMoreImages = !maxRows && images.length > visibleCount;
+  // 图片容器引用回调
+  const imageRefCallback = useCallback((node: HTMLDivElement | null, imageUrl: string) => {
+    if (node) {
+      imageRefs.current.set(imageUrl, node);
+    } else {
+      imageRefs.current.delete(imageUrl);
+    }
+  }, []);
 
   return (
     <div className="relative">
@@ -198,6 +260,7 @@ export default function GeneratedImageGallery({
             key={`${imageUrl}-${index}`}
             className="ghibli-image-container aspect-square relative overflow-hidden rounded-xl border border-border/40 cursor-pointer shadow-ghibli-sm hover:shadow-ghibli transition-all duration-300 hover:border-border/60 animate-fade-in"
             onClick={() => setPreviewImage(imageUrl)}
+            ref={(node) => imageRefCallback(node, imageUrl)}
           >
             {/* 图片加载中状态 */}
             {!loadedImages[imageUrl] && !errorImages[imageUrl] && (
@@ -214,17 +277,20 @@ export default function GeneratedImageGallery({
             )}
             
             <div className="w-full h-full relative">
-              <LazyImage
-                src={imageUrl}
-                alt={`生成的图片 ${index + 1}`}
-                className="object-cover w-full h-full transition-transform duration-700 hover:scale-[1.05]"
-                onImageLoad={() => handleImageLoad(imageUrl)}
-                onImageError={() => handleImageError(imageUrl)}
-                fadeIn={true}
-                blurEffect={true}
-                // 设置最前面几张图片为高优先级
-                priority={index < 4}
-              />
+              {/* 仅当图片在视口中或已被加载，才加载图片 */}
+              {(activeImagesSet.has(imageUrl) || loadedImages[imageUrl] || index < 4) && (
+                <LazyImage
+                  src={imageUrl}
+                  alt={`生成的图片 ${index + 1}`}
+                  className="object-cover w-full h-full transition-transform duration-700 hover:scale-[1.05]"
+                  onImageLoad={() => handleImageLoad(imageUrl)}
+                  onImageError={() => handleImageError(imageUrl)}
+                  fadeIn={true}
+                  blurEffect={true}
+                  // 设置最前面几张图片为高优先级
+                  priority={index < 4}
+                />
+              )}
             </div>
             
             {/* 图片操作按钮 - 鼠标悬停时显示 */}
@@ -332,7 +398,7 @@ export default function GeneratedImageGallery({
                     variant="outline"
                     size="sm"
                     className="bg-background/80 hover:bg-background/60 text-foreground"
-                    onClick={() => onDownloadImage(previewImage)}
+                    onClick={(e) => onDownloadImage(previewImage)}
                   >
                     <Download className="h-4 w-4 mr-1" />
                     下载
