@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { Home, Edit3, History, HelpCircle, User, LogOut, LogIn } from "lucide-react";
@@ -9,19 +9,13 @@ import { buttonVariants } from "@/components/ui/button";
 import { authService, clearAuthState } from "@/utils/auth-service";
 import { createClient } from "@/utils/supabase/client";
 import UserCreditDisplay from "@/components/user-credit-display";
-import { UserIcon, Sparkles, ChatBubbleLeftEllipsisIcon, ClockIcon, ArrowRightOnRectangleIcon, CreditCardIcon } from '@heroicons/react/24/solid';
-import Image from "next/image";
-import userImage from "../../app/icon.png";
-import { ModeToggle } from '@/components/toggle-theme';
-import getUserIdentity from '@/lib/getUserIdentity';
-import { HTMLAttributeAnchorTarget } from 'react';
 
 // 导航项定义
 type NavItem = {
   name: string;
   href: string;
   icon: React.ReactNode;
-  requiresAuth: boolean;
+  requiresAuth?: boolean;
 };
 
 // 组件属性类型
@@ -148,7 +142,7 @@ export function MainNav({ providedAuthState }: MainNavProps) {
       }
     } else if (!isCookieAuthenticated && !isForceLogin && !authStateLocked) {
       // 只有当cookie和URL参数检查都没有成功时，才通过API检查
-      checkAuth();
+      checkAuthState();
     } else {
       // 否则已通过cookie或URL参数确认已登录
       setIsLoading(false);
@@ -308,7 +302,8 @@ export function MainNav({ providedAuthState }: MainNavProps) {
     }
   };
   
-  const checkAuth = async () => {
+  // API检查认证状态
+  const checkAuthState = async () => {
     try {
       // 避免在状态锁定时进行检查
       if (authStateLocked) {
@@ -503,132 +498,8 @@ export function MainNav({ providedAuthState }: MainNavProps) {
     }
   };
 
-  // 检查认证状态的综合函数
-  const checkAuth = async (source: string = 'unknown') => {
-    // 如果认证状态已锁定，则不再检查
-    if (authStateLocked) {
-      console.log(`[MainNav] 认证状态已锁定，跳过检查，来源: ${source}`);
-      return;
-    }
-    
-    // 防止过于频繁的检查 (1秒内)
-    const now = Date.now();
-    if (now - lastAuthCheckRef.current < 1000) {
-      console.log(`[MainNav] 检查过于频繁，跳过，来源: ${source}`);
-      return;
-    }
-    lastAuthCheckRef.current = now;
-    
-    // 避免并发检查
-    if (isCheckingAuth) {
-      console.log(`[MainNav] 已有检查在进行中，跳过，来源: ${source}`);
-      return;
-    }
-    
-    try {
-      setIsCheckingAuth(true);
-      authSourceRef.current = source;
-      console.log(`[MainNav] 开始检查认证状态，来源: ${source}`);
-      
-      // 检查登出标记
-      const forcedLogout = localStorage.getItem('force_logged_out') === 'true' ||
-                           sessionStorage.getItem('isLoggedOut') === 'true';
-      
-      if (forcedLogout) {
-        console.log(`[MainNav] 检测到强制登出标记，设置为未认证`);
-        const previousAuth = isAuthenticated;
-        if (previousAuth) {
-          setIsAuthenticated(false);
-          setCredits(null);
-          console.log(`[MainNav] 认证状态由 ${previousAuth} 变为 false，原因: 强制登出标记`);
-        }
-        return;
-      }
-      
-      // 1. 检查cookie
-      const cookies = document.cookie.split(';');
-      const userAuthCookie = cookies.find(cookie => cookie.trim().startsWith('user_authenticated='));
-      const hasAuthCookie = userAuthCookie && userAuthCookie.includes('true');
-      
-      // 2. 检查localStorage
-      const wasAuthenticated = localStorage.getItem('wasAuthenticated') === 'true';
-      
-      // 3. 检查URL参数 (处理回调情况)
-      const urlHasCode = window.location.href.includes('code=') && window.location.href.includes('next=');
-      
-      // 4. 检查Supabase会话
-      const supabase = createClient();
-      const { data: { session } } = await supabase.auth.getSession();
-      const hasSession = !!session;
-      
-      console.log(`[MainNav] 认证检查结果 - Cookie: ${hasAuthCookie}, 本地存储: ${wasAuthenticated}, URL参数: ${urlHasCode}, 会话: ${hasSession}`);
-      
-      // 综合判断认证状态: 任何一个为true即认为已认证
-      const newAuthState = hasAuthCookie || wasAuthenticated || urlHasCode || hasSession;
-      
-      // 如果状态要发生变化，记录日志
-      if (isAuthenticated !== newAuthState) {
-        console.log(`[MainNav] 认证状态由 ${isAuthenticated} 变为 ${newAuthState}，来源: ${source}`);
-        
-        // 如果是第一次初始化检查就直接设置
-        if (!initialCheckDoneRef.current) {
-          setIsAuthenticated(newAuthState);
-          if (newAuthState) {
-            // 获取积分信息
-            fetchCredits();
-          } else {
-            setCredits(null);
-          }
-        } 
-        // 如果从登录页完成登录，直接接受新状态
-        else if (pathname === '/sign-in' && newAuthState === true) {
-          setIsAuthenticated(true);
-          fetchCredits();
-        }
-        // 如果明确触发了登出，直接接受新状态
-        else if (source === 'logout' && newAuthState === false) {
-          setIsAuthenticated(false);
-          setCredits(null);
-        }
-        // 其他情况，如果要从认证状态变为未认证，再次确认
-        else if (isAuthenticated && !newAuthState) {
-          // 再次确认会话状态
-          const { data: { session: recheck } } = await supabase.auth.getSession();
-          if (recheck) {
-            console.log(`[MainNav] 二次检查发现有效会话，保持认证状态`);
-            // 修正回认证状态，并刷新cookie
-            document.cookie = 'user_authenticated=true; path=/; max-age=604800';
-            localStorage.setItem('wasAuthenticated', 'true');
-            // 不改变状态
-          } else {
-            console.log(`[MainNav] 二次检查确认未认证，更新状态`);
-            setIsAuthenticated(false);
-            setCredits(null);
-          }
-        }
-        // 从未认证变为认证状态，接受新状态
-        else if (!isAuthenticated && newAuthState) {
-          setIsAuthenticated(true);
-          fetchCredits();
-        }
-      } else {
-        // 状态一致，可能需要刷新积分
-        if (newAuthState && credits === null) {
-          fetchCredits();
-        }
-      }
-      
-      initialCheckDoneRef.current = true;
-      
-    } catch (error) {
-      console.error(`[MainNav] 检查认证状态出错，来源: ${source}:`, error);
-    } finally {
-      setIsCheckingAuth(false);
-    }
-  };
-
   // 导航处理函数
-  const handleNavigation = async (href: string, target?: HTMLAttributeAnchorTarget) => {
+  const handleNavigation = async (href: string, target?: string) => {
     // 对于外部链接或指定target的链接，使用默认行为
     if (target || href.startsWith('http')) {
       return;
@@ -657,45 +528,45 @@ export function MainNav({ providedAuthState }: MainNavProps) {
   // 初始化时检查认证状态
   useEffect(() => {
     // 初始化检查
-    checkAuth('init');
+    checkAuthState();
     
     // 监听导航结束事件
     const handleRouteChange = () => {
       console.log('[MainNav] 路由变化，检查认证状态');
-      checkAuth('route-change');
+      checkAuthState();
     };
     
     // 周期性检查认证状态 (每分钟)
     const intervalId = setInterval(() => {
-      checkAuth('interval');
+      checkAuthState();
     }, 60000);
     
     // 页面可见性变化时检查
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
         console.log('[MainNav] 页面变为可见，检查认证状态');
-        checkAuth('visibility-change');
+        checkAuthState();
       }
     };
     
     // 添加事件监听
     document.addEventListener('visibilitychange', handleVisibilityChange);
-    window.addEventListener('focus', () => checkAuth('window-focus'));
+    window.addEventListener('focus', () => checkAuthState());
     
     // 监听存储变化事件
     window.addEventListener('storage', (event) => {
       if (event.key === 'wasAuthenticated' || event.key === 'force_logged_out') {
         console.log(`[MainNav] 存储变化: ${event.key}=${event.newValue}`);
-        checkAuth('storage-change');
+        checkAuthState();
       }
     });
     
     return () => {
       clearInterval(intervalId);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
-      window.removeEventListener('focus', () => checkAuth('window-focus'));
+      window.removeEventListener('focus', () => checkAuthState());
     };
-  }, [checkAuth]);
+  }, [checkAuthState]);
   
   // 直接显示用户积分，无需等待路由变化
   useEffect(() => {
@@ -710,59 +581,72 @@ export function MainNav({ providedAuthState }: MainNavProps) {
   }
 
   return (
-    <div className="flex gap-6 md:gap-10 dark:text-white text-black">
-      <Link href="/" className="hidden md:flex items-center space-x-2">
-        <Image src={userImage} alt="Company Logo" width={32} height={32} />
-        <span className="inline-block font-bold">公司应用</span>
-      </Link>
-      {navItems.map((item) => (
-        <div
-          key={item.href}
-          className={cn(
-            "flex items-center text-lg font-medium transition-colors hover:text-primary sm:text-sm cursor-pointer",
-            pathname === item.href
-              ? "text-primary"
-              : "text-muted-foreground"
-          )}
-          onClick={(e) => handleNavClick(e, item)}
-        >
-          {item.icon}
-          {item.name}
-        </div>
-      ))}
-      <nav className="flex-1 flex items-center justify-end space-x-4">
-        <div className="flex-1 sm:flex-initial flex justify-end">
-          {/* 用户积分显示 */}
-          {isAuthenticated && credits !== null && (
-            <div className="flex items-center mr-3 text-sm text-primary">
-              <Sparkles className="h-4 w-4 mr-1" />
-              {credits} 点数
+    <nav className="flex items-center w-full justify-between flex-wrap md:flex-nowrap">
+      {/* 留出左侧空间，导航项居中 */}
+      <div className="hidden md:block w-0 md:w-auto"></div>
+      
+      {/* 导航项居中显示 */}
+      <div className="flex items-center gap-3 justify-center mx-auto flex-wrap">
+        {navItems.map((item) => (
+          <button
+            key={item.href}
+            onClick={(e) => handleNavClick(e, item)}
+            className={cn(
+              buttonVariants({
+                variant: pathname === item.href ? "secondary" : "ghost",
+                size: "sm",
+              }),
+              "flex items-center gap-1 my-1",
+              item.requiresAuth && !isAuthenticated ? "opacity-80" : ""
+            )}
+          >
+            {item.icon}
+            <span>{item.name}</span>
+          </button>
+        ))}
+      </div>
+      
+      {/* 用户信息区域 - 根据登录状态显示不同内容 */}
+      <div className="flex items-center gap-2 w-full md:w-auto justify-end ml-auto md:ml-0 mt-2 md:mt-0">
+        {isAuthenticated ? (
+          <>
+            {/* 强制显示积分组件，避免缺失 */}
+            <div className="flex items-center gap-1">
+              <User className="h-4 w-4" />
+              <span>{credits !== null ? credits : '加载中..'}</span>
             </div>
-          )}
-          
-          {/* 主题切换按钮 */}
-          <ModeToggle />
-          
-          {/* 基于认证状态显示登录/登出按钮 */}
-          {isAuthenticated ? (
-            <div
+            <div className="h-4 w-px bg-gray-300 dark:bg-gray-700 mx-1" />
+            <button
               onClick={handleLogout}
-              className="flex items-center ml-4 text-sm text-primary cursor-pointer"
+              className={cn(
+                buttonVariants({
+                  variant: "ghost",
+                  size: "sm",
+                }),
+                "flex items-center gap-1"
+              )}
+              disabled={isSigningOut}
             >
-              <ArrowRightOnRectangleIcon className="h-4 w-4 mr-1" />
-              登出
-            </div>
-          ) : (
-            <div
-              onClick={() => handleNavigation('/sign-in')}
-              className="flex items-center ml-4 text-sm text-primary cursor-pointer"
-            >
-              <UserIcon className="h-4 w-4 mr-1" />
-              登录
-            </div>
-          )}
-        </div>
-      </nav>
-    </div>
+              <LogOut className="h-4 w-4" />
+              <span className="hidden sm:inline">{isSigningOut ? "退出中..." : "退出"}</span>
+            </button>
+          </>
+        ) : (
+          <button
+            onClick={handleLoginClick}
+            className={cn(
+              buttonVariants({
+                variant: "outline",
+                size: "sm",
+              }),
+              "flex items-center gap-1"
+            )}
+          >
+            <LogIn className="h-4 w-4" />
+            <span>登录</span>
+          </button>
+        )}
+      </div>
+    </nav>
   );
 } 
