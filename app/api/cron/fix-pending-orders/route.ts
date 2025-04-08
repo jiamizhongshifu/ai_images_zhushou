@@ -41,7 +41,7 @@ export async function GET(request: NextRequest) {
     console.log(`开始处理 ${checkBeforeTimeString} 后的未完成订单，最多处理 ${limit} 条`);
     
     // 创建数据库管理客户端
-    const adminClient = createAdminClient();
+    const adminClient = await createAdminClient();
     
     // 1. 查询未完成的订单
     const { data: pendingOrders, error: queryError } = await adminClient
@@ -184,7 +184,7 @@ async function logTaskExecution(
   data: any
 ): Promise<void> {
   try {
-    const adminClient = createAdminClient();
+    const adminClient = await createAdminClient();
     
     await adminClient
       .from('ai_images_creator_task_logs')
