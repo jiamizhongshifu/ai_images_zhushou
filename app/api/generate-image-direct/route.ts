@@ -9,6 +9,14 @@ import https from 'https';
 import http from 'http';
 import fs from 'fs';
 
+// 定义TuziConfig类型
+interface TuziConfig {
+  apiUrl: string;
+  apiKey: string;
+  model: string;
+  isConfigComplete: boolean;
+}
+
 // 设置日志级别常量
 const LOG_LEVELS = {
   ERROR: 0,    // 只显示错误
@@ -66,7 +74,7 @@ const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 // 创建图资API客户端 - 按照tuzi-openai.md的方式
 function createTuziClient() {
   // 获取环境配置
-  const apiConfig = getApiConfig();
+  const apiConfig = getApiConfig('tuzi') as TuziConfig;
   
   // 优先使用环境变量中的配置
   const apiKey = apiConfig.apiKey || process.env.TUZI_API_KEY;
@@ -505,7 +513,7 @@ export async function POST(request: NextRequest) {
       logger.info(`开始向图资API发送请求，最终提示词: ${finalPrompt.substring(0, 50)}...`);
       
       // 获取环境配置
-      const apiConfig = getApiConfig();
+      const apiConfig = getApiConfig('tuzi') as TuziConfig;
       // 使用环境变量中指定的模型，默认为gpt-4o-all
       const modelName = apiConfig.model || 'gpt-4o-all';
       
