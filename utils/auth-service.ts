@@ -405,7 +405,7 @@ class AuthService {
   /**
    * 清除认证状态
    */
-  private clearAuthState(): void {
+  public clearAuthState(): void {
     try {
       // 重置内存状态
       memoryAuthState = { ...DEFAULT_AUTH_STATE };
@@ -730,4 +730,5 @@ export const authService = AuthService.getInstance();
 export const isAuthenticated = () => authService.isAuthenticated();
 export const getAuthState = () => authService.getAuthState();
 export const refreshSession = () => authService.refreshSession();
-export const signOut = () => authService.signOut(); 
+export const signOut = () => authService.signOut();
+export const clearAuthState = () => authService.clearAuthState(); 

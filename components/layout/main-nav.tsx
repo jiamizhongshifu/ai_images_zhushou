@@ -6,7 +6,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { Home, Edit3, History, HelpCircle, User, LogOut, LogIn } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { buttonVariants } from "@/components/ui/button";
-import { authService } from "@/utils/auth-service";
+import { authService, clearAuthState } from "@/utils/auth-service";
 import { createClient } from "@/utils/supabase/client";
 import UserCreditDisplay from "@/components/user-credit-display";
 
@@ -178,7 +178,7 @@ export function MainNav({ providedAuthState }: MainNavProps) {
       }
       
       // 清除认证服务状态
-      authService.clearAuthState();
+      clearAuthState();
       
       // 手动清除所有可能的Cookie
       const cookieNames = ['sb-access-token', 'sb-refresh-token', '__session', 'sb-refresh-token-nonce'];
