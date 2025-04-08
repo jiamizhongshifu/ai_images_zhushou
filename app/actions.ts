@@ -61,7 +61,10 @@ export const signInAction = async (formData: FormData) => {
     // 限制集合大小，防止内存泄漏
     if (processedFormKeys.size > 100) {
       const iterator = processedFormKeys.values();
-      processedFormKeys.delete(iterator.next().value);
+      const valueToDelete = iterator.next().value;
+      if (valueToDelete !== undefined) {
+        processedFormKeys.delete(valueToDelete);
+      }
     }
   }
 
