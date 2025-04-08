@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export const dynamic = 'force-dynamic';
-export const maxDuration = 300; // 允许长达5分钟的执行时间
+export const maxDuration = 60; // 限制为60秒，符合Vercel免费计划限制
 
 // 权限检查函数
 const isAuthorized = (req: NextRequest): boolean => {
