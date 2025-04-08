@@ -301,16 +301,19 @@ function StatCard({
 
 // 订单状态徽章
 function OrderStatusBadge({ status }: { status: string }) {
-  let variant: 'default' | 'success' | 'warning' | 'destructive' = 'default';
+  let variant: 'default' | 'destructive' | 'outline' | 'secondary' = 'default';
   let label = status;
+  let customClass = '';
 
   switch (status) {
     case 'success':
-      variant = 'success';
+      variant = 'secondary';
+      customClass = 'bg-green-100 text-green-800 hover:bg-green-200';
       label = '成功';
       break;
     case 'pending':
-      variant = 'warning';
+      variant = 'outline';
+      customClass = 'border-amber-500 text-amber-700';
       label = '待处理';
       break;
     case 'failed':
@@ -320,7 +323,7 @@ function OrderStatusBadge({ status }: { status: string }) {
   }
 
   return (
-    <Badge variant={variant}>
+    <Badge variant={variant} className={customClass}>
       {status === 'success' && <CheckCircle className="w-3 h-3 mr-1" />}
       {status === 'pending' && <Loader2 className="w-3 h-3 mr-1 animate-spin" />}
       {status === 'failed' && <AlertCircle className="w-3 h-3 mr-1" />}
