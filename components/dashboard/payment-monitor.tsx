@@ -69,7 +69,7 @@ export default function PaymentMonitor({ className }: PaymentMonitorProps) {
       toast({
         title: '加载失败',
         description: error instanceof Error ? error.message : '未知错误',
-        variant: 'destructive',
+        type: 'error',
       });
     } finally {
       setLoading(false);
@@ -105,7 +105,7 @@ export default function PaymentMonitor({ className }: PaymentMonitorProps) {
         toast({
           title: '修复成功',
           description: `已成功修复 ${data.fixed} 个订单`,
-          variant: 'default',
+          type: 'success',
         });
         
         // 重新加载统计数据
@@ -118,7 +118,7 @@ export default function PaymentMonitor({ className }: PaymentMonitorProps) {
       toast({
         title: '修复失败',
         description: error instanceof Error ? error.message : '未知错误',
-        variant: 'destructive',
+        type: 'error',
       });
     } finally {
       setLoading(false);
