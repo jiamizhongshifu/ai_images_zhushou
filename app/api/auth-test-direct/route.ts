@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { createServerClient } from '@supabase/ssr';
+import { createServerClient, type CookieOptions } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 
 export async function GET(req: Request) {
@@ -19,7 +19,7 @@ export async function GET(req: Request) {
     console.log('[直接API测试] 所有请求头:', headersLog);
     
     // 获取cookie存储
-    const cookieStore = cookies();
+    const cookieStore = await cookies();
     console.log('[直接API测试] Cookie存储类型:', typeof cookieStore);
     
     // 记录相关cookie
@@ -45,16 +45,30 @@ export async function GET(req: Request) {
               return undefined;
             }
           },
-          set(name: string, value: string, options: any) {
+          set(name: string, value: string, options?: CookieOptions) {
             try {
-              cookieStore.set(name, value, options);
+              // 添加明确的cookie选项以增强cookie稳定性
+              const finalOptions = {
+                ...options,
+                // 确保cookie在整个域名下可用
+                path: options?.path || "/",
+                // 增加cookie持久性，默认为7天
+                maxAge: options?.maxAge || 60 * 60 * 24 * 7,
+                // 确保安全设置
+                secure: process.env.NODE_ENV === "production",
+                // 确保cookie可用于跨请求
+                httpOnly: true,
+                sameSite: "lax" as const
+              };
+              
+              cookieStore.set(name, value, finalOptions);
             } catch (e) {
               console.warn('[直接API测试] Cookie设置错误:', e);
             }
           },
-          remove(name: string, options: any) {
+          remove(name: string, options?: CookieOptions) {
             try {
-              cookieStore.delete(name, options);
+              cookieStore.set(name, "", { ...options, maxAge: 0 });
             } catch (e) {
               console.warn('[直接API测试] Cookie删除错误:', e);
             }
