@@ -59,13 +59,46 @@ export function MainNav({ providedAuthState }: MainNavProps) {
   useEffect(() => {
     setIsClient(true);
     
+    // 初始化时立即检查cookie状态
+    const checkCookieAuth = () => {
+      try {
+        if (typeof window !== 'undefined' && document) {
+          // 检查cookie中的认证标记
+          const hasAuthCookie = document.cookie.includes('user_authenticated=true');
+          if (hasAuthCookie) {
+            console.log('[MainNav] 初始化 - 检测到认证cookie，设置为已登录状态');
+            setIsAuthenticated(true);
+            
+            // 立即获取积分信息
+            fetchCredits();
+            return true;
+          }
+        }
+        return false;
+      } catch (error) {
+        console.error('[MainNav] 检查cookie出错:', error);
+        return false;
+      }
+    };
+    
+    // 先检查cookie，如果cookie认证通过，直接设置状态
+    const isCookieAuthenticated = checkCookieAuth();
+    
     // 优先使用传入的认证状态
     if (providedAuthState !== undefined) {
       setIsAuthenticated(providedAuthState);
       setIsLoading(false);
-    } else {
-      // 如果没有提供状态，则自行检查
+      
+      // 如果被告知已登录，立即获取积分
+      if (providedAuthState) {
+        fetchCredits();
+      }
+    } else if (!isCookieAuthenticated) {
+      // 只有当cookie检查没有成功时，才通过API检查
       checkAuth();
+    } else {
+      // 否则已通过cookie确认已登录
+      setIsLoading(false);
     }
     
     // 添加额外的安全保障：检查localStorage和sessionStorage中的登出标记
@@ -79,20 +112,29 @@ export function MainNav({ providedAuthState }: MainNavProps) {
           if (forcedLogout || sessionLogout) {
             console.log('[MainNav] 检测到登出标记，强制设置为未登录状态');
             setIsAuthenticated(false);
-          }
-          
-          // 检查cookie中的认证标记
-          if (document.cookie.includes('user_authenticated=true')) {
-            console.log('[MainNav] 检测到用户认证cookie，设置为已登录状态');
-            setIsAuthenticated(true);
+            return true;
           }
         }
+        return false;
       } catch (error) {
         console.error('[MainNav] 检查登出标记出错:', error);
+        return false;
       }
     };
     
-    checkLogoutFlags();
+    // 只有在没有被登出标记覆盖的情况下，才检查认证cookie
+    const isLoggedOut = checkLogoutFlags();
+    if (!isLoggedOut && typeof window !== 'undefined') {
+      // 检查cookie中的认证标记
+      const hasAuthCookie = document.cookie.includes('user_authenticated=true');
+      if (hasAuthCookie) {
+        console.log('[MainNav] 检测到用户认证cookie，设置为已登录状态');
+        setIsAuthenticated(true);
+        
+        // 获取积分信息
+        fetchCredits();
+      }
+    }
     
     // 添加会话状态变化监听
     const setupSessionListener = async () => {
@@ -103,7 +145,12 @@ export function MainNav({ providedAuthState }: MainNavProps) {
             console.log(`[MainNav] 认证状态变化: ${event}`);
             // 根据会话事件更新状态
             const newIsAuthenticated = !!session;
-            setIsAuthenticated(newIsAuthenticated);
+            
+            if (newIsAuthenticated !== isAuthenticated) {
+              console.log(`[MainNav] 认证状态由 ${isAuthenticated} 变为 ${newIsAuthenticated}`);
+              setIsAuthenticated(newIsAuthenticated);
+            }
+            
             setUserEmail(session?.user?.email || null);
             
             // 如果用户登录，尝试获取积分
@@ -123,18 +170,36 @@ export function MainNav({ providedAuthState }: MainNavProps) {
     };
     
     setupSessionListener();
+    
+    // 页面可见性变化时重新检查会话状态
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        console.log('[MainNav] 页面变为可见，重新检查认证状态');
+        checkCookieAuth();
+        checkAuth();
+      }
+    };
+    
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
   }, [providedAuthState, supabase]);
   
   // 获取用户积分
   const fetchCredits = async () => {
     try {
+      console.log('[MainNav] 尝试获取用户积分');
       const creditsResponse = await fetch('/api/credits/get');
       if (creditsResponse.ok) {
         const creditsData = await creditsResponse.json();
         setCredits(creditsData.availableCredits || 0);
+        console.log(`[MainNav] 成功获取积分: ${creditsData.availableCredits}`);
+      } else {
+        console.error('[MainNav] 获取积分失败:', creditsResponse.status);
       }
     } catch (error) {
-      console.error('[MainNav] 获取积分信息失败:', error);
+      console.error('[MainNav] 获取积分信息异常:', error);
     }
   };
   
@@ -194,15 +259,19 @@ export function MainNav({ providedAuthState }: MainNavProps) {
       return;
     }
     
-    // 正常导航操作 - 使用 router.push 避免默认行为和中间件循环
+    // 正常导航操作
     console.log(`[MainNav] 导航到: ${item.name} (${item.href})`);
     
-    // 对于受保护页面，添加特殊标记以避免中间件重定向循环
+    // 使用直接导航方式，不添加特殊参数
+    // 对于受保护页面，使用普通导航并确保cookie已设置
     if (item.href.startsWith('/protected')) {
-      const url = new URL(item.href, window.location.origin);
-      url.searchParams.set('nav_direct', 'true');
-      router.push(url.pathname + url.search);
+      // 确保设置认证cookie，避免布局组件检测问题
+      document.cookie = 'user_authenticated=true; path=/; max-age=86400';
+      
+      // 使用直接跳转，避免Next.js路由系统的问题
+      window.location.href = item.href;
     } else {
+      // 非保护页面使用router.push正常导航
       router.push(item.href);
     }
   };

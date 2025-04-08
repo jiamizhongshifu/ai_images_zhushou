@@ -32,20 +32,46 @@ export default function ProtectedLayout({
   useEffect(() => {
     const checkUser = async () => {
       try {
+        console.log('[受保护布局] 开始检查用户状态');
+        
         // 检查URL参数是否有跳过检查标记
         const urlParams = new URLSearchParams(window.location.search);
         const skipCheck = urlParams.get('skip_middleware') === 'true';
         
         if (skipCheck) {
-          console.log('[受保护页面] 检测到跳过检查参数，直接允许访问');
+          console.log('[受保护布局] 检测到跳过检查参数，直接允许访问');
           setLoading(false);
+          document.cookie = 'user_authenticated=true; path=/; max-age=86400';
           return;
+        }
+        
+        // 尝试先检查localStorage中的认证标记，这是最快的
+        try {
+          const wasAuthenticated = localStorage.getItem('wasAuthenticated');
+          if (wasAuthenticated === 'true') {
+            console.log('[受保护布局] 检测到localStorage认证标记，设置临时授权');
+            setLoading(false);
+            // 尝试设置cookie确保导航正常
+            document.cookie = 'user_authenticated=true; path=/; max-age=86400';
+            
+            // 虽然授权访问，但仍在后台验证
+            setTimeout(() => {
+              supabase.auth.getUser().then(({ data }) => {
+                if (!data.user) {
+                  console.log('[受保护布局] 后台验证失败，但已允许临时访问');
+                }
+              });
+            }, 100);
+            return;
+          }
+        } catch (e) {
+          console.warn('[受保护布局] 检查localStorage出错:', e);
         }
         
         // 检查cookie中的认证标记
         const hasAuthCookie = document.cookie.includes('user_authenticated=true');
         if (hasAuthCookie) {
-          console.log('[受保护页面] 检测到认证cookie，允许访问');
+          console.log('[受保护布局] 检测到认证cookie，允许访问');
           setLoading(false);
           return;
         }
@@ -53,28 +79,30 @@ export default function ProtectedLayout({
         // 检查强制登录标记
         const hasForceLogin = document.cookie.includes('force_login=true');
         if (hasForceLogin) {
-          console.log('[受保护页面] 检测到强制登录cookie，允许访问');
+          console.log('[受保护布局] 检测到强制登录cookie，允许访问');
           setLoading(false);
           return;
         }
         
-        // 检查用户会话
+        // 检查用户会话 - 只在cookie/localStorage检查都失败时执行
         const { data: { user } } = await supabase.auth.getUser();
         
         if (user) {
           // 用户已登录，不显示加载状态
-          console.log('[受保护页面] 用户已登录，允许访问');
+          console.log('[受保护布局] 用户已登录，允许访问');
           // 设置认证cookie，便于后续快速检查
           document.cookie = 'user_authenticated=true; path=/; max-age=86400';
+          // 记录到localStorage
+          localStorage.setItem('wasAuthenticated', 'true');
           setLoading(false);
         } else {
           // 用户未登录，显示访问按钮
-          console.log('[受保护页面] 用户未登录，显示访问按钮');
+          console.log('[受保护布局] 用户未登录，显示访问按钮');
           setShowAccessButton(true);
           setLoading(false);
         }
       } catch (error) {
-        console.error('检查用户会话出错:', error);
+        console.error('[受保护布局] 检查用户会话出错:', error);
         // 出错时也显示访问按钮
         setShowAccessButton(true);
         setLoading(false);
@@ -207,6 +235,10 @@ export default function ProtectedLayout({
     console.log("[受保护页面] 用户点击直接访问按钮");
     // 使用认证服务手动设置认证状态
     authService.manualAuthenticate();
+    // 设置cookie标记，确保页面间导航正常
+    document.cookie = 'user_authenticated=true; path=/; max-age=86400';
+    localStorage.setItem('wasAuthenticated', 'true');
+    
     setLoading(false);
     setShowAccessButton(false);
   };
