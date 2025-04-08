@@ -158,7 +158,7 @@ export async function POST(request: NextRequest) {
       
       // 如果用户没有点数记录，创建一个初始记录
       if (creditsError.code === 'PGRST116') {
-        const supabaseAdmin = createAdminClient();
+        const supabaseAdmin = await createAdminClient();
         await supabaseAdmin
           .from('ai_images_creator_credits')
           .insert({
@@ -210,7 +210,7 @@ export async function POST(request: NextRequest) {
     const tuziClient = createTuziClient();
     
     // 扣除用户点数
-    const supabaseAdmin = createAdminClient();
+    const supabaseAdmin = await createAdminClient();
     const { error: deductError } = await supabaseAdmin
       .from('ai_images_creator_credits')
       .update({
@@ -333,7 +333,7 @@ export async function POST(request: NextRequest) {
       logger.info(`开始向图资API发送请求，最终提示词: ${finalPrompt.substring(0, 50)}...`);
       
       // 获取环境配置
-      const apiConfig = getApiConfig();
+      const apiConfig = getApiConfig('tuzi') as TuziConfig;
       // 使用环境变量中指定的模型，默认为gpt-4o-all
       const modelName = apiConfig.model || 'gpt-4o-all';
       
@@ -346,5 +346,28 @@ export async function POST(request: NextRequest) {
       
       logger.info(`与图资API建立连接成功，开始接收数据流`);
       
-      // 收集图片URL
-      let imageUrl = '';
+      // 收集图片URL - 这部分逻辑应该是接收和处理流数据，但文件不完整
+      return new Response(JSON.stringify({ 
+        success: false, 
+        error: '此API尚未完全实现，请稍后再试' 
+      }), {
+        status: 500,
+        headers: { 'Content-Type': 'application/json' },
+      });
+      
+    } catch (error) {
+      logger.error(`生成图片时发生错误: ${error instanceof Error ? error.message : String(error)}`);
+      return new Response(JSON.stringify({ 
+        success: false, 
+        error: `生成图片失败: ${error instanceof Error ? error.message : String(error)}` 
+      }), {
+        status: 500,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    } finally {
+      isProcessing = false;
+      const endTime = Date.now();
+      logger.info(`请求处理完成，耗时: ${endTime - startTime}ms`);
+    }
+  }
+}
