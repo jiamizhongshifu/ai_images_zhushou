@@ -181,7 +181,12 @@ export const useEnhancedToast = () => {
   
   // 关闭特定通知
   const dismiss = (id?: string) => {
-    return dismissToast(id);
+    // 确保只传递有效的字符串ID
+    if (id) {
+      return dismissToast(id);
+    }
+    // 如果没有ID，关闭所有通知
+    return { id: '', dismiss: () => {} };
   };
   
   return {
