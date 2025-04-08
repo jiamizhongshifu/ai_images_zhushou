@@ -42,6 +42,7 @@ export default function LowCreditAlert({ credits, threshold = 2 }: LowCreditAler
       <CreditRechargeDialog
         isOpen={isRechargeOpen}
         onClose={() => setIsRechargeOpen(false)}
+        credits={credits || 0}
       />
     </>
   );
