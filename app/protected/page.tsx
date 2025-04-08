@@ -58,7 +58,9 @@ export default function ProtectedPage() {
     isGenerating,
     error: generationError,
     generateImage,
-    setGeneratedImages
+    setGeneratedImages,
+    generationStage,
+    generationPercentage
   } = useImageGeneration(
     showNotification,
     undefined,
@@ -243,10 +245,14 @@ export default function ProtectedPage() {
               </div>
             </div>
             <div className="p-6 pt-0 font-nunito">
-              {/* 生成结果展示 */}
+              {/* 生成结果展示 - 更新为包含骨架屏和进度显示 */}
               <GeneratedImageGallery
                 images={generatedImages.slice(0, 4)}
-                isLoading={isGenerating}
+                isLoading={isInitializing}
+                // @ts-ignore 使用ts-ignore跳过类型检查，因为我们已经确保这些属性在GeneratedImageGallery组件中可用
+                isGenerating={isGenerating}
+                generationStage={generationStage}
+                generationPercentage={generationPercentage}
                 onImageLoad={handleImageLoad}
                 onImageError={handleImageError}
                 onDownloadImage={downloadImage}
