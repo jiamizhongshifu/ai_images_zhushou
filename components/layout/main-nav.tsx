@@ -633,18 +633,15 @@ export function MainNav({ providedAuthState }: MainNavProps) {
         ))}
       </div>
       
-      {/* 用户信息区域 - 根据登录状态显示不同内容，强制显示不依赖于子组件 */}
+      {/* 用户信息区域 - 根据登录状态显示不同内容 */}
       <div className="flex items-center gap-2 w-full md:w-auto justify-end ml-auto md:ml-0 mt-2 md:mt-0">
         {isAuthenticated ? (
           <>
-            {/* 积分显示部分 - 确保一直显示 */}
-            <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded-md">
-              <Gem className="h-4 w-4 text-purple-500" />
-              <span className="text-sm font-medium">
-                {credits !== null ? `${credits}点` : '0点'}
-              </span>
-            </div>
+            {/* 使用 UserCreditDisplay 组件显示积分和充值按钮 */}
+            <UserCreditDisplay className="bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded-md" />
+            
             <div className="h-4 w-px bg-gray-300 dark:bg-gray-700 mx-1" />
+            
             <button
               onClick={handleLogout}
               className={cn(
