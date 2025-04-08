@@ -316,8 +316,11 @@ export function EnhancedTextarea({
     }
   };
   
+  // 确保innerValue始终是字符串
+  const stringValue: string = typeof innerValue === 'string' ? innerValue : String(innerValue || '');
+  
   // 计算字符数
-  const charCount = innerValue.length;
+  const charCount = stringValue.length;
   const isOverLimit = maxLength !== undefined && charCount > maxLength;
   
   // 构建样式类
@@ -364,14 +367,14 @@ export function EnhancedTextarea({
           ref={textareaRef}
           disabled={disabled}
           className={textareaClass}
-          value={innerValue}
+          value={stringValue}
           onChange={handleChange}
           maxLength={maxLength}
           {...props}
         />
         
         {/* 清除按钮 */}
-        {showClearButton && innerValue && !disabled && (
+        {showClearButton && stringValue && !disabled && (
           <Button
             type="button"
             variant="ghost"
