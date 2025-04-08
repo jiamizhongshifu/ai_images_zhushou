@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Home, Edit3, History, HelpCircle, User, LogOut, LogIn } from "lucide-react";
+import { Home, Edit3, History, HelpCircle, User, LogOut, LogIn, Gem } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { buttonVariants } from "@/components/ui/button";
 import { authService, clearAuthState } from "@/utils/auth-service";
@@ -101,8 +101,12 @@ export function MainNav({ providedAuthState }: MainNavProps) {
     const checkForceLoginParam = () => {
       try {
         if (typeof window !== 'undefined') {
-          const hasForceLoginParam = window.location.search.includes('force_login=true') || 
-                                     window.location.search.includes('just_logged_in=true');
+          const urlParams = new URLSearchParams(window.location.search);
+          // 检查多种可能的登录参数
+          const hasForceLoginParam = urlParams.has('force_login') || 
+                                     urlParams.has('just_logged_in') ||
+                                     urlParams.has('auth_time');
+                                     
           if (hasForceLoginParam) {
             console.log('[MainNav] 检测到强制登录参数，设置为已登录状态');
             if (isMounted && !authStateLocked) {
@@ -112,6 +116,7 @@ export function MainNav({ providedAuthState }: MainNavProps) {
               // 设置认证cookie
               document.cookie = 'user_authenticated=true; path=/; max-age=86400';
               localStorage.setItem('wasAuthenticated', 'true');
+              sessionStorage.setItem('activeAuth', 'true');
               
               // 获取积分
               fetchCredits();
@@ -260,9 +265,15 @@ export function MainNav({ providedAuthState }: MainNavProps) {
   }, [providedAuthState, supabase, authStateLocked]);
   
   // 获取用户积分
-  const fetchCredits = async () => {
+  const fetchCredits = useCallback(async () => {
     try {
       console.log('[MainNav] 尝试获取用户积分');
+      
+      // 如果未认证，不获取积分
+      if (!isAuthenticated) {
+        console.log('[MainNav] 用户未认证，跳过积分获取');
+        return;
+      }
       
       // 强制添加认证标记，确保API调用成功
       if (typeof document !== 'undefined') {
@@ -280,27 +291,63 @@ export function MainNav({ providedAuthState }: MainNavProps) {
       
       if (creditsResponse.ok) {
         const creditsData = await creditsResponse.json();
-        console.log(`[MainNav] 积分API响应:`, creditsData);
         
+        // 输出完整响应结构以便调试
+        console.log('[MainNav] 积分API完整响应:', JSON.stringify(creditsData));
+        
+        // 检查响应是否为成功
+        if (creditsData && creditsData.success === true) {
+          // 直接使用API返回的标准字段
+          if (typeof creditsData.credits === 'number') {
+            setCredits(creditsData.credits);
+            console.log(`[MainNav] 成功获取积分: ${creditsData.credits}`);
+            return;
+          }
+        }
+        
+        // 处理多种可能的API响应格式
+        let creditsValue = null;
+        
+        // 尝试不同的可能字段名
         if (creditsData && typeof creditsData.availableCredits === 'number') {
-          setCredits(creditsData.availableCredits);
-          console.log(`[MainNav] 成功获取积分: ${creditsData.availableCredits}`);
+          creditsValue = creditsData.availableCredits;
+        } else if (creditsData && typeof creditsData.credits === 'number') {
+          creditsValue = creditsData.credits;
+        } else if (creditsData && typeof creditsData.balance === 'number') {
+          creditsValue = creditsData.balance;
+        } else if (creditsData && typeof creditsData.amount === 'number') {
+          creditsValue = creditsData.amount;
+        } else if (creditsData && typeof creditsData.value === 'number') {
+          creditsValue = creditsData.value;
+        } else if (creditsData && typeof creditsData.data === 'object' && creditsData.data) {
+          // 尝试从data对象中获取
+          const dataObj = creditsData.data;
+          if (typeof dataObj.credits === 'number') {
+            creditsValue = dataObj.credits;
+          } else if (typeof dataObj.availableCredits === 'number') {
+            creditsValue = dataObj.availableCredits;
+          }
+        }
+        
+        if (creditsValue !== null) {
+          setCredits(creditsValue);
+          console.log(`[MainNav] 成功获取积分: ${creditsValue}`);
         } else {
-          console.error('[MainNav] 积分数据格式错误:', creditsData);
-          // 如果有前一次有效值，保留它
-          setCredits(prev => prev !== null ? prev : 0);
+          console.error('[MainNav] 无法从响应中提取积分值，使用默认值0');
+          // 设置默认值为0
+          setCredits(0);
         }
       } else {
         console.error('[MainNav] 获取积分失败:', creditsResponse.status);
-        // 如果API失败，至少显示一个默认值
-        setCredits(prev => prev !== null ? prev : 0);
+        // 设置默认值为0
+        setCredits(0);
       }
     } catch (error) {
       console.error('[MainNav] 获取积分信息异常:', error);
-      // 出错时至少显示默认值
-      setCredits(prev => prev !== null ? prev : 0);
+      // 设置默认值为0
+      setCredits(0);
     }
-  };
+  }, [isAuthenticated]);
   
   // API检查认证状态
   const checkAuthState = async () => {
@@ -324,33 +371,7 @@ export function MainNav({ providedAuthState }: MainNavProps) {
         setAuthStateLocked(true); // 锁定状态
         
         // 获取用户积分信息
-        try {
-          const creditsResponse = await fetch('/api/credits/get', {
-            headers: {
-              'Cache-Control': 'no-cache, no-store, must-revalidate',
-              'Pragma': 'no-cache',
-              'Expires': '0'
-            }
-          });
-          
-          if (creditsResponse.ok) {
-            const creditsData = await creditsResponse.json();
-            if (creditsData && typeof creditsData.availableCredits === 'number') {
-              setCredits(creditsData.availableCredits);
-            } else {
-              // 保持当前值或设置默认值
-              setCredits(prev => prev !== null ? prev : 0);
-            }
-          } else {
-            console.error('[MainNav] 获取积分失败:', creditsResponse.status);
-            // 设置默认值
-            setCredits(prev => prev !== null ? prev : 0);
-          }
-        } catch (error) {
-          console.error('[MainNav] 获取积分信息失败:', error);
-          // 设置默认值
-          setCredits(prev => prev !== null ? prev : 0);
-        }
+        fetchCredits();
       }
     } catch (error) {
       console.error('[MainNav] 验证用户状态失败:', error);
@@ -358,6 +379,47 @@ export function MainNav({ providedAuthState }: MainNavProps) {
       setIsLoading(false);
     }
   };
+
+  // 初次渲染和认证状态变化时检查
+  useEffect(() => {
+    // 本地检查认证状态
+    const performAuthCheck = () => {
+      console.log('[MainNav] 执行认证状态检查');
+      
+      // 避免在锁定状态下执行
+      if (authStateLocked) {
+        console.log('[MainNav] 认证状态已锁定，跳过检查');
+        return;
+      }
+      
+      // 检查各种认证标记
+      if (typeof document !== 'undefined') {
+        const hasAuthCookie = document.cookie.includes('user_authenticated=true');
+        const hasLocalAuth = localStorage.getItem('wasAuthenticated') === 'true';
+        const hasSessionAuth = sessionStorage.getItem('activeAuth') === 'true';
+        
+        // 如果有任何一个认证标记，设置为已认证状态
+        if (hasAuthCookie || hasLocalAuth || hasSessionAuth) {
+          console.log('[MainNav] 检测到认证标记，设置为已登录状态');
+          setIsAuthenticated(true);
+        } else {
+          // 尝试通过API检查认证状态
+          checkAuthState();
+        }
+      }
+    };
+    
+    // 执行认证检查
+    performAuthCheck();
+    
+    // 当认证状态变化时，更新积分
+    if (isAuthenticated) {
+      fetchCredits();
+    } else {
+      // 未认证时重置积分
+      setCredits(null);
+    }
+  }, [isAuthenticated, fetchCredits, authStateLocked, checkAuthState]);
 
   // 处理导航项点击
   const handleNavClick = (e: React.MouseEvent, item: NavItem) => {
@@ -395,9 +457,24 @@ export function MainNav({ providedAuthState }: MainNavProps) {
     // 使用直接导航方式，不添加特殊参数
     // 对于所有导航，强制添加认证cookie标记
     document.cookie = 'user_authenticated=true; path=/; max-age=86400';
+    localStorage.setItem('wasAuthenticated', 'true');
     
-    // 对所有导航都使用直接跳转，避免Next.js路由系统的问题
-    window.location.href = item.href;
+    // 特殊处理受保护的页面，确保多重认证标记
+    if (item.requiresAuth) {
+      // 设置多个不同的标记，以增加可靠性
+      sessionStorage.setItem('activeAuth', 'true');
+      // 设置强制标记，防止导航过程中状态丢失
+      const currentUrl = new URL(item.href, window.location.origin);
+      // 添加认证参数
+      currentUrl.searchParams.append('force_login', 'true');
+      currentUrl.searchParams.append('auth_time', Date.now().toString());
+      
+      // 使用带参数的URL进行跳转
+      window.location.href = currentUrl.toString();
+    } else {
+      // 对非受保护页面，使用标准跳转
+      window.location.href = item.href;
+    }
   };
 
   // 处理登录按钮点击
@@ -525,56 +602,6 @@ export function MainNav({ providedAuthState }: MainNavProps) {
     }
   };
 
-  // 初始化时检查认证状态
-  useEffect(() => {
-    // 初始化检查
-    checkAuthState();
-    
-    // 监听导航结束事件
-    const handleRouteChange = () => {
-      console.log('[MainNav] 路由变化，检查认证状态');
-      checkAuthState();
-    };
-    
-    // 周期性检查认证状态 (每分钟)
-    const intervalId = setInterval(() => {
-      checkAuthState();
-    }, 60000);
-    
-    // 页面可见性变化时检查
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible') {
-        console.log('[MainNav] 页面变为可见，检查认证状态');
-        checkAuthState();
-      }
-    };
-    
-    // 添加事件监听
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    window.addEventListener('focus', () => checkAuthState());
-    
-    // 监听存储变化事件
-    window.addEventListener('storage', (event) => {
-      if (event.key === 'wasAuthenticated' || event.key === 'force_logged_out') {
-        console.log(`[MainNav] 存储变化: ${event.key}=${event.newValue}`);
-        checkAuthState();
-      }
-    });
-    
-    return () => {
-      clearInterval(intervalId);
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-      window.removeEventListener('focus', () => checkAuthState());
-    };
-  }, [checkAuthState]);
-  
-  // 直接显示用户积分，无需等待路由变化
-  useEffect(() => {
-    if (isAuthenticated && credits === null) {
-      fetchCredits();
-    }
-  }, [isAuthenticated, credits, fetchCredits]);
-
   // 仅在客户端渲染导航栏
   if (!isClient) {
     return null;
@@ -606,14 +633,16 @@ export function MainNav({ providedAuthState }: MainNavProps) {
         ))}
       </div>
       
-      {/* 用户信息区域 - 根据登录状态显示不同内容 */}
+      {/* 用户信息区域 - 根据登录状态显示不同内容，强制显示不依赖于子组件 */}
       <div className="flex items-center gap-2 w-full md:w-auto justify-end ml-auto md:ml-0 mt-2 md:mt-0">
         {isAuthenticated ? (
           <>
-            {/* 强制显示积分组件，避免缺失 */}
-            <div className="flex items-center gap-1">
-              <User className="h-4 w-4" />
-              <span>{credits !== null ? credits : '加载中..'}</span>
+            {/* 积分显示部分 - 确保一直显示 */}
+            <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded-md">
+              <Gem className="h-4 w-4 text-purple-500" />
+              <span className="text-sm font-medium">
+                {credits !== null ? `${credits}点` : '0点'}
+              </span>
             </div>
             <div className="h-4 w-px bg-gray-300 dark:bg-gray-700 mx-1" />
             <button
