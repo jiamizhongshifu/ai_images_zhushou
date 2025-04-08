@@ -2,7 +2,7 @@ import { NextRequest } from 'next/server';
 import { createClient } from '@/utils/supabase/server';
 import { createAdminClient } from '@/utils/supabase/admin';
 import { OpenAI } from 'openai';
-import { getApiConfig } from '@/utils/env';
+import { getApiConfig, TuziConfig } from '@/utils/env';
 import { addBase64Prefix, compressImageServer, image2Base64 } from '@/utils/image/image2Base64';
 import dns from 'dns';
 import https from 'https';
@@ -66,7 +66,7 @@ const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 // 创建图资API客户端 - 按照tuzi-openai.md的方式
 function createTuziClient() {
   // 获取环境配置
-  const apiConfig = getApiConfig();
+  const apiConfig = getApiConfig('tuzi') as TuziConfig;
   
   // 优先使用环境变量中的配置
   const apiKey = apiConfig.apiKey || process.env.TUZI_API_KEY;

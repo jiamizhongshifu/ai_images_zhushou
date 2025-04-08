@@ -43,7 +43,7 @@ export function getDbConfig() {
 }
 
 /**
- * TUZI API配置类型
+ * 图资API配置接口
  */
 export interface TuziConfig {
   apiUrl: string;
@@ -67,7 +67,13 @@ type SecurityConfig = {
  * @param type 可选的配置类型，默认为'security'
  * @returns API配置对象
  */
-export function getApiConfig(type: 'security' | 'tuzi' | 'all' = 'security') {
+export function getApiConfig(type: 'security' | 'tuzi' | 'all' = 'security'): SecurityConfig | TuziConfig | {
+  tuzi: TuziConfig;
+  cronApiKey: string;
+  paymentWebhookSecret: string;
+  maxRequestSize: number;
+  maxUploadSize: number;
+} {
   // 基础安全配置
   const securityConfig: SecurityConfig = {
     cronApiKey: getEnv('CRON_API_KEY', ''),
