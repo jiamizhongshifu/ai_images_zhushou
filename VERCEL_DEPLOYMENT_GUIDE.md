@@ -16,19 +16,34 @@
    const stringValue: string = typeof innerValue === 'string' ? innerValue : String(innerValue || '');
    const charCount = stringValue.length; // 不再有类型错误
    ```
+9. 安装了缺失的依赖`@radix-ui/react-tooltip`，解决了`tooltip.tsx`组件的导入错误。
 
 ## 部署步骤
 
-部署已经完成！代码已经成功推送到GitHub仓库，Vercel应该会自动检测到更改并开始新的部署。
+### 1. 安装必要依赖
 
-如果您需要手动部署：
+确保项目已安装所有必要的依赖，特别是最近添加的`@radix-ui/react-tooltip`：
 
-1. 登录Vercel仪表板
-2. 找到您的项目
-3. 点击"Deployments"选项卡
-4. 选择"Deploy"按钮
+```bash
+# 使用pnpm安装
+pnpm add @radix-ui/react-tooltip
 
-### 验证部署
+# 或使用npm
+npm install @radix-ui/react-tooltip
+
+# 或使用yarn
+yarn add @radix-ui/react-tooltip
+```
+
+### 2. 推送代码到GitHub
+
+将所有修改推送到GitHub仓库，Vercel会自动检测到更改并开始新的部署。
+
+### 3. 验证依赖安装
+
+在Vercel部署日志中确认`@radix-ui/react-tooltip`已被正确安装。
+
+## 验证部署
 
 部署完成后，访问以下URL确认Toast通知系统工作正常：
 
@@ -44,4 +59,5 @@ https://[your-vercel-domain]/toast-demo
 2. 验证所有必要的环境变量都已设置
 3. 检查类型兼容性问题，尤其是在组件之间传递属性时
 4. 处理Sharp库的警告可能需要在Vercel项目设置中配置相应的构建命令
-5. 创建一个有效的`.env`文件，确保必要的环境变量在构建过程中可用 
+5. 创建一个有效的`.env`文件，确保必要的环境变量在构建过程中可用
+6. 确认`package.json`中包含了所有必要的依赖，特别是UI组件库的依赖 
