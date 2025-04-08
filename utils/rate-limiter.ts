@@ -72,11 +72,11 @@ class RateLimitStore {
     // 每10分钟清理一次过期记录
     this.cleanupInterval = setInterval(() => {
       const now = Date.now();
-      for (const [key, record] of this.store.entries()) {
+      Array.from(this.store.entries()).forEach(([key, record]) => {
         if (now > record.resetTime) {
           this.store.delete(key);
         }
-      }
+      });
     }, 10 * 60 * 1000);
     
     // 防止内存泄漏
