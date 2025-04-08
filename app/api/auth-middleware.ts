@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { createServerClient } from '@supabase/ssr';
+import { createServerClient, type CookieOptions } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 
 // 设置日志级别常量
@@ -50,7 +50,7 @@ export async function withApiAuth(
 ) {
   try {
     // 获取cookie存储
-    const cookieStore = cookies();
+    const cookieStore = await cookies();
     
     // 创建Supabase服务器客户端
     const supabase = createServerClient(
@@ -76,16 +76,30 @@ export async function withApiAuth(
             const cookie = cookieStore.get(name);
             return cookie?.value;
           },
-          set(name: string, value: string, options: any) {
+          set(name: string, value: string, options?: CookieOptions) {
             try {
-              cookieStore.set(name, value, options);
+              // 添加明确的cookie选项以增强cookie稳定性
+              const finalOptions = {
+                ...options,
+                // 确保cookie在整个域名下可用
+                path: options?.path || "/",
+                // 增加cookie持久性，默认为7天
+                maxAge: options?.maxAge || 60 * 60 * 24 * 7,
+                // 确保安全设置
+                secure: process.env.NODE_ENV === "production",
+                // 确保cookie可用于跨请求
+                httpOnly: true,
+                sameSite: "lax" as const
+              };
+              
+              cookieStore.set(name, value, finalOptions);
             } catch (e) {
               logger.debug(`Cookie设置错误，这在路由处理程序中是正常的: ${e instanceof Error ? e.message : String(e)}`);
             }
           },
-          remove(name: string, options: any) {
+          remove(name: string, options?: CookieOptions) {
             try {
-              cookieStore.delete(name, options);
+              cookieStore.set(name, "", { ...options, maxAge: 0 });
             } catch (e) {
               logger.debug(`Cookie删除错误，这在路由处理程序中是正常的: ${e instanceof Error ? e.message : String(e)}`);
             }
