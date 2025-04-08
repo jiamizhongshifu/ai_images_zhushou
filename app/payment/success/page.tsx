@@ -71,7 +71,7 @@ export default function PaymentSuccessPage() {
         toast({
           title: '支付成功',
           description: '您的点数已增加',
-          variant: 'default',
+          type: 'success',
         });
         
         setLoading(false);
@@ -95,7 +95,7 @@ export default function PaymentSuccessPage() {
           toast({
             title: '支付成功',
             description: '您的点数已增加',
-            variant: 'default',
+            type: 'success',
           });
           
           setLoading(false);
