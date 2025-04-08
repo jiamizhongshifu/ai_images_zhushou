@@ -1,13 +1,14 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Loader2, CheckCircle, AlertCircle } from 'lucide-react';
 import { useToast } from '@/components/ui/use-toast';
 
-export default function PaymentSuccessPage() {
+// 封装使用useSearchParams的组件
+function PaymentContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { toast } = useToast();
@@ -242,5 +243,34 @@ export default function PaymentSuccessPage() {
         </CardFooter>
       </Card>
     </div>
+  );
+}
+
+// 加载状态显示组件
+function PaymentLoadingFallback() {
+  return (
+    <div className="flex justify-center items-center min-h-[60vh] p-4">
+      <Card className="w-full max-w-md">
+        <CardHeader>
+          <CardTitle className="text-xl">支付结果</CardTitle>
+          <CardDescription>
+            正在加载支付信息...
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-col items-center gap-4 py-6">
+          <Loader2 className="h-16 w-16 text-primary animate-spin" />
+          <p className="text-center text-lg mt-4">正在获取支付参数...</p>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+// 主导出组件 - 使用Suspense包装SearchParams组件
+export default function PaymentSuccessPage() {
+  return (
+    <Suspense fallback={<PaymentLoadingFallback />}>
+      <PaymentContent />
+    </Suspense>
   );
 } 
