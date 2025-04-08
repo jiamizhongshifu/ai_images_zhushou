@@ -84,6 +84,7 @@ export default function UserCreditDisplay({ className }: { className?: string })
         isOpen={showCreditRechargeDialog}
         onClose={() => setShowCreditRechargeDialog(false)}
         onSuccess={handleRechargeSuccess}
+        credits={creditState.credits || 0}
       />
     </div>
   );
