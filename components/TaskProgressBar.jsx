@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Box, Text, Flex, Badge, VStack, useToast } from '@chakra-ui/react';
 import io from 'socket.io-client';
+import { useToast } from '@/components/ui/use-toast';
 
 // 定义阶段颜色映射
 const stageColors = {
@@ -85,9 +85,7 @@ export default function TaskProgressBar({ taskId }) {
           toast({
             title: 'WebSocket连接失败',
             description: '将使用轮询方式获取进度更新',
-            status: 'warning',
-            duration: 3000,
-            isClosable: true,
+            type: 'warning',
           });
           
           // 如果WebSocket连接失败，使用轮询作为备选方案
@@ -108,17 +106,13 @@ export default function TaskProgressBar({ taskId }) {
               toast({
                 title: '任务完成',
                 description: '图像生成已完成',
-                status: 'success',
-                duration: 5000,
-                isClosable: true,
+                type: 'success',
               });
             } else if (data.stage === 'failed') {
               toast({
                 title: '任务失败',
                 description: data.details?.message || '处理过程中出错',
-                status: 'error',
-                duration: 5000,
-                isClosable: true,
+                type: 'error',
               });
             }
           }
@@ -176,77 +170,64 @@ export default function TaskProgressBar({ taskId }) {
 
   // 自定义进度条组件
   const ProgressBar = ({ percentage, color }) => (
-    <Box w="100%" h="8px" bg="gray.200" borderRadius="full" mt={2} mb={2}>
-      <Box 
-        h="100%" 
-        w={`${percentage}%`} 
-        bg={`${color}.500`} 
-        borderRadius="full"
-        transition="width 0.3s ease-in-out"
-        position="relative"
-        _after={{
-          content: '""',
-          position: 'absolute',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          bgGradient: progress.stage !== 'completed' && progress.stage !== 'failed' 
-            ? 'linear(to-r, transparent, rgba(255,255,255,0.3), transparent)' 
-            : 'none',
-          backgroundSize: '200% 100%',
-          animation: progress.stage !== 'completed' && progress.stage !== 'failed' 
-            ? 'shimmer 1.5s infinite' 
-            : 'none',
-          borderRadius: 'full'
-        }}
-      />
-    </Box>
+    <div className="w-full h-2 bg-gray-200 rounded-full mt-2 mb-2">
+      <div 
+        className={`h-full rounded-full bg-${color}-500 transition-all duration-300 ease-in-out relative`}
+        style={{ width: `${percentage}%` }}
+      >
+        {progress.stage !== 'completed' && progress.stage !== 'failed' && (
+          <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent bg-[length:200%_100%] animate-shimmer rounded-full" />
+        )}
+      </div>
+    </div>
   );
 
   const color = stageColors[progress.stage] || 'gray';
   const description = stageDescriptions[progress.stage] || '未知状态';
 
   return (
-    <Box borderWidth="1px" borderRadius="lg" p={4} width="100%" boxShadow="sm">
-      <style jsx global>{`
+    <div className="border border-gray-200 rounded-lg p-4 w-full shadow-sm">
+      <style jsx>{`
         @keyframes shimmer {
           0% { background-position: -200% 0; }
           100% { background-position: 200% 0; }
         }
+        .animate-shimmer {
+          animation: shimmer 1.5s infinite;
+        }
       `}</style>
       
-      <VStack spacing={1} align="stretch">
-        <Flex justifyContent="space-between" alignItems="center">
-          <Text fontWeight="bold" fontSize="md">图像生成进度</Text>
-          <Badge colorScheme={color} fontSize="sm" px={2} py={1} borderRadius="md">
+      <div className="flex flex-col space-y-1">
+        <div className="flex justify-between items-center">
+          <p className="font-bold text-md">图像生成进度</p>
+          <span className={`px-2 py-1 rounded-md bg-${color}-100 text-${color}-800 text-sm`}>
             {description}
-          </Badge>
-        </Flex>
+          </span>
+        </div>
         
         <ProgressBar percentage={progress.percentage} color={color} />
         
-        <Flex justifyContent="space-between" alignItems="center">
-          <Text fontSize="sm" color="gray.600">
+        <div className="flex justify-between items-center">
+          <p className="text-sm text-gray-600">
             {progress.details?.message || '正在处理...'}
-          </Text>
-          <Text fontSize="sm" fontWeight="bold">
+          </p>
+          <p className="text-sm font-bold">
             {progress.percentage}%
-          </Text>
-        </Flex>
+          </p>
+        </div>
         
         {progress.details?.estimatedTimeRemaining && progress.stage !== 'completed' && (
-          <Text fontSize="xs" mt={1} color="gray.500" textAlign="right">
+          <p className="text-xs mt-1 text-gray-500 text-right">
             预计剩余: {progress.details.estimatedTimeRemaining}
-          </Text>
+          </p>
         )}
         
         {progress.details?.processingTime && progress.stage === 'completed' && (
-          <Text fontSize="xs" mt={1} color="gray.500" textAlign="right">
+          <p className="text-xs mt-1 text-gray-500 text-right">
             处理时间: {Math.round(progress.details.processingTime / 1000)}秒
-          </Text>
+          </p>
         )}
-      </VStack>
-    </Box>
+      </div>
+    </div>
   );
 } 

@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/router';
-import { Box, Container, Heading, Text, Spinner, Image, Button, VStack, HStack, Badge, Divider, useToast } from '@chakra-ui/react';
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
+import Image from 'next/image';
 import TaskProgressBar from '../../components/TaskProgressBar';
+import { useToast } from '@/components/ui/use-toast';
 
 export default function TaskDetails() {
   const router = useRouter();
@@ -45,9 +46,7 @@ export default function TaskDetails() {
       toast({
         title: '获取任务失败',
         description: err.message,
-        status: 'error',
-        duration: 5000,
-        isClosable: true,
+        type: 'error',
       });
     } finally {
       setLoading(false);
@@ -72,9 +71,7 @@ export default function TaskDetails() {
       if (data.success) {
         toast({
           title: '任务已取消',
-          status: 'success',
-          duration: 3000,
-          isClosable: true,
+          type: 'success',
         });
         
         // 刷新任务详情
@@ -86,9 +83,7 @@ export default function TaskDetails() {
       toast({
         title: '取消任务失败',
         description: err.message,
-        status: 'error',
-        duration: 5000,
-        isClosable: true,
+        type: 'error',
       });
     }
   };
@@ -96,50 +91,50 @@ export default function TaskDetails() {
   // 获取任务状态标签样式
   const getStatusBadgeProps = (status) => {
     const statusMap = {
-      'pending': { colorScheme: 'blue', label: '等待处理' },
-      'processing': { colorScheme: 'yellow', label: '处理中' },
-      'completed': { colorScheme: 'green', label: '已完成' },
-      'failed': { colorScheme: 'red', label: '失败' },
-      'cancelled': { colorScheme: 'gray', label: '已取消' },
+      'pending': { color: 'blue', label: '等待处理' },
+      'processing': { color: 'yellow', label: '处理中' },
+      'completed': { color: 'green', label: '已完成' },
+      'failed': { color: 'red', label: '失败' },
+      'cancelled': { color: 'gray', label: '已取消' },
     };
     
-    return statusMap[status] || { colorScheme: 'gray', label: '未知状态' };
+    return statusMap[status] || { color: 'gray', label: '未知状态' };
   };
 
   // 页面加载中
   if (loading && !task) {
     return (
-      <Container maxW="container.md" py={10}>
-        <VStack spacing={4} align="center">
-          <Spinner size="xl" color="blue.500" thickness="4px" />
-          <Text>加载任务信息...</Text>
-        </VStack>
-      </Container>
+      <div className="container mx-auto py-10 max-w-3xl">
+        <div className="flex flex-col items-center space-y-4">
+          <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+          <p>加载任务信息...</p>
+        </div>
+      </div>
     );
   }
 
   // 发生错误
   if (error && !task) {
     return (
-      <Container maxW="container.md" py={10}>
-        <VStack spacing={4} align="center">
-          <Heading color="red.500" size="md">加载任务失败</Heading>
-          <Text>{error}</Text>
-          <Button onClick={fetchTaskDetails} colorScheme="blue">重试</Button>
-        </VStack>
-      </Container>
+      <div className="container mx-auto py-10 max-w-3xl">
+        <div className="flex flex-col items-center space-y-4">
+          <h2 className="text-red-500 text-lg font-semibold">加载任务失败</h2>
+          <p>{error}</p>
+          <button onClick={fetchTaskDetails} className="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600">重试</button>
+        </div>
+      </div>
     );
   }
 
   // 任务不存在
   if (!task) {
     return (
-      <Container maxW="container.md" py={10}>
-        <VStack spacing={4} align="center">
-          <Heading size="md">任务不存在或已被删除</Heading>
-          <Button onClick={() => router.push('/dashboard')} colorScheme="blue">返回控制台</Button>
-        </VStack>
-      </Container>
+      <div className="container mx-auto py-10 max-w-3xl">
+        <div className="flex flex-col items-center space-y-4">
+          <h2 className="text-lg font-semibold">任务不存在或已被删除</h2>
+          <button onClick={() => router.push('/dashboard')} className="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600">返回控制台</button>
+        </div>
+      </div>
     );
   }
 
@@ -148,106 +143,106 @@ export default function TaskDetails() {
   const statusBadge = getStatusBadgeProps(status);
 
   return (
-    <Container maxW="container.md" py={8}>
-      <VStack spacing={6} align="stretch">
-        <HStack justifyContent="space-between" alignItems="center">
-          <Heading size="lg">任务详情</Heading>
-          <Badge colorScheme={statusBadge.colorScheme} fontSize="md" px={3} py={1} borderRadius="md">
+    <div className="container mx-auto py-8 max-w-3xl">
+      <div className="flex flex-col space-y-6">
+        <div className="flex justify-between items-center">
+          <h1 className="text-2xl font-bold">任务详情</h1>
+          <span className={`px-3 py-1 bg-${statusBadge.color}-100 text-${statusBadge.color}-800 rounded-md text-md`}>
             {statusBadge.label}
-          </Badge>
-        </HStack>
+          </span>
+        </div>
         
-        <Box>
-          <Text fontSize="sm" color="gray.500">任务ID</Text>
-          <Text fontFamily="mono" fontSize="sm">{taskId}</Text>
-        </Box>
+        <div>
+          <p className="text-sm text-gray-500">任务ID</p>
+          <p className="font-mono text-sm">{taskId}</p>
+        </div>
         
-        <Divider />
+        <hr className="border-gray-200" />
         
         {/* 进度条显示 - 对于进行中的任务 */}
         {(status === 'pending' || status === 'processing') && (
-          <Box>
+          <div>
             <TaskProgressBar taskId={taskId} />
-          </Box>
+          </div>
         )}
         
         {/* 任务内容 */}
-        <Box>
-          <Text fontSize="sm" color="gray.500">提示词</Text>
-          <Text>{prompt}</Text>
-        </Box>
+        <div>
+          <p className="text-sm text-gray-500">提示词</p>
+          <p>{prompt}</p>
+        </div>
         
         {style && (
-          <Box>
-            <Text fontSize="sm" color="gray.500">风格</Text>
-            <Text>{style}</Text>
-          </Box>
+          <div>
+            <p className="text-sm text-gray-500">风格</p>
+            <p>{style}</p>
+          </div>
         )}
         
-        <HStack justifyContent="space-between">
-          <Box>
-            <Text fontSize="sm" color="gray.500">创建时间</Text>
-            <Text>{new Date(created_at).toLocaleString()}</Text>
-          </Box>
+        <div className="flex justify-between">
+          <div>
+            <p className="text-sm text-gray-500">创建时间</p>
+            <p>{new Date(created_at).toLocaleString()}</p>
+          </div>
           
           {completed_at && (
-            <Box>
-              <Text fontSize="sm" color="gray.500">完成时间</Text>
-              <Text>{new Date(completed_at).toLocaleString()}</Text>
-            </Box>
+            <div>
+              <p className="text-sm text-gray-500">完成时间</p>
+              <p>{new Date(completed_at).toLocaleString()}</p>
+            </div>
           )}
-        </HStack>
+        </div>
         
         {/* 显示处理时间（如果有） */}
         {task.processing_duration_ms && (
-          <Box>
-            <Text fontSize="sm" color="gray.500">处理时间</Text>
-            <Text>{(task.processing_duration_ms / 1000).toFixed(2)}秒</Text>
-          </Box>
+          <div>
+            <p className="text-sm text-gray-500">处理时间</p>
+            <p>{(task.processing_duration_ms / 1000).toFixed(2)}秒</p>
+          </div>
         )}
         
         {/* 显示错误信息（如果有） */}
         {error_message && (
-          <Box bg="red.50" p={4} borderRadius="md">
-            <Text fontSize="sm" color="red.500" fontWeight="bold">错误信息</Text>
-            <Text>{error_message}</Text>
-          </Box>
+          <div className="bg-red-50 p-4 rounded-md">
+            <p className="text-sm text-red-500 font-semibold">错误信息</p>
+            <p>{error_message}</p>
+          </div>
         )}
         
         {/* 显示结果图片（如果有） */}
         {result_url && (
-          <Box>
-            <Text fontSize="sm" color="gray.500" mb={2}>生成结果</Text>
-            <Image 
-              src={result_url} 
-              alt="生成的图像" 
-              borderRadius="md" 
-              fallback={<Spinner />} 
-              maxH="500px"
-              objectFit="contain"
-            />
-          </Box>
+          <div>
+            <p className="text-sm text-gray-500 mb-2">生成结果</p>
+            <div className="relative w-full h-[500px]">
+              <img 
+                src={result_url} 
+                alt="生成的图像" 
+                className="rounded-md max-h-[500px] object-contain"
+                style={{ margin: '0 auto' }}
+              />
+            </div>
+          </div>
         )}
         
         {/* 操作按钮 */}
-        <HStack spacing={4} justify="flex-end">
-          <Button onClick={() => router.push('/dashboard')} variant="outline">
+        <div className="flex space-x-4 justify-end">
+          <button onClick={() => router.push('/dashboard')} className="px-4 py-2 border border-gray-300 rounded-md hover:bg-gray-50">
             返回控制台
-          </Button>
+          </button>
           
           {(status === 'pending' || status === 'processing') && (
-            <Button onClick={cancelTask} colorScheme="red" variant="outline">
+            <button onClick={cancelTask} className="px-4 py-2 border border-red-300 text-red-500 rounded-md hover:bg-red-50">
               取消任务
-            </Button>
+            </button>
           )}
           
           {status === 'completed' && result_url && (
-            <Button as="a" href={result_url} target="_blank" colorScheme="blue">
+            <a href={result_url} target="_blank" className="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600">
               查看原始图片
-            </Button>
+            </a>
           )}
-        </HStack>
-      </VStack>
-    </Container>
+        </div>
+      </div>
+    </div>
   );
 } 

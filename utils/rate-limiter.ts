@@ -260,4 +260,16 @@ export const rateLimitPresets = {
     limit: 3,
     windowMs: 60 * 1000
   }
-}; 
+};
+
+/**
+ * 为特定命名空间的IP创建速率限制键生成器
+ * @param namespace 命名空间前缀
+ * @returns 键生成器函数
+ */
+export function ipKeyGenerator(namespace: string = 'default') {
+  return (req: NextRequest) => {
+    const ip = getClientIP(req);
+    return `${namespace}:${ip}`;
+  };
+} 
