@@ -356,17 +356,27 @@ export async function POST(request: NextRequest) {
       });
       
     } catch (error) {
-      logger.error(`生成图片时发生错误: ${error instanceof Error ? error.message : String(error)}`);
+      logger.error(`处理图片内容时发生错误: ${error instanceof Error ? error.message : String(error)}`);
       return new Response(JSON.stringify({ 
         success: false, 
-        error: `生成图片失败: ${error instanceof Error ? error.message : String(error)}` 
+        error: `处理图片失败: ${error instanceof Error ? error.message : String(error)}` 
       }), {
         status: 500,
         headers: { 'Content-Type': 'application/json' },
       });
-    } finally {
-      isProcessing = false;
-      const endTime = Date.now();
-      logger.info(`请求处理完成，耗时: ${endTime - startTime}ms`);
     }
+  } catch (error) {
+    logger.error(`生成图片时发生错误: ${error instanceof Error ? error.message : String(error)}`);
+    return new Response(JSON.stringify({ 
+      success: false, 
+      error: `生成图片失败: ${error instanceof Error ? error.message : String(error)}` 
+    }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  } finally {
+    isProcessing = false;
+    const endTime = Date.now();
+    logger.info(`请求处理完成，耗时: ${endTime - startTime}ms`);
   }
+}
