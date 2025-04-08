@@ -12,6 +12,68 @@ const TIMEOUT = 600000; // 10分钟超时
 // 正在处理的任务追踪，避免重复处理
 const processingTasks = new Set<string>();
 
+// 添加日志对象
+const log = {
+  info: (message: string) => console.log(`[INFO] ${message}`),
+  warn: (message: string) => console.warn(`[WARN] ${message}`),
+  error: (message: string) => console.error(`[ERROR] ${message}`)
+};
+
+/**
+ * 检查任务是否已被取消
+ */
+async function isTaskCancelled(taskId: string): Promise<boolean> {
+  try {
+    const supabase = await createAdminClient();
+    // 先检查任务是否已经被取消
+    const { data, error } = await supabase
+      .from('ai_images_creator_tasks')
+      .select('status')
+      .eq('task_id', taskId)
+      .single();
+    
+    if (error) {
+      console.error(`检查任务 ${taskId} 状态时出错:`, error);
+      return false; // 查询错误时默认为未取消
+    }
+    
+    // 任务状态为cancelled说明已被取消
+    if (data && data.status === 'cancelled') {
+      console.log(`任务 ${taskId} 已被取消`);
+      return true;
+    }
+
+    return false; // 默认为未取消
+  } catch (e) {
+    console.error(`检查任务取消状态时发生异常:`, e);
+    return false; // 发生异常时默认为未取消
+  }
+}
+
+/**
+ * 更新已取消任务的状态
+ */
+async function updateCancelledTaskStatus(taskId: string): Promise<void> {
+  try {
+    const supabase = await createAdminClient();
+    await updateTaskStatus(taskId, 'cancelled', null, '任务已被用户取消');
+    
+    // 获取任务信息以退款
+    const { data: task } = await supabase
+      .from('ai_images_creator_tasks')
+      .select('user_id, credits_deducted')
+      .eq('task_id', taskId)
+      .single();
+    
+    if (task && task.credits_deducted) {
+      await refundCredits(task.user_id);
+      await updateTaskRefundStatus(taskId, true);
+    }
+  } catch (error) {
+    console.error(`更新取消任务 ${taskId} 状态失败:`, error);
+  }
+}
+
 /**
  * 处理图像生成任务API（仅内部使用，需要适当保护）
  * 
@@ -27,10 +89,13 @@ const processingTasks = new Set<string>();
  * }
  */
 export async function POST(request: NextRequest) {
+  let taskId: string = "";
+  
   try {
     // 获取查询参数
     const body = await request.json();
-    const { taskId, secretKey, preserveAspectRatio } = body;
+    taskId = body.taskId;
+    const { secretKey, preserveAspectRatio } = body;
     
     // 存储preserveAspectRatio以便在processTask中使用
     const shouldPreserveAspectRatio = preserveAspectRatio === true;
@@ -480,37 +545,45 @@ export async function POST(request: NextRequest) {
     }
     
   } catch (error) {
-    console.error(`处理任务 ${taskId} 时发生错误:`, error);
+    console.error(`处理任务时发生错误:`, error);
     
     // 尝试更新任务状态为失败
     try {
+      // 获取当前请求中的taskId，如果不可用则使用"unknown"
+      const contextTaskId = typeof taskId !== 'undefined' ? taskId : "unknown";
+      
       // 先检查任务是否已被取消
-      const isCancelled = await isTaskCancelled(taskId);
-      if (isCancelled) {
-        console.log(`任务 ${taskId} 在处理过程中已被取消，不记录错误`);
-        return;
-      }
-      
-      await updateTaskStatus(
-        taskId,
-        'failed',
-        null,
-        (error as any).message || '处理任务时发生错误'
-      );
-      
-      // 如果已扣除点数，退还
-      const { data: task } = await supabase
-        .from('ai_images_creator_tasks')
-        .select('user_id, credits_deducted')
-        .eq('task_id', taskId)
-        .single();
-      
-      if (task && task.credits_deducted) {
-        await refundCredits(task.user_id);
-        await updateTaskRefundStatus(taskId, true);
+      if (contextTaskId !== "unknown") {
+        const isCancelled = await isTaskCancelled(contextTaskId);
+        if (isCancelled) {
+          console.log(`任务 ${contextTaskId} 在处理过程中已被取消，不记录错误`);
+          return;
+        }
+        
+        await updateTaskStatus(
+          contextTaskId,
+          'failed',
+          null,
+          (error as any).message || '处理任务时发生错误'
+        );
+        
+        // 如果已扣除点数，退还
+        const supabase = await createAdminClient();
+        const { data: task } = await supabase
+          .from('ai_images_creator_tasks')
+          .select('user_id, credits_deducted')
+          .eq('task_id', contextTaskId)
+          .single();
+        
+        if (task && task.credits_deducted) {
+          await refundCredits(task.user_id);
+          await updateTaskRefundStatus(contextTaskId, true);
+        }
+      } else {
+        console.error(`无法更新任务状态：taskId未知`);
       }
     } catch (updateError) {
-      console.error(`更新任务 ${taskId} 状态失败:`, updateError);
+      console.error(`更新任务状态失败:`, updateError);
     }
   }
 }
