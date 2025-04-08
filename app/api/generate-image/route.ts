@@ -1,7 +1,7 @@
 import { NextRequest } from 'next/server';
 import { addBase64Prefix, estimateBase64Size, compressImageServer } from '@/utils/image/image2Base64';
 import { OpenAI } from 'openai';
-import { getApiConfig, logApiConfig } from '@/utils/env';
+import { getApiConfig, logApiConfig, TuziConfig } from '@/utils/env';
 import { createClient } from '@/utils/supabase/server';
 import { createAdminClient } from '@/utils/supabase/admin';
 
@@ -192,7 +192,7 @@ function extractImageUrl(content: string): string | null {
 // 获取API配置，优先使用环境变量，备用使用硬编码值
 function getEffectiveApiConfig() {
   // 从环境变量获取配置
-  const envConfig = getApiConfig();
+  const envConfig = getApiConfig('tuzi') as TuziConfig;
   
   // 记录环境变量中的配置
   logApiConfig(envConfig);
