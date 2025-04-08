@@ -17,14 +17,14 @@ export default function PaymentSuccessPage() {
   const [message, setMessage] = useState('正在验证支付结果...');
   const [retryCount, setRetryCount] = useState(0);
   
-  // 获取URL中的参数
-  const orderNo = searchParams.get('out_trade_no') || 
-                 searchParams.get('order_no') || 
-                 searchParams.get('orderNo');
+  // 获取URL中的参数，添加空值检查
+  const orderNo = searchParams?.get('out_trade_no') || 
+                 searchParams?.get('order_no') || 
+                 searchParams?.get('orderNo');
                  
-  const tradeStatus = searchParams.get('trade_status') || 
-                     searchParams.get('trade_state') || 
-                     searchParams.get('status');
+  const tradeStatus = searchParams?.get('trade_status') || 
+                     searchParams?.get('trade_state') || 
+                     searchParams?.get('status');
   
   // 自动检查并修复订单
   useEffect(() => {
