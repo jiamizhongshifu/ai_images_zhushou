@@ -27,6 +27,7 @@ export const useEnhancedToast = () => {
     return toast({
       variant: "default",
       className: "bg-gradient-to-r from-green-500/10 to-green-600/5 border-green-500/30",
+      type: "success",
       title: (
         <div className="flex items-center">
           <span className="flex items-center justify-center bg-green-500/20 p-1 rounded-full mr-2">
@@ -45,6 +46,7 @@ export const useEnhancedToast = () => {
   const error = (title: string, description?: string) => {
     return toast({
       variant: "destructive",
+      type: "error",
       title: (
         <div className="flex items-center">
           <span className="flex items-center justify-center bg-destructive/20 p-1 rounded-full mr-2">
@@ -64,6 +66,7 @@ export const useEnhancedToast = () => {
     return toast({
       variant: "default",
       className: "bg-gradient-to-r from-amber-500/10 to-amber-600/5 border-amber-500/30",
+      type: "warning",
       title: (
         <div className="flex items-center">
           <span className="flex items-center justify-center bg-amber-500/20 p-1 rounded-full mr-2">
@@ -83,6 +86,7 @@ export const useEnhancedToast = () => {
     return toast({
       variant: "default",
       className: "bg-gradient-to-r from-blue-500/10 to-blue-600/5 border-blue-500/30",
+      type: "info",
       title: (
         <div className="flex items-center">
           <span className="flex items-center justify-center bg-blue-500/20 p-1 rounded-full mr-2">
@@ -103,6 +107,7 @@ export const useEnhancedToast = () => {
       variant: "default",
       duration: Infinity, // 不会自动关闭
       className: "bg-gradient-to-r from-primary/10 to-primary-600/5 border-primary/30",
+      type: "info",
       title: (
         <div className="flex items-center">
           <span className="flex items-center justify-center bg-primary/20 p-1 rounded-full mr-2">
@@ -122,6 +127,7 @@ export const useEnhancedToast = () => {
     return toast({
       variant: "default",
       className: "bg-gradient-to-r from-primary/10 to-primary-600/5 border-primary/30",
+      type: "success",
       title: (
         <div className="flex items-center">
           <span className="flex items-center justify-center bg-primary/20 p-1 rounded-full mr-2">
@@ -137,6 +143,7 @@ export const useEnhancedToast = () => {
     return toast({
       variant: "default",
       className: "bg-gradient-to-r from-primary/10 to-primary-600/5 border-primary/30",
+      type: "success",
       title: (
         <div className="flex items-center">
           <span className="flex items-center justify-center bg-primary/20 p-1 rounded-full mr-2">
@@ -151,6 +158,7 @@ export const useEnhancedToast = () => {
   const imageError = (title: string = "图片加载失败") => {
     return toast({
       variant: "destructive",
+      type: "error",
       title: (
         <div className="flex items-center">
           <span className="flex items-center justify-center bg-destructive/20 p-1 rounded-full mr-2">
@@ -167,6 +175,7 @@ export const useEnhancedToast = () => {
     return toast({
       ...props,
       id,
+      type: props.type || "info",
     });
   };
   
