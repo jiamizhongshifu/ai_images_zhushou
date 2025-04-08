@@ -11,7 +11,11 @@
 5. 创建了`.env.production`文件，确保Vercel部署时能正确获取环境变量。
 6. 修复了`toast.dismiss`不存在的类型错误，正确从`useToast()`中解构获取`dismiss`函数。
 7. 在`components/ui/input.tsx`中导出`InputProps`类型，解决了`form-elements.tsx`引用不存在类型的错误。
-8. 修复了`form-elements.tsx`中的类型错误，确保`EnhancedTextarea`组件中的`innerValue`在访问`length`属性前转换为字符串类型。
+8. 彻底修复了`form-elements.tsx`中的类型错误，通过添加明确的字符串类型转换，确保`EnhancedTextarea`组件中的值始终以字符串形式处理：
+   ```typescript
+   const stringValue: string = typeof innerValue === 'string' ? innerValue : String(innerValue || '');
+   const charCount = stringValue.length; // 不再有类型错误
+   ```
 
 ## 部署步骤
 
