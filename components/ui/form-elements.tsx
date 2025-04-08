@@ -1,14 +1,13 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Eye, EyeOff, X, Check, AlertCircle, Info } from 'lucide-react';
 import { 
-  Input as ShadcnInput, 
-  InputProps as ShadcnInputProps 
+  Input as ShadcnInput
 } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 
 // 接口定义
-interface EnhancedInputProps extends ShadcnInputProps {
+interface EnhancedInputProps extends React.ComponentProps<"input"> {
   label?: string;
   helperText?: string;
   errorMessage?: string;
@@ -282,13 +281,13 @@ export function EnhancedTextarea({
   ...props
 }: EnhancedTextareaProps) {
   const [focused, setFocused] = useState(false);
-  const [innerValue, setInnerValue] = useState(value || '');
+  const [innerValue, setInnerValue] = useState(value ? String(value) : '');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   
   // 同步外部value和内部state
   useEffect(() => {
     if (value !== undefined) {
-      setInnerValue(value as string);
+      setInnerValue(String(value));
     }
   }, [value]);
   
@@ -318,7 +317,7 @@ export function EnhancedTextarea({
   };
   
   // 计算字符数
-  const charCount = innerValue ? innerValue.length : 0;
+  const charCount = innerValue.length;
   const isOverLimit = maxLength !== undefined && charCount > maxLength;
   
   // 构建样式类
