@@ -37,7 +37,7 @@ export const GET = withRateLimit(
       return await processPaymentCallback(params);
     } catch (error: any) {
       console.error("处理GET支付通知时出错:", error);
-      return new Response("success", { status: 200 }); // 仍返回成功避免重复通知
+      return NextResponse.json({ message: "success" }, { status: 200 }); // 仍返回成功避免重复通知
     }
   },
   {
@@ -123,7 +123,7 @@ export const POST = withRateLimit(
             }
             
             // 不是我们处理的通知类型
-            return new Response("success", { status: 200 });
+            return NextResponse.json({ message: "success" }, { status: 200 });
           }
         } catch (e) {
           console.error('JSON解析失败，尝试其他格式', e);
@@ -166,10 +166,10 @@ export const POST = withRateLimit(
       }
       
       console.error("无法解析的回调格式");
-      return new Response("success", { status: 200 }); // 仍返回成功避免重复通知
+      return NextResponse.json({ message: "success" }, { status: 200 }); // 仍返回成功避免重复通知
     } catch (error: any) {
       console.error("处理POST支付通知时出错:", error);
-      return new Response("success", { status: 200 });
+      return NextResponse.json({ message: "success" }, { status: 200 });
     }
   },
   {
@@ -551,7 +551,7 @@ async function processPaymentCallback(params: Record<string, any>) {
   
   if (!orderNo) {
     console.error("支付通知缺少订单号");
-    return new Response("success", { status: 200 }); // 仍返回成功避免重复通知
+    return NextResponse.json({ message: "success" }, { status: 200 }); // 仍返回成功避免重复通知
   }
   
   try {
@@ -572,7 +572,7 @@ async function processPaymentCallback(params: Record<string, any>) {
         // 更新回调日志状态
         await updateCallbackStatus(orderNo, 'error', `查询订单信息失败: ${queryError?.message || '未找到订单'}`);
         
-        return new Response("success", { status: 200 }); // 仍返回成功避免重复通知
+        return NextResponse.json({ message: "success" }, { status: 200 }); // 仍返回成功避免重复通知
       }
       
       // 如果订单已处理，直接返回成功
@@ -582,7 +582,7 @@ async function processPaymentCallback(params: Record<string, any>) {
         // 更新回调日志状态
         await updateCallbackStatus(orderNo, 'already_processed');
         
-        return new Response("success", { status: 200 });
+        return NextResponse.json({ message: "success" }, { status: 200 });
       }
       
       // 处理支付结果 - 放宽条件，只要有trade_no或收到成功状态就认为支付成功
@@ -623,7 +623,7 @@ async function processPaymentCallback(params: Record<string, any>) {
             })
             .eq('order_no', orderNo);
             
-          return new Response("success", { status: 200 });
+          return NextResponse.json({ message: "success" }, { status: 200 });
         }
         
         // 添加处理锁，防止并发处理
@@ -642,7 +642,7 @@ async function processPaymentCallback(params: Record<string, any>) {
           // 更新回调日志状态
           await updateCallbackStatus(orderNo, 'error', `锁定订单失败: ${lockError.message}`);
           
-          return new Response("success", { status: 200 }); // 仍返回成功，避免重复通知
+          return NextResponse.json({ message: "success" }, { status: 200 }); // 仍返回成功，避免重复通知
         }
         
         // 增加处理记录，确保幂等性
@@ -684,7 +684,7 @@ async function processPaymentCallback(params: Record<string, any>) {
           // 更新回调日志状态
           await updateCallbackStatus(orderNo, 'error', `更新订单状态失败: ${updateError.message}`);
           
-          return new Response("success", { status: 200 }); // 仍返回成功，避免重复查询
+          return NextResponse.json({ message: "success" }, { status: 200 }); // 仍返回成功，避免重复查询
         }
         
         // 查询用户当前点数
@@ -718,7 +718,7 @@ async function processPaymentCallback(params: Record<string, any>) {
               // 更新回调日志状态
               await updateCallbackStatus(orderNo, 'error', `创建用户点数记录失败: ${insertError.message}`);
               
-              return new Response("success", { status: 200 }); // 仍返回成功，避免重复查询
+              return NextResponse.json({ message: "success" }, { status: 200 }); // 仍返回成功，避免重复查询
             }
           } else {
             console.error('查询用户点数失败:', creditQueryError);
@@ -726,7 +726,7 @@ async function processPaymentCallback(params: Record<string, any>) {
             // 更新回调日志状态
             await updateCallbackStatus(orderNo, 'error', `查询用户点数失败: ${creditQueryError.message}`);
             
-            return new Response("success", { status: 200 }); // 仍返回成功，避免重复查询
+            return NextResponse.json({ message: "success" }, { status: 200 }); // 仍返回成功，避免重复查询
           }
         } else {
           // 用户已有点数记录，更新点数
@@ -748,7 +748,7 @@ async function processPaymentCallback(params: Record<string, any>) {
             // 更新回调日志状态
             await updateCallbackStatus(orderNo, 'error', `更新用户点数失败: ${updateCreditError.message}`);
             
-            return new Response("success", { status: 200 }); // 仍返回成功，避免重复查询
+            return NextResponse.json({ message: "success" }, { status: 200 }); // 仍返回成功，避免重复查询
           }
         }
         
@@ -772,7 +772,7 @@ async function processPaymentCallback(params: Record<string, any>) {
           // 更新回调日志状态
           await updateCallbackStatus(orderNo, 'error', `创建点数变更日志失败: ${logInsertError.message}`);
           
-          return new Response("success", { status: 200 }); // 仍返回成功，避免重复查询
+          return NextResponse.json({ message: "success" }, { status: 200 }); // 仍返回成功，避免重复查询
         }
         
         // 更新处理日志状态
@@ -806,7 +806,7 @@ async function processPaymentCallback(params: Record<string, any>) {
           processId: processLog?.id || 'unknown'
         });
         
-        return new Response("success", { status: 200 });
+        return NextResponse.json({ message: "success" }, { status: 200 });
       } else {
         // 更新订单状态为失败
         await client
@@ -823,7 +823,7 @@ async function processPaymentCallback(params: Record<string, any>) {
         
         console.log("支付失败:", { orderNo, status: params.trade_status });
         
-        return new Response("success", { status: 200 });
+        return NextResponse.json({ message: "success" }, { status: 200 });
       }
     });
   } catch (error) {
@@ -834,6 +834,6 @@ async function processPaymentCallback(params: Record<string, any>) {
       await updateCallbackStatus(orderNo, 'error', `处理异常: ${error instanceof Error ? error.message : String(error)}`);
     }
     
-    return new Response("success", { status: 200 }); // 仍返回成功避免重复通知
+    return NextResponse.json({ message: "success" }, { status: 200 }); // 仍返回成功避免重复通知
   }
 } 
