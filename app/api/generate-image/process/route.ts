@@ -273,18 +273,19 @@ export async function POST(request: NextRequest) {
       logger.info(`开始调用图资API生成图片，${base64Image ? '包含上传图片' : '无上传图片'}，${style ? `风格: ${style}` : '无风格选择'}`);
       
       // 构建消息数组，根据是否有prompt和图片决定使用什么模式
-      const messages = [];
+      const messages: Array<{
+        role: 'system' | 'user' | 'assistant';
+        content: Array<{type: string; text?: string; image_url?: {url: string}}> | string;
+      }> = [];
       
       // 添加系统消息
       messages.push({
         role: "system",
-        content: [
-          { type: "text", text: "你是一个专业的绘画系统。请根据用户提供的文本描述或图片，生成相应的高质量图像。" }
-        ]
+        content: "你是一个专业的绘画系统。请根据用户提供的文本描述或图片，生成相应的高质量图像。"
       });
       
-      // 构建用户消息
-      const userMessageContent = [];
+      // 构建用户消息内容
+      const userMessageContent: Array<{type: string; text?: string; image_url?: {url: string}}> = [];
       
       // 添加文字提示
       if (prompt && prompt.trim() !== '') {
@@ -341,7 +342,7 @@ export async function POST(request: NextRequest) {
       const response = await tuziClient.chat.completions.create({
         model: "gpt-4o",
         response_format: { type: "text" }, // 确保输出为文本
-        messages: messages,
+        messages: messages as any, // 类型断言以解决类型问题
         max_tokens: 4096,
         temperature: 0.7,
         stream: true, // 使用流式响应
@@ -468,7 +469,7 @@ export async function POST(request: NextRequest) {
 // 保存生成历史到数据库，捕获但不传播错误
 async function saveGenerationHistory(userId: string, prompt: string, imageUrl: string, style: string | null = null, aspectRatio: string | null = null, standardAspectRatio: string | null = null) {
   try {
-    const supabaseAdmin = createAdminClient();
+    const supabaseAdmin = await createAdminClient();
     const { error: historyError } = await supabaseAdmin
       .from('ai_images_creator_history')
       .insert({
