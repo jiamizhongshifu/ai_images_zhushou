@@ -7,6 +7,7 @@ const nextConfig = {
   // 确保环境变量可用于客户端
   env: {
     OPENAI_MODEL: process.env.TUZI_MODEL || 'gpt-4o-all',
+    NEXT_PUBLIC_ZPAY_PID: process.env.ZPAY_PID || "2025040215385823",
   },
   // Next.js配置
   reactStrictMode: true,

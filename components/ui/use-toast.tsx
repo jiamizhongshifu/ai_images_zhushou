@@ -1,13 +1,13 @@
 // 基于enhanced-toast.tsx封装的方便使用的Hook
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, ReactNode } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 
 export type ToastType = 'info' | 'success' | 'warning' | 'error';
 
 export interface ToastProps {
   id: string;
-  title: string;
-  description?: string;
+  title: string | ReactNode;
+  description?: string | ReactNode;
   type: ToastType;
   duration?: number;
 }

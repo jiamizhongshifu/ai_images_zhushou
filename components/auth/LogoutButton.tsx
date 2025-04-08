@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { signOut } from '@/utils/auth-service';
-import { handleStorageAccessFailure, isOfflineModeEnabled } from '@/utils/auth-resilience';
+import enhanceAuthResilience, { isOfflineModeEnabled } from '@/utils/auth-resilience';
 import { Button } from '@/components/ui/button';
 
 interface LogoutButtonProps {
@@ -49,8 +49,16 @@ export default function LogoutButton({
           sessionStorage.setItem('isLoggedOut', 'true');
         } catch (storageError) {
           console.warn('[登出] 无法写入会话存储，可能是隐私模式:', storageError);
-          // 触发存储访问失败处理
-          handleStorageAccessFailure();
+          // 触发存储访问失败处理 - 改用内联实现，避免导入问题
+          try {
+            console.warn('[认证弹性] 处理存储访问失败，可能在隐私模式下');
+            // 设置Cookie标记
+            if (typeof document !== 'undefined') {
+              document.cookie = 'storage_access_failed=true;path=/;max-age=' + (60 * 30); // 30分钟有效期
+            }
+          } catch (err) {
+            console.error('[认证弹性] 处理存储访问失败时出错:', err);
+          }
         }
         
         // 设置强制登出标记为Cookie
