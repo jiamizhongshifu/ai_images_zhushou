@@ -17,6 +17,7 @@
    const charCount = stringValue.length; // 不再有类型错误
    ```
 9. 安装了缺失的依赖`@radix-ui/react-tooltip`，解决了`tooltip.tsx`组件的导入错误。
+10. 更新了`pnpm-lock.yaml`文件，确保与`package.json`中的依赖保持同步，解决了Vercel部署时的"frozen-lockfile"错误。
 
 ## 部署步骤
 
@@ -35,11 +36,24 @@ npm install @radix-ui/react-tooltip
 yarn add @radix-ui/react-tooltip
 ```
 
-### 2. 推送代码到GitHub
+### 2. 更新锁文件
+
+每次添加或更新依赖后，确保更新锁文件并将它包含在提交中：
+
+```bash
+# 使用pnpm更新锁文件
+pnpm install --no-frozen-lockfile
+
+# 添加到Git
+git add pnpm-lock.yaml
+git commit -m "更新锁文件"
+```
+
+### 3. 推送代码到GitHub
 
 将所有修改推送到GitHub仓库，Vercel会自动检测到更改并开始新的部署。
 
-### 3. 验证依赖安装
+### 4. 验证依赖安装
 
 在Vercel部署日志中确认`@radix-ui/react-tooltip`已被正确安装。
 
@@ -61,3 +75,4 @@ https://[your-vercel-domain]/toast-demo
 4. 处理Sharp库的警告可能需要在Vercel项目设置中配置相应的构建命令
 5. 创建一个有效的`.env`文件，确保必要的环境变量在构建过程中可用
 6. 确认`package.json`中包含了所有必要的依赖，特别是UI组件库的依赖 
+7. 确保`pnpm-lock.yaml`文件与`package.json`保持同步，避免"frozen-lockfile"错误 
