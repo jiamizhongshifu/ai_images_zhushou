@@ -5,30 +5,35 @@ import { Loader2, AlertCircle, CreditCard, CheckCircle2, RefreshCw, History, Clo
 import { CREDIT_PACKAGES, PaymentType } from '@/utils/payment';
 import { useRouter } from 'next/navigation';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import OrderHistoryDialog from './order-history-dialog';
+import OrderHistoryDialog from '@/components/payment/order-history-dialog';
 
 interface CreditRechargeDialogProps {
   isOpen: boolean;
   onClose: () => void;
-  onSuccess?: () => void;
+  onSuccess?: (newCredits: number) => void;
+  credits: number;
 }
 
-export default function CreditRechargeDialog({ isOpen, onClose, onSuccess }: CreditRechargeDialogProps) {
+export default function CreditRechargeDialog({ isOpen, onClose, onSuccess, credits: initialCredits }: CreditRechargeDialogProps) {
   const router = useRouter();
-  const [selectedPackage, setSelectedPackage] = useState(CREDIT_PACKAGES[1].id);
+  const [selectedPackage, setSelectedPackage] = useState<string>('standard');
   const [paymentType, setPaymentType] = useState<PaymentType>(PaymentType.ALIPAY);
-  const [isLoading, setIsLoading] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [paymentUrl, setPaymentUrl] = useState<string | null>(null);
+  const [orderNo, setOrderNo] = useState<string | null>(null);
+  const [credits, setCredits] = useState<number>(initialCredits || 0);
+  const [showHistory, setShowHistory] = useState(false);
+  const [paymentStatus, setPaymentStatus] = useState<'idle' | 'checking' | 'success' | 'pending' | 'error'>('idle');
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [checkCount, setCheckCount] = useState(0);
   
   // 检查URL中是否有订单参数，并处理支付结果轮询
-  const [orderNo, setOrderNo] = useState<string | null>(null);
   const [isCheckingPayment, setIsCheckingPayment] = useState(false);
-  const [checkCount, setCheckCount] = useState(0);
   const [paymentSuccess, setPaymentSuccess] = useState(false);
   const [paymentStarted, setPaymentStarted] = useState(false);
   
   // 历史订单对话框
-  const [showOrderHistory, setShowOrderHistory] = useState(false);
   const [orderHistory, setOrderHistory] = useState<any[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
   
@@ -77,7 +82,7 @@ export default function CreditRechargeDialog({ isOpen, onClose, onSuccess }: Cre
           const paymentParams = new URLSearchParams();
           
           // 添加订单号
-          paymentParams.append('orderNo', orderNo);
+          paymentParams.append('order_no', orderNo);
           
           // 添加可能存在的支付回调参数
           paymentKeys.forEach(key => {
@@ -96,45 +101,64 @@ export default function CreditRechargeDialog({ isOpen, onClose, onSuccess }: Cre
           
           console.log('支付检查返回结果:', data);
           
-          if (data.success && data.data.isPaid) {
-            console.log('检测到支付成功，更新UI状态');
-            setPaymentSuccess(true);
-            setIsCheckingPayment(false);
+          // 处理订单结果
+          if (data.success && data.order) {
+            const order = data.order;
             
-            // 强制刷新整个页面以获取最新点数
-            // 先尝试强制刷新点数
-            await forceRefreshCredits();
+            // 如果订单状态是成功
+            if (order.status === 'success') {
+              // 刷新点数
+              const newCredits = await ensureCreditsRefreshed();
+              
+              // 更新界面状态
+              setPaymentSuccess(true);
+              setError(null);
+              
+              // 获取之前的点数和新增点数
+              const previousCredits = order.currentCredits ? (order.currentCredits - order.credits) : null;
+              
+              // 设置成功消息，显示点数更新信息
+              if (previousCredits !== null && newCredits !== null) {
+                setError(`充值成功！您的点数已从 ${previousCredits} 增加到 ${newCredits}`);
+              } else {
+                setError('充值成功！您的点数已更新');
+              }
+              
+              // 调用上层回调
+              if (onSuccess) {
+                onSuccess(newCredits);
+              }
+              
+              return;
+            }
             
-            // 创建刷新页面的函数，采用延迟执行
-            const refreshPage = () => {
-              console.log('支付成功，刷新页面...');
-              window.location.href = '/protected'; // 使用完整路径，避免参数传递
-            };
-            
-            // 1.5秒后刷新页面
-            setTimeout(refreshPage, 1500);
-            
-            return;
+            // 如果是pending状态，尝试修复
+            if (order.status === 'pending') {
+              try {
+                const fixResponse = await fetch(`/api/payment/fix-public?order_no=${orderNo}`);
+                const fixData = await fixResponse.json();
+                console.log('支付状态修复结果:', fixData);
+              } catch (fixError) {
+                console.error('尝试修复支付状态失败:', fixError);
+              }
+            }
           }
           
-          // 继续检查直到30次
-          if (checkCount < 30) {
-            setCheckCount(prev => prev + 1);
-          } else {
-            setIsCheckingPayment(false);
-            setError('支付状态查询超时，请刷新页面或点击"手动刷新"按钮重试');
-          }
+          // 再次检查支付状态
+          setTimeout(checkPaymentStatus, 5000);
         } catch (error) {
           console.error('检查支付状态失败:', error);
-          setIsCheckingPayment(false);
-          setError('检查支付状态失败，请刷新页面重试');
+          setError(`检查支付状态失败: ${error instanceof Error ? error.message : String(error)}`);
+          
+          // 出错时不放弃，继续尝试检查
+          setTimeout(checkPaymentStatus, 8000);
         }
       };
       
-      const timer = setTimeout(checkPaymentStatus, 1000);
-      return () => clearTimeout(timer);
+      // 开始检查
+      checkPaymentStatus();
     }
-  }, [isCheckingPayment, orderNo, checkCount, onClose, onSuccess, router]);
+  }, [isCheckingPayment, orderNo]);
   
   // 添加手动刷新支付状态功能
   const handleManualRefresh = () => {
@@ -239,67 +263,74 @@ export default function CreditRechargeDialog({ isOpen, onClose, onSuccess }: Cre
   };
   
   // 确保点数被刷新的多次尝试函数
-  const ensureCreditsRefreshed = async () => {
+  const ensureCreditsRefreshed = async (): Promise<number> => {
     try {
-      // 刷新方法，直接请求API获取最新点数
-      const refreshCredits = async () => {
-        try {
-          const timestamp = new Date().getTime(); // 添加时间戳避免缓存
-          const response = await fetch(`/api/credits/get?t=${timestamp}`, {
-            headers: {
-              'Cache-Control': 'no-cache',
-              'Pragma': 'no-cache'
-            }
-          });
-          return response.ok;
-        } catch (e) {
-          console.error('刷新点数失败:', e);
-          return false;
+      // 多次尝试刷新点数
+      for (let i = 0; i < 3; i++) {
+        // 使用await来等待fetchCredits完成
+        const response = await fetch(`/api/credits/get?_t=${Date.now()}`, {
+          headers: {
+            'Cache-Control': 'no-cache, no-store',
+            'Pragma': 'no-cache'
+          }
+        });
+        
+        if (response.ok) {
+          const data = await response.json();
+          if (data.success && typeof data.credits === 'number') {
+            console.log(`点数刷新成功: ${data.credits}点`);
+            return data.credits;
+          }
         }
-      };
+        
+        // 等待一段时间后再次尝试
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
       
-      // 立即刷新一次
-      await refreshCredits();
-      
-      // 再延迟几次刷新，确保数据一致性
-      setTimeout(() => refreshCredits(), 1000);
-      setTimeout(() => refreshCredits(), 3000);
-      setTimeout(() => refreshCredits(), 6000);
+      console.warn('多次尝试刷新点数未成功');
+      return initialCredits || 0; // 返回初始点数
     } catch (error) {
-      console.error('刷新用户点数失败:', error);
+      console.error('刷新点数过程中出错:', error);
+      return initialCredits || 0; // 出错时返回初始点数
     }
   };
   
   // 改进处理支付结果
-  const handlePaymentComplete = async (orderNo: string) => {
-    // 先设置处理中状态
-    setIsLoading(true);
+  const handlePaymentComplete = async () => {
+    if (!orderNo) return;
+    
+    setPaymentStatus('checking');
+    setStatusMessage('正在检查支付状态，请稍候...');
     
     try {
-      // 轮询订单状态，确保支付正确处理
-      const success = await pollOrderStatus(orderNo);
+      // 开始轮询检查支付状态
+      const response = await fetch(`/api/payment/check?orderNo=${orderNo}`);
+      const data = await response.json();
       
-      if (success) {
-        // 确保多次刷新用户点数，防止缓存问题
-        ensureCreditsRefreshed();
-        
-        // 显示成功消息
-        setError('支付成功！点数已增加到您的账户');
-        
-        // 调用成功回调
-        if (onSuccess) {
-          onSuccess();
+      if (response.ok) {
+        if (data.success) {
+          // 支付成功
+          const creditsAdded = CREDIT_PACKAGES.find(pkg => pkg.id === data.order.packageId)?.credits || 0;
+          const newCredits = (initialCredits || 0) + creditsAdded;
+          
+          setPaymentStatus('success');
+          setStatusMessage(`支付成功！已增加 ${creditsAdded} 点数，当前余额: ${newCredits} 点数`);
+          setCredits(newCredits);
+          
+          if (onSuccess) {
+            onSuccess(newCredits);
+          }
+          
+          // 刷新路由，但不关闭对话框
+          router.refresh();
+          return true;
         }
-      } else {
-        // 支付可能未完成，但不确定，设置提示信息
-        setError('支付状态未知，如果您已完成支付，点数将在稍后自动增加。若长时间未更新，请联系客服。');
+        // 处理其他状态...
       }
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      console.error('处理支付结果失败:', errorMessage);
-      setError(`支付处理过程中出错: ${errorMessage}`);
-    } finally {
-      setIsLoading(false);
+      console.error('Error checking payment status:', error);
+      setPaymentStatus('error');
+      setStatusMessage('检查支付状态时出错，请稍后重试');
     }
   };
   
@@ -311,7 +342,7 @@ export default function CreditRechargeDialog({ isOpen, onClose, onSuccess }: Cre
     }
     
     setError('');
-    setIsLoading(true);
+    setIsProcessing(true);
     
     try {
       const response = await fetch('/api/payment/url', {
@@ -345,7 +376,7 @@ export default function CreditRechargeDialog({ isOpen, onClose, onSuccess }: Cre
           if (paymentWindow) {
             // 设置一个标志，表示支付已开始但未确认完成
             setPaymentStarted(true);
-            setIsLoading(false);
+            setIsProcessing(false);
             
             // 显示友好提示，告知用户自动检查
             setError('请在新窗口中完成支付，系统将自动检查支付状态');
@@ -376,13 +407,13 @@ export default function CreditRechargeDialog({ isOpen, onClose, onSuccess }: Cre
                       
                       // 通知上层组件支付成功
                       if (onSuccess) {
-                        onSuccess();
+                        onSuccess(credits);
                       }
                       
                       // 延迟关闭对话框
                       setTimeout(() => {
                         // 刷新页面获取最新点数
-                        window.location.reload();
+                        router.refresh();
                       }, 2000);
                       
                       return;
@@ -413,20 +444,20 @@ export default function CreditRechargeDialog({ isOpen, onClose, onSuccess }: Cre
             }, 5000);
           } else {
             // 如果窗口被拦截，提示用户
-            setIsLoading(false);
+            setIsProcessing(false);
             setError('支付窗口被拦截，请允许弹出窗口或直接访问支付链接');
             console.log('支付链接:', data.data.paymentUrl);
           }
         } else {
-          setIsLoading(false);
+          setIsProcessing(false);
           setError('未获取到支付链接');
         }
       } else {
-        setIsLoading(false);
+        setIsProcessing(false);
         setError(data.error || '创建支付订单失败');
       }
     } catch (error) {
-      setIsLoading(false);
+      setIsProcessing(false);
       const errorMessage = error instanceof Error ? error.message : String(error);
       console.error('支付过程发生错误:', errorMessage);
       setError(`支付过程出错: ${errorMessage}`);
@@ -441,7 +472,7 @@ export default function CreditRechargeDialog({ isOpen, onClose, onSuccess }: Cre
     }
     
     setIsCheckingPayment(true);
-    setError(null);
+    setError('正在检查支付状态，请稍候...');
     
     try {
       const success = await pollOrderStatus(orderNo);
@@ -449,19 +480,20 @@ export default function CreditRechargeDialog({ isOpen, onClose, onSuccess }: Cre
       if (success) {
         // 支付成功
         setPaymentSuccess(true);
-        ensureCreditsRefreshed();
+        const newCredits = await ensureCreditsRefreshed();
+        
+        // 获取充值前点数
+        const packageInfo = CREDIT_PACKAGES.find(p => p.id === selectedPackage);
+        const creditsAdded = packageInfo?.credits || 0;
+        const previousCredits = newCredits - creditsAdded;
+        
+        // 显示成功消息
+        setError(`充值成功！您的点数已从 ${previousCredits} 增加到 ${newCredits}`);
         
         // 通知上层组件支付成功
         if (onSuccess) {
-          onSuccess();
+          onSuccess(newCredits);
         }
-        
-        // 延迟关闭对话框
-        setTimeout(() => {
-          setIsCheckingPayment(false);
-          // 刷新页面获取最新点数
-          window.location.reload();
-        }, 2000);
       } else {
         // 支付未完成
         setIsCheckingPayment(false);
@@ -503,12 +535,24 @@ export default function CreditRechargeDialog({ isOpen, onClose, onSuccess }: Cre
   // 打开历史订单弹窗
   const handleOpenOrderHistory = () => {
     fetchOrderHistory();
-    setShowOrderHistory(true);
+    setShowHistory(true);
   };
   
   return (
     <>
-      <Dialog open={isOpen} onOpenChange={(isDialogOpen: boolean) => !isLoading && !isCheckingPayment && onClose()}>
+      <Dialog open={isOpen} onOpenChange={(isDialogOpen: boolean) => {
+        if (!isDialogOpen) {
+          setPaymentType(PaymentType.ALIPAY);
+          setIsProcessing(false);
+          setError(null);
+          setPaymentUrl(null);
+          setOrderNo(null);
+          setPaymentStatus('idle');
+          setStatusMessage(null);
+          setCheckCount(0);
+        }
+        onClose();
+      }}>
         <DialogContent className="sm:max-w-[425px]">
           <DialogHeader>
             <DialogTitle>充值点数</DialogTitle>
@@ -543,9 +587,16 @@ export default function CreditRechargeDialog({ isOpen, onClose, onSuccess }: Cre
             <div className="flex flex-col items-center justify-center py-8">
               <CheckCircle2 className="h-16 w-16 text-green-500 mb-4" />
               <p className="text-lg font-medium">支付成功！</p>
-              <p className="text-sm text-muted-foreground mt-1">
-                您的点数已充值成功，即将返回
+              <p className="text-sm text-muted-foreground mt-1 mb-4">
+                您的点数已充值成功
               </p>
+              <Button 
+                onClick={onClose} 
+                className="mt-2"
+                variant="default"
+              >
+                关闭
+              </Button>
             </div>
           )}
           
@@ -566,12 +617,23 @@ export default function CreditRechargeDialog({ isOpen, onClose, onSuccess }: Cre
                     <p className="text-sm font-medium">订单号: {orderNo}</p>
                     <p className="text-xs text-muted-foreground">系统正在自动检查支付状态，您也可以手动点击按钮检查</p>
                   </div>
+                  <div className="w-full bg-muted rounded-full h-2 mb-1">
+                    <div 
+                      className="bg-primary h-2 rounded-full animate-pulse" 
+                      style={{ width: isCheckingPayment ? '100%' : '0%' }}
+                    ></div>
+                  </div>
                   <Button 
                     onClick={handleCheckPayment} 
                     className="w-full"
                     variant="default"
                   >
-                    检查支付状态
+                    {isCheckingPayment ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        正在检查支付状态...
+                      </>
+                    ) : '检查支付状态'}
                   </Button>
                   <Button
                     onClick={() => setPaymentStarted(false)}
@@ -681,23 +743,23 @@ export default function CreditRechargeDialog({ isOpen, onClose, onSuccess }: Cre
           <DialogFooter>
             {!isCheckingPayment && !paymentSuccess && (
               <>
-                <Button variant="outline" onClick={onClose} disabled={isLoading}>
+                <Button variant="outline" onClick={onClose} disabled={isProcessing}>
                   取消
                 </Button>
                 {!paymentStarted ? (
                   <Button 
                     onClick={handlePayment} 
-                    disabled={isLoading || !selectedPackage}
+                    disabled={isProcessing || !selectedPackage}
                   >
-                    {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                    {isLoading ? '处理中...' : '立即充值'}
+                    {isProcessing && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                    {isProcessing ? '处理中...' : '立即充值'}
                   </Button>
                 ) : (
                   <Button 
                     onClick={handleCheckPayment} 
-                    disabled={isLoading || !orderNo}
+                    disabled={isProcessing || !orderNo}
                   >
-                    {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                    {isProcessing && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                     检查支付状态
                   </Button>
                 )}
@@ -709,15 +771,12 @@ export default function CreditRechargeDialog({ isOpen, onClose, onSuccess }: Cre
       
       {/* 历史订单对话框 */}
       <OrderHistoryDialog 
-        isOpen={showOrderHistory} 
-        onClose={() => setShowOrderHistory(false)} 
-        orders={orderHistory}
-        loading={loadingHistory}
-        onOrderUpdated={() => {
-          // 刷新点数信息
-          ensureCreditsRefreshed();
+        open={showHistory} 
+        onOpenChange={(open) => setShowHistory(open)}
+        onOrderUpdated={(newCredits) => {
+          setCredits(newCredits);
           if (onSuccess) {
-            onSuccess();
+            onSuccess(newCredits);
           }
         }}
       />

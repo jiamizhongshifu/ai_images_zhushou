@@ -4,265 +4,295 @@ import { Button } from "@/components/ui/button";
 import { Loader2, AlertCircle, CheckCircle, XCircle, Clock, RefreshCw } from "lucide-react";
 import { Badge } from "../ui/badge";
 import { formatRelative } from '../../utils/date-format';
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { CheckCircle2 } from "lucide-react";
+import { ReceiptText } from "lucide-react";
+import { CREDIT_PACKAGES } from '@/utils/payment';
 
 // 订单类型定义
 interface Order {
   id: string;
   orderNo: string;
   packageId: string;
-  packageName?: string;
-  credits: number;
   price: number;
-  status: 'pending' | 'success' | 'failed' | 'cancelled';
-  createdAt: string;
-  updatedAt: string;
-  paymentType: string;
+  status: string;
+  created_at: string;
+  updated_at?: string;
+  paymentType?: string;
 }
 
 interface OrderHistoryDialogProps {
-  isOpen: boolean;
-  onClose: () => void;
-  orders: Order[];
-  loading: boolean;
-  onOrderUpdated?: () => void; // 新增: 订单更新后的回调
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onOrderUpdated?: (newCredits: number) => void;
 }
 
-export default function OrderHistoryDialog({ isOpen, onClose, orders: initialOrders, loading, onOrderUpdated }: OrderHistoryDialogProps) {
+export default function OrderHistoryDialog({ open, onOpenChange, onOrderUpdated }: OrderHistoryDialogProps) {
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
-  const [orders, setOrders] = useState<Order[]>(initialOrders);
-  const [checkingOrderId, setCheckingOrderId] = useState<string | null>(null);
-  
-  // 当外部传入的orders变化时更新内部状态
-  useEffect(() => {
-    setOrders(initialOrders);
-  }, [initialOrders]);
+  const [checking, setChecking] = useState<string | null>(null);
 
-  // 格式化日期
-  const formatDate = (dateString: string) => {
-    try {
-      const date = new Date(dateString);
-      return formatRelative(date);
-    } catch (e) {
-      return dateString || '未知时间';
-    }
-  };
-
-  // 获取订单状态标签
-  const getStatusBadge = (status: string) => {
-    switch (status) {
-      case 'success':
-        return <Badge className="bg-green-500">支付成功</Badge>;
-      case 'pending':
-        return <Badge className="bg-yellow-500">处理中</Badge>;
-      case 'failed':
-        return <Badge className="bg-red-500">支付失败</Badge>;
-      case 'cancelled':
-        return <Badge className="bg-gray-500">已取消</Badge>;
-      default:
-        return <Badge className="bg-gray-500">未知状态</Badge>;
-    }
-  };
-
-  // 获取支付方式显示文本
-  const getPaymentTypeText = (type: string) => {
-    switch (type?.toLowerCase()) {
-      case 'alipay':
-        return '支付宝';
-      case 'wxpay':
-        return '微信支付';
-      default:
-        return type || '未知';
-    }
-  };
-
-  // 清除消息
-  const clearMessages = () => {
+  // 获取订单历史
+  const fetchOrders = async () => {
+    setLoading(true);
     setError(null);
-    setSuccess(null);
-  };
-
-  // 检查订单状态
-  const checkOrderStatus = async (orderNo: string) => {
+    
     try {
-      clearMessages();
-      
-      // 查找对应的订单
-      const orderToCheck = orders.find(order => order.orderNo === orderNo);
-      if (!orderToCheck) {
-        throw new Error('未找到订单信息');
-      }
-      
-      // 设置正在检查的订单ID
-      setCheckingOrderId(orderToCheck.id);
-      
-      const response = await fetch(`/api/payment/check?order_no=${orderNo}`);
-      
-      if (!response.ok) {
-        if (response.status === 401) {
-          // 401错误特殊处理，可能是会话过期
-          console.error('会话可能已过期，需要重新登录');
-          setError('会话可能已过期，请刷新页面或重新登录后再试');
-          
-          // 可以考虑自动刷新页面或重定向到登录页
-          setTimeout(() => {
-            window.location.reload();
-          }, 3000);
-          return;
-        }
-        
-        throw new Error(`检查订单失败: ${response.status}`);
-      }
-      
+      const response = await fetch('/api/payment/history');
       const data = await response.json();
       
-      if (data.success) {
-        // 使用局部状态更新
-        const updatedOrder = data.order;
+      if (response.ok) {
+        setOrders(data.orders);
+      } else {
+        setError(data.error || '获取订单历史失败');
+      }
+    } catch (err) {
+      setError('获取订单历史失败，请稍后重试');
+      console.error('Error fetching order history:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // 当对话框打开时获取订单
+  useEffect(() => {
+    if (open) {
+      fetchOrders();
+    } else {
+      setError(null);
+      setSuccess(null);
+      setChecking(null);
+    }
+  }, [open]);
+
+  // 检查订单状态
+  const checkOrderStatus = async (orderId: string) => {
+    setChecking(orderId);
+    setError(null);
+    setSuccess(null);
+    
+    try {
+      const response = await fetch(`/api/payment/check?order_no=${orderId}`);
+      const data = await response.json();
+      
+      if (response.ok) {
+        // 更新本地订单状态
+        const updatedOrders = orders.map(order => {
+          if (order.orderNo === orderId) {
+            return { ...order, status: data.order.status };
+          }
+          return order;
+        });
         
-        // 检查API返回的订单状态是否有变化
-        if (updatedOrder.status !== orderToCheck.status) {
-          // 本地更新订单状态
-          const updatedOrders = orders.map(order => 
-            order.orderNo === orderNo 
-              ? {
-                  ...order,
-                  status: updatedOrder.status,
-                  updatedAt: updatedOrder.updated_at || order.updatedAt
-                }
-              : order
-          );
+        setOrders(updatedOrders);
+        
+        if (data.success) {
+          const packageInfo = CREDIT_PACKAGES.find(pkg => pkg.id === data.order.packageId);
+          const creditsAdded = packageInfo?.credits || 0;
           
-          setOrders(updatedOrders);
-          
-          // 显示状态变更消息
-          setSuccess(`订单 ${orderNo.substring(0, 8)}... 状态已变更为 ${updatedOrder.status === 'success' ? '支付成功' : updatedOrder.status}`);
-          
-          // 如果状态变为成功，通知父组件刷新点数
-          if (updatedOrder.status === 'success' && onOrderUpdated) {
-            onOrderUpdated();
+          // 处理不同的响应情况
+          if (data.creditsUpdated) {
+            // 点数已更新的情况
+            setSuccess(`订单 ${orderId} 状态更新为 ${getStatusText(data.order.status)}，已添加 ${creditsAdded} 点数`);
+            
+            // 如果服务器返回了新的点数总额，使用它；否则通过加法计算
+            const newCredits = data.newCredits || (data.oldCredits + creditsAdded);
+            
+            // 通知父组件点数已更新
+            if (onOrderUpdated) {
+              onOrderUpdated(newCredits);
+            }
+          } else if (data.order.status === 'success') {
+            // 订单成功但尚未更新点数的情况，可能是刚刚成功
+            setSuccess(`订单 ${orderId} 状态为 ${getStatusText(data.order.status)}，正在处理点数更新`);
+            
+            // 尝试再次检查，以便更新点数
+            setTimeout(() => checkOrderStatus(orderId), 3000);
+          } else {
+            // 其他状态的情况
+            setSuccess(`订单 ${orderId} 状态: ${getStatusText(data.order.status)}`);
           }
         } else {
-          // 订单状态未变
-          setSuccess(`订单 ${orderNo.substring(0, 8)}... 状态未变化`);
+          setError(`订单 ${orderId} 状态查询失败: ${data.error || '未知错误'}`);
         }
       } else {
-        throw new Error(data.error || '订单状态未变化');
+        setError(data.error || '检查订单状态失败');
       }
-    } catch (error) {
-      console.error('检查订单状态出错:', error);
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      setError(`检查订单失败: ${errorMessage}`);
+    } catch (err) {
+      setError('检查订单状态失败，请稍后重试');
+      console.error('Error checking order status:', err);
     } finally {
-      // 清除正在检查的状态
-      setCheckingOrderId(null);
+      setChecking(null);
+    }
+  };
+
+  // 获取订单状态文本
+  const getStatusText = (status: string): string => {
+    switch (status) {
+      case 'success':
+        return '支付成功';
+      case 'pending':
+        return '处理中';
+      case 'failed':
+        return '支付失败';
+      default:
+        return status;
+    }
+  };
+
+  // 格式化时间
+  const formatTime = (timestamp: string): string => {
+    if (!timestamp) return '-';
+    try {
+      return new Date(timestamp).toLocaleString('zh-CN', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit'
+      });
+    } catch (e) {
+      return timestamp;
     }
   };
 
   return (
-    <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="sm:max-w-[600px] max-h-[80vh] overflow-auto">
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-3xl overflow-auto max-h-[90vh]">
         <DialogHeader>
-          <DialogTitle>支付订单历史</DialogTitle>
+          <DialogTitle>充值记录</DialogTitle>
           <DialogDescription>
-            查看您的历史充值订单和支付状态
+            查看您的充值订单记录和状态
           </DialogDescription>
         </DialogHeader>
         
-        {error && (
-          <div className="my-2">
-            <div className="flex items-center text-red-500 text-sm p-2 bg-red-50 rounded-md">
-              <AlertCircle className="h-4 w-4 mr-2" />
-              <span>{error}</span>
+        {/* 状态信息 */}
+        {success && (
+          <Alert className="mb-4 bg-green-50 border-green-200">
+            <div className="flex items-center gap-2">
+              <CheckCircle2 className="h-4 w-4 text-green-500" />
+              <AlertDescription>{success}</AlertDescription>
             </div>
-          </div>
+          </Alert>
         )}
         
-        {success && (
-          <div className="my-2">
-            <div className="flex items-center text-green-500 text-sm p-2 bg-green-50 rounded-md">
-              <CheckCircle className="h-4 w-4 mr-2" />
-              <span>{success}</span>
+        {error && (
+          <Alert className="mb-4 bg-red-50 border-red-200">
+            <div className="flex items-center gap-2">
+              <AlertCircle className="h-4 w-4 text-red-500" />
+              <AlertDescription>{error}</AlertDescription>
             </div>
-          </div>
+          </Alert>
         )}
         
         {loading ? (
-          <div className="flex flex-col items-center justify-center py-8">
-            <Loader2 className="h-8 w-8 text-primary animate-spin mb-4" />
-            <p className="text-sm text-muted-foreground">加载订单历史中...</p>
+          <div className="py-8 flex flex-col items-center justify-center">
+            <Loader2 className="h-8 w-8 animate-spin text-blue-500 mb-2" />
+            <p className="text-gray-500">正在加载订单历史...</p>
           </div>
         ) : orders.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-8 text-center">
-            <Clock className="h-12 w-12 text-muted-foreground mb-4 opacity-20" />
-            <p className="text-lg font-medium">暂无订单记录</p>
-            <p className="text-sm text-muted-foreground mt-1">
-              您尚未进行任何充值，开始充值点数以使用更多AI功能吧！
-            </p>
+          <div className="py-8 text-center">
+            <ReceiptText className="h-12 w-12 mx-auto text-gray-300 mb-2" />
+            <p className="text-gray-500">暂无充值记录</p>
           </div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full border-collapse">
               <thead>
-                <tr className="border-b">
-                  <th className="text-left py-2 px-2 text-sm font-medium">订单号</th>
-                  <th className="text-left py-2 px-2 text-sm font-medium">套餐</th>
-                  <th className="text-left py-2 px-2 text-sm font-medium">金额</th>
-                  <th className="text-left py-2 px-2 text-sm font-medium">状态</th>
-                  <th className="text-right py-2 px-2 text-sm font-medium">创建时间</th>
+                <tr className="bg-gray-50">
+                  <th className="px-4 py-2 text-left text-sm font-medium text-gray-500">订单号</th>
+                  <th className="px-4 py-2 text-left text-sm font-medium text-gray-500">套餐</th>
+                  <th className="px-4 py-2 text-left text-sm font-medium text-gray-500">金额</th>
+                  <th className="px-4 py-2 text-left text-sm font-medium text-gray-500">状态</th>
+                  <th className="px-4 py-2 text-left text-sm font-medium text-gray-500">创建时间</th>
+                  <th className="px-4 py-2 text-left text-sm font-medium text-gray-500">操作</th>
                 </tr>
               </thead>
               <tbody>
-                {orders.map((order) => (
-                  <tr key={order.id} className="border-b hover:bg-muted/50">
-                    <td className="py-2 px-2 font-mono text-xs">
-                      {order.orderNo.substring(0, 8)}...
-                    </td>
-                    <td className="py-2 px-2">
-                      <div className="flex flex-col">
-                        <span>{order.packageName || `套餐 #${order.packageId}`}</span>
-                        <span className="text-xs text-muted-foreground">{order.credits} 点</span>
-                      </div>
-                    </td>
-                    <td className="py-2 px-2">
-                      <div className="flex flex-col">
-                        <span>¥{order.price}</span>
-                        <span className="text-xs text-muted-foreground">{getPaymentTypeText(order.paymentType)}</span>
-                      </div>
-                    </td>
-                    <td className="py-2 px-2">
-                      <div className="flex space-x-2 items-center">
-                        {getStatusBadge(order.status)}
-                        {order.status === 'pending' && (
-                          <Button 
-                            variant="ghost" 
-                            size="icon" 
-                            className="h-6 w-6"
+                {orders.map((order) => {
+                  const packageInfo = CREDIT_PACKAGES.find(pkg => pkg.id === order.packageId);
+                  
+                  return (
+                    <tr key={order.id} className="border-t border-gray-200">
+                      <td className="px-4 py-3 text-sm">
+                        <div className="truncate max-w-[120px]" title={order.orderNo}>
+                          {order.orderNo}
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 text-sm">
+                        {packageInfo ? (
+                          <div>
+                            <div className="font-medium">{packageInfo.name}</div>
+                            <div className="text-xs text-gray-500">{packageInfo.credits} 点数</div>
+                          </div>
+                        ) : (
+                          `套餐 ${order.packageId}`
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-sm font-medium">¥{order.price.toFixed(2)}</td>
+                      <td className="px-4 py-3 text-sm">
+                        <div className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
+                          order.status === 'success' ? 'bg-green-100 text-green-800' :
+                          order.status === 'pending' ? 'bg-yellow-100 text-yellow-800' :
+                          'bg-red-100 text-red-800'
+                        }`}>
+                          {order.status === 'success' ? <CheckCircle2 className="h-3 w-3 mr-1" /> :
+                           order.status === 'pending' ? <Clock className="h-3 w-3 mr-1" /> :
+                           <XCircle className="h-3 w-3 mr-1" />}
+                          {getStatusText(order.status)}
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 text-sm text-gray-500">
+                        {formatTime(order.created_at)}
+                      </td>
+                      <td className="px-4 py-3 text-sm">
+                        {order.status !== 'success' && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-8"
                             onClick={() => checkOrderStatus(order.orderNo)}
-                            disabled={checkingOrderId === order.id}
+                            disabled={checking === order.orderNo}
                           >
-                            {checkingOrderId === order.id ? (
-                              <Loader2 className="h-3 w-3 animate-spin" />
+                            {checking === order.orderNo ? (
+                              <>
+                                <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                                检查中
+                              </>
                             ) : (
-                              <RefreshCw className="h-3 w-3" />
+                              <>
+                                <RefreshCw className="h-3 w-3 mr-1" />
+                                检查状态
+                              </>
                             )}
                           </Button>
                         )}
-                      </div>
-                    </td>
-                    <td className="py-2 px-2 text-right text-xs text-muted-foreground">
-                      {formatDate(order.createdAt)}
-                    </td>
-                  </tr>
-                ))}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
         )}
         
         <DialogFooter className="mt-4">
-          <Button variant="outline" onClick={onClose}>
-            关闭
+          <Button onClick={() => onOpenChange(false)}>关闭</Button>
+          <Button variant="outline" onClick={fetchOrders} disabled={loading}>
+            {loading ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                刷新中...
+              </>
+            ) : (
+              <>
+                <RefreshCw className="mr-2 h-4 w-4" />
+                刷新订单
+              </>
+            )}
           </Button>
         </DialogFooter>
       </DialogContent>
