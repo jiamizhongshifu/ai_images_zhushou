@@ -2,7 +2,7 @@
 
 import { createClient } from '@/utils/supabase/client';
 import { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { signInAction } from '@/app/actions';
 import { v4 as uuidv4 } from 'uuid';
 import Link from 'next/link';
@@ -13,7 +13,16 @@ export default function SignIn() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const router = useRouter();
+  const searchParams = useSearchParams();
   const supabase = createClient();
+
+  // 检查是否有错误消息
+  useEffect(() => {
+    const errorMessage = searchParams?.get('error');
+    if (errorMessage) {
+      setError(decodeURIComponent(errorMessage));
+    }
+  }, [searchParams]);
 
   const handleSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -42,10 +51,42 @@ export default function SignIn() {
     }
   };
 
+  // 尝试清除所有登出标记
+  const clearLogoutFlags = async () => {
+    try {
+      console.log('尝试清除所有登出标记');
+      const response = await fetch('/api/auth/clear-logout-flags', {
+        method: 'POST',
+        headers: {
+          'Cache-Control': 'no-cache',
+        },
+      });
+      
+      if (response.ok) {
+        console.log('成功清除所有登出标记');
+        // 清除localStorage和sessionStorage中的登出标记
+        if (typeof localStorage !== 'undefined') {
+          localStorage.removeItem('force_logged_out');
+          localStorage.removeItem('logged_out');
+        }
+        if (typeof sessionStorage !== 'undefined') {
+          sessionStorage.removeItem('isLoggedOut');
+        }
+      } else {
+        console.error('清除登出标记失败:', response.status);
+      }
+    } catch (err) {
+      console.error('清除登出标记时出错:', err);
+    }
+  };
+
   // 使用客户端组件检查登录状态
   useEffect(() => {
     const checkAuth = async () => {
       try {
+        // 清除登出标记
+        await clearLogoutFlags();
+        
         const { data } = await supabase.auth.getSession();
         if (data.session) {
           // 已登录，重定向到仪表板

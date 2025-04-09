@@ -34,15 +34,84 @@ export default function ProtectedLayout({
       try {
         console.log('[受保护布局] 开始检查用户状态');
         
-        // 检查URL参数是否有跳过检查标记
+        // 检查URL参数
         const urlParams = new URLSearchParams(window.location.search);
         const skipCheck = urlParams.get('skip_middleware') === 'true';
+        const justLoggedIn = urlParams.get('just_logged_in') === 'true';
+        const sessionVerified = urlParams.get('session_verified') === 'true';
+        const forceLogin = urlParams.get('force_login') === 'true';
         
+        // 验证URL参数时间戳的新鲜度
+        let isVerifyTimeValid = false;
+        const verifyTimeParam = urlParams.get('verify_time');
+        if (verifyTimeParam) {
+          const verifyTime = parseInt(verifyTimeParam, 10);
+          isVerifyTimeValid = !isNaN(verifyTime) && (Date.now() - verifyTime) < 5 * 60 * 1000; // 5分钟内有效
+        }
+
+        console.log('[受保护布局] URL参数检查:', {
+          skipCheck, 
+          justLoggedIn, 
+          sessionVerified, 
+          forceLogin,
+          verifyTime: verifyTimeParam,
+          isVerifyTimeValid
+        });
+        
+        // 如果用户刚刚登录，尝试清除所有登出标记
+        if (justLoggedIn) {
+          console.log('[受保护布局] 检测到用户刚刚登录，清除所有登出标记');
+          try {
+            await clearAllLogoutFlags();
+          } catch (error) {
+            console.error('[受保护布局] 清除登出标记失败:', error);
+          }
+        }
+
+        // 首先检查登出标记，如果存在，则不信任其他参数
+        const hasLogoutCookie = document.cookie.includes('force_logged_out=true');
+        const forceLoggedOut = localStorage.getItem('force_logged_out') === 'true';
+        const isLoggedOut = sessionStorage.getItem('isLoggedOut') === 'true';
+        
+        if (hasLogoutCookie || forceLoggedOut || isLoggedOut) {
+          console.log('[受保护布局] 检测到登出标记，忽略其他认证参数');
+          setLoading(false);
+          setShowAccessButton(true);
+          return;
+        }
+        
+        // 特殊处理：session_verified参数 - 这是由导航组件在确认有效会话后设置的
+        if (sessionVerified && isVerifyTimeValid) {
+          console.log('[受保护布局] 检测到有效的会话验证参数，允许访问');
+          setLoading(false);
+          // 设置认证cookie，便于后续快速检查
+          document.cookie = 'user_authenticated=true; path=/; max-age=86400';
+          return;
+        }
+        
+        // 处理跳过检查参数
         if (skipCheck) {
           console.log('[受保护布局] 检测到跳过检查参数，直接允许访问');
           setLoading(false);
           document.cookie = 'user_authenticated=true; path=/; max-age=86400';
           return;
+        }
+        
+        // 处理force_login参数 - 需要进行会话验证
+        if (forceLogin) {
+          console.log('[受保护布局] 检测到force_login参数，进行会话验证');
+          // 验证Supabase会话是否真的存在
+          const { data: { session } } = await supabase.auth.getSession();
+          
+          if (session) {
+            console.log('[受保护布局] force_login参数验证通过，存在有效会话');
+            setLoading(false);
+            document.cookie = 'user_authenticated=true; path=/; max-age=86400';
+            return;
+          } else {
+            console.log('[受保护布局] force_login参数验证失败，没有有效会话');
+            // 继续进行下一步验证
+          }
         }
         
         // 尝试先检查localStorage中的认证标记，这是最快的
@@ -112,19 +181,112 @@ export default function ProtectedLayout({
     checkUser();
   }, [supabase]);
 
+  // 清除所有登出标记
+  const clearAllLogoutFlags = async () => {
+    try {
+      console.log('[受保护布局] 尝试清除所有登出标记');
+      const response = await fetch('/api/auth/clear-logout-flags', {
+        method: 'POST',
+        headers: {
+          'Cache-Control': 'no-cache',
+        },
+      });
+      
+      if (response.ok) {
+        console.log('[受保护布局] 成功清除所有登出标记');
+        // 清除localStorage和sessionStorage中的登出标记
+        if (typeof localStorage !== 'undefined') {
+          localStorage.removeItem('force_logged_out');
+          localStorage.removeItem('logged_out');
+        }
+        if (typeof sessionStorage !== 'undefined') {
+          sessionStorage.removeItem('isLoggedOut');
+        }
+        // 设置强制登录cookie
+        document.cookie = 'force_login=true; path=/; max-age=3600'; // 1小时有效
+        // 删除登出cookie
+        document.cookie = 'force_logged_out=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
+      } else {
+        console.error('[受保护布局] 清除登出标记失败:', response.status);
+      }
+    } catch (err) {
+      console.error('[受保护布局] 清除登出标记时出错:', err);
+      // 尝试直接在客户端清除
+      if (typeof localStorage !== 'undefined') {
+        localStorage.removeItem('force_logged_out');
+        localStorage.removeItem('logged_out');
+      }
+      if (typeof sessionStorage !== 'undefined') {
+        sessionStorage.removeItem('isLoggedOut');
+      }
+      document.cookie = 'force_logged_out=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
+      document.cookie = 'force_login=true; path=/; max-age=3600'; // 1小时有效
+    }
+  };
+
   // 改进会话验证逻辑，使用多级恢复策略
   const validateSession = async () => {
     try {
       console.log("[受保护页面] 开始验证用户会话");
       
+      // 首先检查登出标记，如果存在则直接返回未认证
+      try {
+        if (typeof window !== 'undefined') {
+          const forceLoggedOut = localStorage.getItem('force_logged_out') === 'true';
+          const isLoggedOut = sessionStorage.getItem('isLoggedOut') === 'true';
+          const hasLogoutCookie = document.cookie.includes('force_logged_out=true');
+          
+          if (forceLoggedOut || isLoggedOut || hasLogoutCookie) {
+            console.log("[受保护页面] 检测到登出标记，忽略其他认证参数");
+            return false;
+          }
+        }
+      } catch (error) {
+        console.warn("[受保护页面] 检查登出标记时出错:", error);
+      }
+      
       // 检查页面URL中的特殊参数
       const hasForceLoginParam = typeof window !== 'undefined' && 
         window.location.search.includes('force_login=true');
       
-      if (hasForceLoginParam) {
-        console.log("[受保护页面] 检测到强制登录参数，跳过验证");
+      // 检查会话验证参数
+      const hasSessionVerifiedParam = typeof window !== 'undefined' && 
+        window.location.search.includes('session_verified=true');
+      
+      // 验证URL参数时间戳的新鲜度
+      let isVerifyTimeValid = false;
+      if (typeof window !== 'undefined') {
+        const urlParams = new URLSearchParams(window.location.search);
+        const verifyTimeParam = urlParams.get('verify_time');
+        if (verifyTimeParam) {
+          const verifyTime = parseInt(verifyTimeParam, 10);
+          isVerifyTimeValid = !isNaN(verifyTime) && (Date.now() - verifyTime) < 5 * 60 * 1000; // 5分钟内有效
+        }
+      }
+      
+      // 如果有会话验证参数且时间有效，直接认为已认证
+      if (hasSessionVerifiedParam && isVerifyTimeValid) {
+        console.log("[受保护页面] 检测到有效的会话验证参数，直接认为已认证");
         authService.manualAuthenticate();
         return true;
+      }
+      
+      // 处理force_login参数 - 需要验证会话
+      if (hasForceLoginParam) {
+        console.log("[受保护页面] 检测到force_login参数，验证会话");
+        
+        // 尝试获取Supabase会话
+        const { data: { session } } = await supabase.auth.getSession();
+        
+        if (session) {
+          console.log("[受保护页面] force_login参数验证通过，存在有效会话");
+          await clearAllLogoutFlags(); // 确保清除所有登出标记
+          authService.manualAuthenticate();
+          return true;
+        } else {
+          console.log("[受保护页面] force_login参数验证失败，不存在有效会话");
+          // 继续后续验证
+        }
       }
       
       // 1. 快速检查 - 使用认证服务中内存状态

@@ -10,6 +10,7 @@ import { authService, clearAuthState } from "@/utils/auth-service";
 import { createClient } from "@/utils/supabase/client";
 import UserCreditDisplay from "@/components/user-credit-display";
 import { creditService, resetCreditsState } from '@/utils/credit-service';
+import { buildRelativeUrl } from '@/utils/url';
 
 // 导航项定义
 type NavItem = {
@@ -533,7 +534,7 @@ export function MainNav({ providedAuthState }: MainNavProps) {
   }, [supabase, checkAuthState]);
 
   // 处理导航项点击
-  const handleNavClick = (e: React.MouseEvent, item: NavItem) => {
+  const handleNavClick = async (e: React.MouseEvent, item: NavItem) => {
     e.preventDefault();
     e.stopPropagation();
     
@@ -551,8 +552,11 @@ export function MainNav({ providedAuthState }: MainNavProps) {
       
       // 重定向到登录页，带上返回URL
       const returnUrl = encodeURIComponent(item.href);
-      // 使用window.location.href而非路由导航，避免状态保留问题
-      window.location.href = `/sign-in?redirect=${returnUrl}`;
+      // 使用buildRelativeUrl构建相对URL，确保使用当前环境
+      const loginUrl = buildRelativeUrl('/sign-in', { redirect: returnUrl });
+      
+      // 使用相对路径导航
+      router.push(loginUrl);
       return;
     }
     
@@ -565,35 +569,77 @@ export function MainNav({ providedAuthState }: MainNavProps) {
     // 正常导航操作
     console.log(`[MainNav] 导航到: ${item.name} (${item.href})`);
     
-    // 使用直接导航方式，不添加特殊参数
-    // 对于所有导航，强制添加认证cookie标记
-    document.cookie = 'user_authenticated=true; path=/; max-age=86400';
-    localStorage.setItem('wasAuthenticated', 'true');
-    
-    // 特殊处理受保护的页面，确保多重认证标记
+    // 特殊处理受保护的页面，进行严格会话验证
     if (item.requiresAuth) {
+      console.log(`[MainNav] 特殊处理受保护页面，验证会话状态: ${item.name}`);
+      
+      // 检查是否有登出标记 - 如果有，不应添加force_login参数
+      const hasLogoutFlag = localStorage.getItem('force_logged_out') === 'true' || 
+                            sessionStorage.getItem('isLoggedOut') === 'true' ||
+                            document.cookie.includes('force_logged_out=true');
+                            
+      if (hasLogoutFlag) {
+        console.log(`[MainNav] 检测到登出标记，进行无参数导航: ${item.name}`);
+        router.push(item.href);
+        return;
+      }
+      
+      // 进行严格的会话验证
+      let hasValidSession = false;
+      try {
+        console.log(`[MainNav] 开始严格会话验证`);
+        // 检查Supabase会话
+        const { data } = await supabase.auth.getSession();
+        hasValidSession = !!data.session?.user;
+        console.log(`[MainNav] 会话验证结果: ${hasValidSession ? '有效' : '无效'}`);
+      } catch (error) {
+        console.error(`[MainNav] 会话验证出错:`, error);
+        hasValidSession = false;
+      }
+      
+      if (!hasValidSession) {
+        console.log(`[MainNav] 未验证到有效会话，进行无参数导航: ${item.name}`);
+        router.push(item.href);
+        return;
+      }
+      
+      // 只有确认有有效会话时，才设置认证标记
+      console.log(`[MainNav] 验证到有效会话，设置认证标记并导航: ${item.name}`);
+      document.cookie = 'user_authenticated=true; path=/; max-age=86400';
+      localStorage.setItem('wasAuthenticated', 'true');
       // 设置多个不同的标记，以增加可靠性
       sessionStorage.setItem('activeAuth', 'true');
-      // 设置强制标记，防止导航过程中状态丢失
-      const currentUrl = new URL(item.href, window.location.origin);
-      // 添加认证参数
-      currentUrl.searchParams.append('force_login', 'true');
-      currentUrl.searchParams.append('auth_time', Date.now().toString());
       
-      // 使用带参数的URL进行跳转
-      window.location.href = currentUrl.toString();
+      // 使用路由器进行导航，避免添加force_login参数，改为添加会话确认参数
+      const currentUrl = new URL(item.href, window.location.origin);
+      // 添加session_verified参数代替force_login，表示已通过会话验证
+      currentUrl.searchParams.append('session_verified', 'true');
+      currentUrl.searchParams.append('verify_time', Date.now().toString());
+      
+      // 使用路由器进行导航，确保使用当前环境的URL
+      router.push(currentUrl.pathname + currentUrl.search);
     } else {
-      // 对非受保护页面，使用标准跳转
-      window.location.href = item.href;
+      // 对非受保护页面，使用标准路由导航
+      router.push(item.href);
     }
   };
 
   // 处理登录按钮点击
   const handleLoginClick = () => {
     console.log("[MainNav] handleLoginClick: 跳转到登录页");
-    // 使用router.push确保同页SPA导航
-    // Provide default value for pathname in case it's null
-    router.push(`/login?redirect=${encodeURIComponent(pathname ?? '/')}`);
+    
+    // 获取当前路径作为重定向目标
+    const currentPath = pathname ?? '/';
+    
+    // 使用buildRelativeUrl构建相对URL，确保使用当前环境
+    const loginUrl = buildRelativeUrl('/sign-in', { 
+      redirect: encodeURIComponent(currentPath)
+    });
+    
+    console.log("[MainNav] 跳转到登录页:", loginUrl);
+    
+    // 使用router.push进行导航
+    router.push(loginUrl);
   };
 
   // 处理登出按钮点击
@@ -619,7 +665,11 @@ export function MainNav({ providedAuthState }: MainNavProps) {
       localStorage.setItem('force_logged_out', 'true');
       localStorage.setItem('logout_time', Date.now().toString());
       sessionStorage.setItem('isLoggedOut', 'true');
-      console.log("[MainNav] handleLogout: 已设置登出标记 (localStorage & sessionStorage)");
+      
+      // **2.1 设置HTTP Cookie标记登出状态，确保服务端能识别**
+      document.cookie = 'force_logged_out=true; path=/; max-age=300'; // 5分钟有效期
+      document.cookie = 'user_authenticated=; path=/; max-age=0'; // 立即删除认证cookie
+      console.log("[MainNav] handleLogout: 已设置登出标记 (localStorage、sessionStorage和Cookie)");
 
       // 3. 调用Supabase API进行登出
       console.log("[MainNav] handleLogout: 调用Supabase API signOut...");
@@ -689,15 +739,18 @@ export function MainNav({ providedAuthState }: MainNavProps) {
       // 5. 强制页面重载而非简单重定向
       console.log("[MainNav] handleLogout: 准备强制重载页面...");
       
-      // 5.1 构建包含强制登出参数的URL
-      const logoutUrl = new URL('/', window.location.origin);
-      logoutUrl.searchParams.set('logout', 'true');
-      logoutUrl.searchParams.set('t', Date.now().toString()); // 添加时间戳防止缓存
-      logoutUrl.searchParams.set('force_logout', 'true');
+      // 5.1 构建包含强制登出参数的URL，使用相对路径而非绝对URL
+      const logoutParams = new URLSearchParams();
+      logoutParams.set('logout', 'true');
+      logoutParams.set('t', Date.now().toString());
+      logoutParams.set('force_logout', 'true');
       
-      // 5.2 使用location.replace完全替换当前页面(不保留历史记录)
-      console.log("[MainNav] handleLogout: 执行页面重载", logoutUrl.toString());
-      window.location.replace(logoutUrl.toString());
+      // 使用相对路径，确保在当前环境下重载
+      const logoutPath = `/?${logoutParams.toString()}`;
+      console.log("[MainNav] handleLogout: 执行页面重载", logoutPath);
+      
+      // 5.2 使用window.location.href确保完全刷新而不是客户端路由
+      window.location.href = logoutPath;
       
     } catch (error) {
       console.error('[MainNav] handleLogout: 登出过程中发生异常:', error);
@@ -706,8 +759,8 @@ export function MainNav({ providedAuthState }: MainNavProps) {
       setAuthStateLocked(false);
       setCredits(null);
       
-      // 强制重载页面，确保状态重置
-      window.location.replace('/?logout=true&error=1');
+      // 强制重载页面，确保状态重置，使用相对路径
+      window.location.href = '/?logout=true&error=1';
     }
   };
 

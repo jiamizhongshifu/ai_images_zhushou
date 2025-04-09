@@ -101,10 +101,98 @@ export const updateSession = async (request: NextRequest) => {
     
     // 检查是否有有效会话
     const { data: { session } } = await supabase.auth.getSession();
-    const isAuthenticated = !!session?.user;
+    let isAuthenticated = !!session?.user;
+    
+    // 检查URL是否包含强制登录参数
+    const url = new URL(request.url);
+    const hasForceLoginParam = url.searchParams.has('force_login');
+    const hasForceLoginCookie = request.cookies.get('force_login')?.value === 'true';
+    const hasClearLogoutParam = url.searchParams.has('clear_logout_flags');
+    // 新增：检查会话验证参数
+    const hasSessionVerifiedParam = url.searchParams.has('session_verified');
+    const verifyTime = url.searchParams.get('verify_time');
+    // 验证来源时间戳的新鲜度（5分钟内）
+    const isVerifyTimeValid = verifyTime && 
+                              (Date.now() - parseInt(verifyTime, 10)) < 5 * 60 * 1000;
+    
+    // 记录详细参数
+    logger.debug(`认证相关参数: force_login=${hasForceLoginParam}, force_login_cookie=${hasForceLoginCookie}, clear_logout=${hasClearLogoutParam}, session_verified=${hasSessionVerifiedParam}, verify_time_valid=${isVerifyTimeValid}`);
+    
+    // 验证会话有效性 - 只有当存在真实有效的会话时，强制登录参数才有效
+    const sessionIsValid = !!session?.user;
+    
+    // 记录会话状态
+    logger.debug(`会话状态: ${sessionIsValid ? '有效' : '无效'}, 用户ID: ${session?.user?.id || '无'}`);
+    
+    // 判断是否应该应用强制登录逻辑：
+    // 1. 有会话验证参数且时间有效
+    // 2. 有强制登录参数/Cookie，且会话确实有效
+    // 3. 有清除登出标记请求
+    const shouldForceLogin = 
+      (hasSessionVerifiedParam && isVerifyTimeValid) || 
+      ((hasForceLoginParam || hasForceLoginCookie) && sessionIsValid) ||
+      hasClearLogoutParam;
+    
+    // 如果满足条件，优先处理，清除所有登出标记
+    if (shouldForceLogin) {
+      logger.info(`路径: ${request.nextUrl.pathname}, 检测到有效的认证标记和有效会话，清除所有登出状态`);
+      
+      // 清除登出Cookie
+      response.cookies.delete('force_logged_out');
+      
+      // 如果有会话，设置认证状态
+      if (sessionIsValid) {
+        logger.info(`路径: ${request.nextUrl.pathname}, 确认有效会话，强制设置用户状态为已登录`);
+        isAuthenticated = true;
+        
+        // 设置验证过的会话Cookie，确保后续请求不受登出标记影响
+        if (hasSessionVerifiedParam && isVerifyTimeValid) {
+          response.cookies.set('session_verified', 'true', {
+            path: '/',
+            maxAge: 60 * 10, // 10分钟过期
+            httpOnly: false,
+            sameSite: 'lax'
+          });
+        }
+        
+        // 如果是通过force_login参数，记录但不自动延长有效期
+        if (hasForceLoginParam && sessionIsValid) {
+          logger.debug(`路径: ${request.nextUrl.pathname}, 处理force_login参数，有效会话已确认`);
+        }
+      } else {
+        logger.warn(`路径: ${request.nextUrl.pathname}, 虽然有强制登录标记，但未检测到有效会话，不强制登录`);
+      }
+    } 
+    // 仅当没有强制登录请求时，才检查登出标记
+    else {
+      // 检查URL是否包含登出参数，如果有，则认为用户已登出，不考虑会话状态
+      const hasLogoutParam = url.searchParams.has('logout') || url.searchParams.has('force_logout');
+      
+      // 检查Cookies中的登出标记
+      const hasLogoutCookie = request.cookies.get('force_logged_out')?.value === 'true';
+      
+      // 如果检测到登出参数或登出Cookie，强制认为用户未登录，无论会话状态如何
+      if (hasLogoutParam || hasLogoutCookie) {
+        logger.info(`路径: ${request.nextUrl.pathname}, 检测到登出标记，强制设置用户状态为未登录`);
+        isAuthenticated = false;
+        
+        // 设置登出Cookie，确保后续请求也能识别登出状态
+        response.cookies.set('force_logged_out', 'true', {
+          path: '/',
+          maxAge: 60 * 5, // 5分钟过期，足够处理登出后的短期访问
+          httpOnly: false,
+          sameSite: 'lax'
+        });
+        
+        // 删除认证Cookie
+        response.cookies.delete('user_authenticated');
+        // 删除强制登录Cookie
+        response.cookies.delete('force_login');
+      }
+    }
     
     // 记录用户状态
-    logger.info(`路径: ${request.nextUrl.pathname}, 用户状态: ${isAuthenticated ? '已登录' : '未登录'}`);
+    logger.info(`路径: ${request.nextUrl.pathname}, 最终用户状态: ${isAuthenticated ? '已登录' : '未登录'}`);
     
     // 访问受保护页面但未登录时重定向
     if (request.nextUrl.pathname.startsWith('/protected') && !isAuthenticated) {
