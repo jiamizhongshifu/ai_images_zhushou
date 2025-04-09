@@ -78,6 +78,10 @@ export const signInAction = async (formData: FormData) => {
     // 清理可能存在的旧会话
     await supabase.auth.signOut();
     
+    // 增加一个小延迟，确保旧会话完全清除
+    await new Promise(resolve => setTimeout(resolve, 200));
+    
+    console.log('[登录] 尝试调用signInWithPassword');
     const { data, error } = await supabase.auth.signInWithPassword({
       email,
       password,
@@ -96,21 +100,64 @@ export const signInAction = async (formData: FormData) => {
     // 登录成功
     console.log(`[登录] 用户 ${email} 登录成功，会话ID: ${data.session.access_token.substring(0, 10)}...`);
     
+    // 强制持久化会话数据
+    try {
+      if (typeof localStorage !== 'undefined') {
+        console.log('[登录] 尝试手动保存会话数据到localStorage');
+        const sessionKey = 'supabase.auth.token';
+        const sessionData = {
+          access_token: data.session.access_token,
+          refresh_token: data.session.refresh_token,
+          expires_at: Math.floor(new Date(data.session.expires_at || '').getTime() / 1000)
+        };
+        localStorage.setItem(sessionKey, JSON.stringify(sessionData));
+      }
+    } catch (storageError) {
+      console.warn('[登录] 手动保存会话数据失败，继续后续流程:', storageError);
+    }
+    
     // 使用auth.getSession()检查会话状态
+    console.log('[登录] 检查会话状态');
     const { data: sessionCheck } = await supabase.auth.getSession();
     console.log(`[登录] 会话检查结果: ${sessionCheck.session ? '有效' : '无效'}`);
     
     if (!sessionCheck.session) {
       // 等待并再次检查
       console.log("[登录] 会话未立即可用，等待后重新检查");
-      await new Promise(resolve => setTimeout(resolve, 500));
+      await new Promise(resolve => setTimeout(resolve, 1000));
       
       const { data: secondCheck } = await supabase.auth.getSession();
       console.log(`[登录] 第二次会话检查结果: ${secondCheck.session ? '有效' : '无效'}`);
       
       if (!secondCheck.session) {
-        console.error("[登录] 会话创建失败");
-        return encodedRedirect("error", "/sign-in", "会话创建失败，请重试");
+        console.error("[登录] 会话创建失败，尝试使用低级方法恢复会话");
+        
+        // 尝试强制设置会话cookie
+        try {
+          if (typeof document !== 'undefined') {
+            const accessToken = data.session.access_token;
+            const refreshToken = data.session.refresh_token;
+            const expires = new Date(data.session.expires_at || '');
+            const maxAge = Math.floor((expires.getTime() - Date.now()) / 1000);
+            
+            document.cookie = `sb-access-token=${accessToken}; path=/; max-age=${maxAge}; SameSite=Lax`;
+            document.cookie = `sb-refresh-token=${refreshToken}; path=/; max-age=${maxAge * 2}; SameSite=Lax`;
+            document.cookie = `user_authenticated=true; path=/; max-age=${maxAge}; SameSite=Lax`;
+            
+            console.log('[登录] 已手动设置会话cookie');
+          }
+        } catch (cookieError) {
+          console.error('[登录] 手动设置cookie失败:', cookieError);
+        }
+        
+        // 再次检查
+        await new Promise(resolve => setTimeout(resolve, 500));
+        const { data: lastCheck } = await supabase.auth.getSession();
+        
+        if (!lastCheck.session) {
+          console.error("[登录] 所有恢复尝试失败，返回错误");
+          return encodedRedirect("error", "/sign-in", "会话创建失败，请重试或清除浏览器缓存后再试");
+        }
       }
     }
     
@@ -128,13 +175,13 @@ export const signInAction = async (formData: FormData) => {
   }
 
   // 添加一个小延迟，确保所有cookie操作已完成
-  await new Promise(resolve => setTimeout(resolve, 300));
+  await new Promise(resolve => setTimeout(resolve, 1000));
   console.log("[登录] 重定向到受保护页面");
   // 添加just_logged_in标记和登录时间戳，帮助客户端识别刚登录的状态
   // 添加clear_logout_flags=true确保中间件清除所有登出标记
   // 添加force_login=true强制清除所有登出状态
   const loginTime = Date.now();
-  return redirect(`/protected?just_logged_in=true&login_time=${loginTime}&clear_logout_flags=true&force_login=true`);
+  return redirect(`/protected?just_logged_in=true&login_time=${loginTime}&clear_logout_flags=true&force_login=true&auth_init=true`);
 };
 
 export const forgotPasswordAction = async (formData: FormData) => {

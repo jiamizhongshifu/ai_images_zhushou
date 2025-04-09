@@ -661,16 +661,123 @@ class AuthService {
    */
   public async getUserInfo(): Promise<any> {
     try {
+      console.log('[AuthService] 尝试获取用户信息');
+      
+      // 先检查当前会话
+      const { data: sessionData, error: sessionError } = await this.supabase.auth.getSession();
+      
+      if (sessionError) {
+        console.error('[AuthService] 获取会话出错:', sessionError);
+        return this.tryRecoverUserInfo();
+      }
+      
+      if (!sessionData.session) {
+        console.log('[AuthService] 没有有效会话，尝试刷新');
+        const refreshed = await this.refreshSession();
+        if (!refreshed) {
+          console.log('[AuthService] 刷新会话失败，尝试备用方法');
+          return this.tryRecoverUserInfo();
+        }
+      }
+      
+      // 尝试获取用户信息
       const { data: { user }, error } = await this.supabase.auth.getUser();
       
       if (error) {
         console.error('[AuthService] 获取用户信息出错:', error);
-        return null;
+        
+        // 如果是会话缺失错误，尝试刷新会话后重试
+        if (error.message?.includes('Auth session missing')) {
+          console.log('[AuthService] 检测到会话缺失错误，尝试刷新会话');
+          const refreshed = await this.refreshSession();
+          if (refreshed) {
+            // 重新获取用户信息
+            try {
+              const { data: retryData } = await this.supabase.auth.getUser();
+              if (retryData.user) {
+                console.log('[AuthService] 刷新会话后成功获取用户信息');
+                return retryData.user;
+              }
+            } catch (retryError) {
+              console.error('[AuthService] 重试获取用户信息失败:', retryError);
+            }
+          }
+        }
+        
+        return this.tryRecoverUserInfo();
       }
       
-      return user;
+      if (user) {
+        console.log(`[AuthService] 成功获取用户信息: ${user.id.substring(0, 8)}...`);
+        return user;
+      } else {
+        console.log('[AuthService] 无法获取用户信息，API返回空值');
+        return this.tryRecoverUserInfo();
+      }
     } catch (error) {
       console.error('[AuthService] 获取用户信息异常:', error);
+      return this.tryRecoverUserInfo();
+    }
+  }
+  
+  /**
+   * 尝试通过其他方式恢复用户信息
+   * 作为getUserInfo的后备方案
+   */
+  private async tryRecoverUserInfo(): Promise<any> {
+    try {
+      console.log('[AuthService] 尝试通过备用方法恢复用户信息');
+      
+      // 尝试从本地存储获取认证状态
+      const authState = this.getStoredAuthState();
+      if (authState && authState.userId) {
+        console.log('[AuthService] 从存储的认证状态恢复用户ID:', authState.userId);
+        return {
+          id: authState.userId,
+          email: authState.email || 'unknown',
+          // 提供最小的用户数据结构
+          app_metadata: {},
+          user_metadata: {},
+          aud: 'authenticated',
+          created_at: new Date().toISOString()
+        };
+      }
+      
+      // 尝试通过API状态检查获取用户状态
+      try {
+        // 使用fetch直接调用API，避免Supabase客户端依赖
+        if (typeof fetch !== 'undefined') {
+          const response = await fetch('/api/auth/status', {
+            credentials: 'include',
+            headers: {
+              'Cache-Control': 'no-cache, no-store',
+              'Pragma': 'no-cache'
+            }
+          });
+          
+          if (response.ok) {
+            const data = await response.json();
+            if (data.authenticated && data.userId) {
+              console.log('[AuthService] 通过状态API成功获取用户ID');
+              return {
+                id: data.userId,
+                email: 'recovered@user.id',
+                app_metadata: {},
+                user_metadata: {},
+                aud: 'authenticated',
+                created_at: new Date().toISOString()
+              };
+            }
+          }
+        }
+      } catch (apiError) {
+        console.error('[AuthService] 通过API获取用户状态失败:', apiError);
+      }
+      
+      console.log('[AuthService] 所有恢复尝试均失败');
+      return null;
+    } catch (error) {
+      console.error('[AuthService] 尝试恢复用户信息异常:', error);
       return null;
     }
   }

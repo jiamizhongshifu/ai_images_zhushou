@@ -55,68 +55,75 @@ export default function UserNav() {
         console.log('[UserNav] 开始获取用户信息');
         
         // 检查是否有登出标记，如果有则跳过获取用户信息
-        const forceLoggedOut = localStorage.getItem('force_logged_out');
-        const isLoggedOut = sessionStorage.getItem('isLoggedOut');
+        const forceLoggedOut = localStorage.getItem('force_logged_out') === 'true';
+        const isLoggedOut = sessionStorage.getItem('isLoggedOut') === 'true';
         
-        if (forceLoggedOut === 'true' || isLoggedOut === 'true') {
-          console.log('[UserNav] 检测到登出标记，跳过获取用户信息');
+        if (forceLoggedOut || isLoggedOut) {
+          console.log('[UserNav] 检测到登出标记，强制设置未登录状态');
+          setUser(null);
+          setForceShowUser(false);
+          setIsLoading(false);
+          
+          // 为确保状态一致，也通知认证服务
+          authService.clearAuthState();
+          return;
+        }
+        
+        // 检查认证状态 - 优先通过API检查服务器会话
+        console.log('[UserNav] 检查服务器会话状态');
+        const isValidSession = await checkServerSession();
+        
+        if (!isValidSession) {
+          console.log('[UserNav] 服务器会话无效，设置为未登录状态');
           setUser(null);
           setForceShowUser(false);
           setIsLoading(false);
           return;
         }
         
-        // 检查认证状态
-        if (authService.isAuthenticated()) {
-          console.log('[UserNav] 认证服务检测到有效认证');
-          setForceShowUser(true);
-        }
-        
-        // 检查cookie是否存在
-        const hasSBCookie = document.cookie.includes('sb-access-token') || 
-                           document.cookie.includes('sb-refresh-token');
-        if (hasSBCookie) {
-          console.log('[UserNav] 检测到认证cookie存在');
-        } else {
-          console.log('[UserNav] 未检测到认证cookie');
-        }
-        
-        // 尝试获取用户信息
+        // 服务器会话有效，继续获取用户信息
         const userInfo = await authService.getUserInfo();
         
         if (userInfo) {
           console.log(`[UserNav] 成功获取用户信息，ID: ${userInfo.id.substring(0, 8)}...`);
           setUser(userInfo);
         } else {
-          console.log('[UserNav] 未获取到用户信息');
-          
-          // 如果认证服务认为用户已认证，但API未返回用户，尝试刷新会话
-          if (authService.isAuthenticated()) {
-            console.log('[UserNav] 检测到认证状态但API未返回用户，尝试刷新会话');
-            
-            // 尝试刷新会话
-            const refreshResult = await authService.refreshSession();
-            
-            if (refreshResult) {
-              // 重新获取用户信息
-              const retryUserInfo = await authService.getUserInfo();
-              if (retryUserInfo) {
-                console.log('[UserNav] 刷新会话后成功获取用户信息');
-                setUser(retryUserInfo);
-              } else {
-                console.log('[UserNav] 刷新会话后仍未获取到用户信息，但认证状态有效，强制显示用户界面');
-                setForceShowUser(true);
-              }
-            } else {
-              console.log('[UserNav] 会话刷新失败，但认证状态有效，强制显示用户界面');
-              setForceShowUser(true);
-            }
-          }
+          console.log('[UserNav] 未获取到用户信息，但服务器会话有效');
+          setForceShowUser(true);
         }
       } catch (err) {
         console.error('[UserNav] 获取用户信息异常:', err);
+        
+        // 出错时设置为未登录状态
+        setUser(null);
+        setForceShowUser(false);
       } finally {
         setIsLoading(false);
+      }
+    }
+    
+    // 检查服务器会话
+    async function checkServerSession() {
+      try {
+        // 先使用 API 检查服务器端会话
+        const response = await fetch('/api/auth/status', {
+          headers: {
+            'Cache-Control': 'no-cache, no-store',
+            'Pragma': 'no-cache'
+          },
+          credentials: 'include'
+        });
+        
+        if (!response.ok) {
+          console.warn('[UserNav] 获取认证状态失败，状态码:', response.status);
+          return false;
+        }
+        
+        const data = await response.json();
+        return data.authenticated === true;
+      } catch (error) {
+        console.error('[UserNav] 检查服务器会话出错:', error);
+        return false;
       }
     }
     
@@ -127,10 +134,10 @@ export default function UserNav() {
       console.log(`[UserNav] 认证状态更新: isAuthenticated=${authState.isAuthenticated}`);
       
       // 检查是否有登出标记
-      const forceLoggedOut = localStorage.getItem('force_logged_out');
-      const isLoggedOut = sessionStorage.getItem('isLoggedOut');
+      const forceLoggedOut = localStorage.getItem('force_logged_out') === 'true';
+      const isLoggedOut = sessionStorage.getItem('isLoggedOut') === 'true';
       
-      if (forceLoggedOut === 'true' || isLoggedOut === 'true') {
+      if (forceLoggedOut || isLoggedOut) {
         console.log('[UserNav] 认证回调中检测到登出标记，强制设置为未登录状态');
         setUser(null);
         setForceShowUser(false);
@@ -141,20 +148,53 @@ export default function UserNav() {
         // 当认证状态更新为已认证，尝试获取用户信息
         authService.getUserInfo().then(userInfo => {
           if (userInfo) {
+            console.log('[UserNav] 认证状态更新后获取到用户信息');
             setUser(userInfo);
           } else {
+            console.log('[UserNav] 认证状态更新后未获取到用户信息，但认证有效');
             setForceShowUser(true);
           }
+        }).catch(error => {
+          console.error('[UserNav] 认证状态更新后获取用户信息失败:', error);
+          // 虽然认证有效但获取信息失败，也显示用户界面
+          setForceShowUser(true);
         });
       } else {
         // 当认证状态更新为未认证，清除用户信息
+        console.log('[UserNav] 认证状态更新为未认证，清除用户信息');
         setUser(null);
         setForceShowUser(false);
       }
     });
     
+    // 添加路由变化监听，确保在页面切换时重新检查
+    const handleRouteChange = () => {
+      console.log('[UserNav] 检测到路由变化，重新检查认证状态');
+      
+      // 检查登出标记
+      const forceLoggedOut = localStorage.getItem('force_logged_out') === 'true';
+      const isLoggedOut = sessionStorage.getItem('isLoggedOut') === 'true';
+      
+      if (forceLoggedOut || isLoggedOut) {
+        console.log('[UserNav] 路由变化时检测到登出标记，强制设置为未登录状态');
+        setUser(null);
+        setForceShowUser(false);
+      } else {
+        // 通过认证服务检查状态
+        if (!authService.isAuthenticated()) {
+          console.log('[UserNav] 路由变化时认证状态为未登录');
+          setUser(null);
+          setForceShowUser(false);
+        }
+      }
+    };
+    
+    // 监听popstate事件（浏览器后退/前进等导航操作）
+    window.addEventListener('popstate', handleRouteChange);
+    
     return () => {
-      unsubscribe(); // 清理订阅
+      unsubscribe(); // 清理认证订阅
+      window.removeEventListener('popstate', handleRouteChange); // 清理路由监听
     };
   }, []);
   
@@ -162,20 +202,41 @@ export default function UserNav() {
     try {
       setIsSigningOut(true);
       
-      // 记录登出意图到localStorage，使其在页面跳转后仍然有效
-      localStorage.setItem('force_logged_out', 'true');
+      console.log('[UserNav] 开始登出操作');
       
-      // 先执行Supabase API登出
-      const { error } = await supabase.auth.signOut();
-      if (error) {
-        console.error('Supabase API登出错误:', error);
+      // 1. 先设置临时登出标记，立即影响UI
+      localStorage.setItem('force_logged_out', 'true');
+      sessionStorage.setItem('isLoggedOut', 'true');
+      
+      // 2. 调用API登出端点，确保服务器端也清除会话
+      try {
+        const response = await fetch('/api/auth/signout', {
+          method: 'POST',
+          headers: {
+            'Cache-Control': 'no-cache',
+          },
+        });
+        
+        if (!response.ok) {
+          console.warn('[UserNav] 登出API调用失败，状态码:', response.status);
+        } else {
+          console.log('[UserNav] 服务端登出成功');
+        }
+      } catch (apiError) {
+        console.error('[UserNav] 调用登出API出错:', apiError);
       }
       
-      // 清除认证服务状态
+      // 3. 清除认证服务状态
       authService.clearAuthState();
       
-      // 手动清除所有可能的Cookie
-      const cookieNames = ['sb-access-token', 'sb-refresh-token', '__session', 'sb-refresh-token-nonce'];
+      // 4. 手动清除所有可能的Cookie
+      const cookieNames = [
+        'sb-access-token', 
+        'sb-refresh-token', 
+        '__session', 
+        'sb-refresh-token-nonce', 
+        'user_authenticated'
+      ];
       const commonOptions = '; path=/; max-age=0; expires=Thu, 01 Jan 1970 00:00:00 GMT';
       
       cookieNames.forEach(cookieName => {
@@ -192,7 +253,7 @@ export default function UserNav() {
         }
       });
       
-      // 清除localStorage中所有可能的认证数据
+      // 5. 清除localStorage中所有可能的认证数据
       const keysToRemove = [
         'supabase.auth.token',
         'supabase.auth.expires_at',
@@ -203,16 +264,19 @@ export default function UserNav() {
       ];
       keysToRemove.forEach(key => localStorage.removeItem(key));
       
-      // 将登出状态保存到sessionStorage
+      // 6. 将登出状态保存到sessionStorage，增加时间戳防止缓存
       sessionStorage.setItem('isLoggedOut', 'true');
+      sessionStorage.setItem('logoutTime', Date.now().toString());
       
-      // 添加特殊参数防止中间件重定向
-      window.location.href = '/?force_logout=true';
-      
-      console.log('登出操作完成, 页面将重定向到首页');
+      // 7. 刷新页面，传递参数确保中间件也知道登出状态
+      console.log('[UserNav] 登出操作完成, 页面将重定向');
+      window.location.href = '/?force_logout=true&time=' + Date.now();
     } catch (error) {
-      console.error('登出过程中发生错误:', error);
+      console.error('[UserNav] 登出过程中发生错误:', error);
       alert("退出登录时发生错误");
+      
+      // 即使出错也尝试重定向
+      window.location.href = '/?force_logout=true&error=true';
     } finally {
       setIsSigningOut(false);
     }
@@ -246,14 +310,52 @@ export default function UserNav() {
   };
   
   // 清除登出标记，用于登录按钮点击时
-  const clearLogoutFlags = () => {
-    console.log('[UserNav] 清除登出标记');
+  const clearLogoutFlags = async () => {
+    console.log('[UserNav] 开始清除登出标记');
+    
+    // 本地存储清除
     localStorage.removeItem('force_logged_out');
     sessionStorage.removeItem('isLoggedOut');
+    sessionStorage.removeItem('logoutTime');
     
-    // 清除登出cookie通过添加特定参数
+    // 调用服务器端API清除cookie
+    try {
+      const response = await fetch('/api/auth/clear-logout-flags', {
+        method: 'POST',
+        headers: {
+          'Cache-Control': 'no-cache, no-store',
+          'Pragma': 'no-cache'
+        },
+        credentials: 'include'
+      });
+      
+      if (response.ok) {
+        console.log('[UserNav] 服务器端成功清除登出标记');
+      } else {
+        console.warn('[UserNav] 服务器端清除登出标记失败:', response.status);
+      }
+    } catch (error) {
+      console.error('[UserNav] 调用清除登出标记API出错:', error);
+    }
+    
+    // 确保浏览器中的cookie也被清除
+    const cookiesToClear = ['logged_out', 'force_logged_out', 'isLoggedOut'];
+    const commonOptions = '; path=/; max-age=0; expires=Thu, 01 Jan 1970 00:00:00 GMT';
+    
+    cookiesToClear.forEach(cookieName => {
+      document.cookie = `${cookieName}=${commonOptions}`;
+      document.cookie = `${cookieName}=${commonOptions}; domain=${window.location.hostname}`;
+    });
+    
+    // 设置重定向URL并添加时间戳参数防止缓存
     const currentUrl = new URL('/sign-in', window.location.origin);
     currentUrl.searchParams.set('clear_logout_flags', 'true');
+    currentUrl.searchParams.set('t', Date.now().toString());
+    
+    // 添加强制登录标记cookie
+    document.cookie = 'force_login=true; path=/; max-age=3600';
+    
+    console.log('[UserNav] 登出标记已清除，正在跳转到登录页面');
     window.location.href = currentUrl.toString();
   };
   

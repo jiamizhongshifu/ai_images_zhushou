@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { Home, Edit3, History, HelpCircle, User, LogOut, LogIn, Gem } from "lucide-react";
@@ -11,6 +11,12 @@ import { createClient } from "@/utils/supabase/client";
 import UserCreditDisplay from "@/components/user-credit-display";
 import { creditService, resetCreditsState } from '@/utils/credit-service';
 import { buildRelativeUrl } from '@/utils/url';
+import Image from 'next/image';
+import { Button } from '@/components/ui/button';
+import { Icons } from '@/components/icons';
+import { siteConfig } from '@/config/site';
+import { NavItem } from '@/types/nav';
+import AuthButton from "@/components/auth-button";
 
 // 导航项定义
 type NavItem = {
@@ -284,13 +290,55 @@ export function MainNav({ providedAuthState }: MainNavProps) {
           setAuthStateLocked(false);
           setCredits(null);
           
-          // 清除可能存在的认证cookie和标记
-          document.cookie = 'user_authenticated=; path=/; max-age=0';
+          // 清除所有认证相关的状态标记
+          // 1. 清除cookie
+          const cookiesToClear = [
+            'user_authenticated', 
+            'sb-access-token', 
+            'sb-refresh-token', 
+            '__session',
+            'force_login'
+          ];
+          
+          cookiesToClear.forEach(name => {
+            document.cookie = `${name}=; path=/; max-age=0; expires=Thu, 01 Jan 1970 00:00:00 GMT`;
+          });
+          
+          // 2. 设置登出标记
+          localStorage.setItem('force_logged_out', 'true');
+          sessionStorage.setItem('isLoggedOut', 'true');
+          
+          // 3. 清除其他认证标记
           localStorage.removeItem('wasAuthenticated');
+          localStorage.removeItem('auth_time');
+          localStorage.removeItem('auth_state');
+          localStorage.removeItem('auth_valid');
           sessionStorage.removeItem('activeAuth');
           
-          // 通知开发者可能的认证状态不同步
-          console.warn('[MainNav] fetchCredits: 检测到认证状态不同步，前端状态与API响应不一致');
+          // 4. 调用认证服务清除状态
+          try {
+            if (authService) {
+              console.log('[MainNav] fetchCredits: 调用认证服务清除状态');
+              authService.clearAuthState();
+            }
+          } catch (authError) {
+            console.error('[MainNav] fetchCredits: 调用认证服务清除状态失败:', authError);
+          }
+          
+          // 5. 尝试调用登出API完成服务端登出
+          try {
+            console.log('[MainNav] fetchCredits: 尝试调用登出API');
+            fetch('/api/auth/signout', {
+              method: 'POST',
+              headers: { 'Cache-Control': 'no-cache' }
+            }).catch(apiError => {
+              console.error('[MainNav] fetchCredits: 调用登出API失败:', apiError);
+            });
+          } catch (apiError) {
+            console.error('[MainNav] fetchCredits: 准备调用登出API时出错:', apiError);
+          }
+          
+          console.warn('[MainNav] fetchCredits: 检测到认证状态不同步，已同步清除所有认证状态');
         } else {
           // 非401错误，只设置积分为0但不修改认证状态
           setCredits(0);

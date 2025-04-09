@@ -9,6 +9,7 @@ import { Lock, Mail } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useRef, useState } from "react";
+import { createClient } from "@/utils/supabase/client";
 
 // 使用时间戳生成唯一表单ID
 const generateFormKey = () => `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
@@ -35,37 +36,48 @@ export default function LoginForm({ message }: LoginFormProps) {
   const redirectToProtected = () => {
     const loginTime = Date.now();
     
-    // 清除所有登出标记
+    // 清除所有登出标记并设置认证标记
     try {
-      console.log('[登录表单] 清除登出标记');
+      console.log('[登录表单] 设置认证状态并清除登出标记');
+      
+      // 1. 清除登出标记
       localStorage.removeItem('force_logged_out');
       sessionStorage.removeItem('isLoggedOut');
       
-      // 在本地存储中设置认证信息
+      // 2. 设置认证标记
       localStorage.setItem('auth_valid', 'true');
       localStorage.setItem('auth_time', loginTime.toString());
+      localStorage.setItem('wasAuthenticated', 'true');
+      sessionStorage.setItem('activeAuth', 'true');
       
-      // 直接在客户端删除登出cookie
-      document.cookie = 'logged_out=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
+      // 3. 直接设置认证cookie，确保所有页面立即识别登录状态
+      const cookieOptions = '; path=/; max-age=86400; SameSite=Lax';
+      document.cookie = `user_authenticated=true${cookieOptions}`;
+      document.cookie = `force_login=true${cookieOptions}`;
+      document.cookie = `auth_time=${loginTime}${cookieOptions}`;
       
-      // 尝试在根域名上也清除cookie
+      // 4. 清除所有登出相关cookie
+      const expireOptions = '; path=/; max-age=0; expires=Thu, 01 Jan 1970 00:00:00 GMT';
+      document.cookie = `logged_out=${expireOptions}`;
+      document.cookie = `force_logged_out=${expireOptions}`;
+      document.cookie = `isLoggedOut=${expireOptions}`;
+      
+      // 5. 尝试在根域名上也清除cookie
       try {
         const domainParts = window.location.hostname.split('.');
         if (domainParts.length > 1) {
           const rootDomain = domainParts.slice(-2).join('.');
-          document.cookie = `logged_out=; path=/; domain=.${rootDomain}; expires=Thu, 01 Jan 1970 00:00:00 GMT`;
+          document.cookie = `logged_out=${expireOptions}; domain=.${rootDomain}`;
+          document.cookie = `force_logged_out=${expireOptions}; domain=.${rootDomain}`;
         }
       } catch (e) {
         console.warn('[登录表单] 清除根域名cookie出错:', e);
       }
       
-      // 设置强制登录标记cookie
-      document.cookie = `force_login=true; path=/; max-age=${60 * 60}; SameSite=Lax`;
-      
-      // 使用完整URL调用API清除服务器端登出标记
+      // 6. 使用完整URL调用API清除服务器端登出标记
       const apiBaseUrl = window.location.origin;
       fetch(`${apiBaseUrl}/api/auth/clear-logout-flags`, {
-        method: 'GET',
+        method: 'POST',
         headers: {
           'Cache-Control': 'no-cache, no-store',
           'Pragma': 'no-cache'
@@ -80,32 +92,45 @@ export default function LoginForm({ message }: LoginFormProps) {
       }).catch(error => {
         console.error('[登录表单] 清除服务器端登出标记出错:', error);
       });
+      
+      // 7. 检查Supabase会话状态
+      const supabase = createClient();
+      supabase.auth.getSession().then(({ data }) => {
+        if (data.session) {
+          console.log('[登录表单] 验证Supabase会话有效');
+        } else {
+          console.warn('[登录表单] 未检测到有效Supabase会话，将通过URL参数强制登录');
+        }
+      }).catch(e => {
+        console.error('[登录表单] 检查Supabase会话出错:', e);
+      });
     } catch (error) {
-      console.warn('[登录表单] 清除登出标记失败:', error);
+      console.warn('[登录表单] 设置认证状态失败:', error);
     }
     
-    // 确定重定向目标
-    let redirectTarget = `/protected?just_logged_in=true&login_time=${loginTime}&clear_logout_flags=true&force_login=true`;
+    // 确定重定向目标，添加更多参数确保认证状态正确传递
+    let redirectTarget = `/protected?just_logged_in=true&login_time=${loginTime}&clear_logout_flags=true&force_login=true&auth_init=true`;
     
     // 如果存在重定向参数，优先使用该参数
     if (redirectParam) {
       // 检查是否为受保护路径，需要添加登录参数
       if (redirectParam.startsWith('/protected')) {
-        redirectTarget = `${redirectParam}?just_logged_in=true&login_time=${loginTime}&force_login=true`;
+        redirectTarget = `${redirectParam}?just_logged_in=true&login_time=${loginTime}&force_login=true&auth_init=true`;
       } else {
-        // 非受保护路径，直接跳转
-        redirectTarget = redirectParam;
+        // 非受保护路径，直接跳转但仍添加认证参数
+        redirectTarget = `${redirectParam}?force_login=true&login_time=${loginTime}`;
       }
       console.log(`[登录表单] 使用自定义重定向目标: ${redirectTarget}`);
     } else {
       console.log(`[登录表单] 使用默认保护页面重定向: ${redirectTarget}`);
     }
     
-    // 等待较长时间确保清除操作完成
+    // 等待较长时间确保设置操作完成
     setTimeout(() => {
+      console.log('[登录表单] 重定向开始');
       // 使用window.location进行完全页面刷新，避免Next.js客户端路由可能的问题
       window.location.href = redirectTarget;
-    }, 800); // 增加等待时间到800ms
+    }, 1200); // 增加等待时间到1200ms
   };
 
   // 处理表单提交

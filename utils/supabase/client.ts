@@ -144,18 +144,43 @@ export const createClient = () => {
             
             let cookie = `${name}=${value}`;
             if (options?.maxAge) cookie += `; Max-Age=${options.maxAge}`;
-            if (options?.path) cookie += `; Path=${options.path}`;
+            if (options?.path) cookie += `; Path=${options.path || '/'}`;
+            
+            // 添加SameSite属性，默认为Lax以支持跨站点请求
+            cookie += `; SameSite=Lax`;
+            
+            // 在生产环境添加Secure标记
+            if (window.location.protocol === 'https:') {
+              cookie += `; Secure`;
+            }
+            
             document.cookie = cookie;
             
-            // 同步设置认证标记cookie
+            // 更明确地设置认证相关cookie，确保包含所有必要属性
             if (name === 'sb-access-token' && value) {
-              document.cookie = 'user_authenticated=true; path=/; max-age=604800';
+              const authCookie = `user_authenticated=true; path=/; max-age=604800; SameSite=Lax`;
+              document.cookie = authCookie;
+              
+              // 确保清除任何登出标记
+              document.cookie = 'logged_out=; path=/; max-age=0; expires=Thu, 01 Jan 1970 00:00:00 GMT';
+              document.cookie = 'force_logged_out=; path=/; max-age=0; expires=Thu, 01 Jan 1970 00:00:00 GMT';
               
               // 记录到localStorage
               if (typeof localStorage !== 'undefined') {
                 localStorage.setItem('wasAuthenticated', 'true');
                 localStorage.setItem('auth_time', Date.now().toString());
+                localStorage.setItem('auth_valid', 'true');
+                
+                // 清除登出标记
+                localStorage.removeItem('force_logged_out');
               }
+              
+              if (typeof sessionStorage !== 'undefined') {
+                sessionStorage.removeItem('isLoggedOut');
+                sessionStorage.setItem('activeAuth', 'true');
+              }
+              
+              console.log(`[SupabaseClient] 已设置认证cookie: ${name}=${value.substring(0, 10)}... 和关联标记`);
             }
             
             // 清除可能的登出标记
