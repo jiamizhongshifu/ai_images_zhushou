@@ -4,11 +4,17 @@
   "functions": {
     "app/api/generate-image-direct/route.ts": {
       "memory": 1024,
-      "maxDuration": 300
+      "maxDuration": 60
     },
     "app/api/generate-image/route.ts": {
       "memory": 1024,
-      "maxDuration": 300
+      "maxDuration": 60
     }
-  }
+  },
+  "crons": [
+    {
+      "path": "/api/cron/check-pending-tasks",
+      "schedule": "*/5 * * * *"
+    }
+  ]
 } 

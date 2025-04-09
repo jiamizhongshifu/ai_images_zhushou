@@ -1,7 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 
 // 创建具有完全数据库访问权限的管理员客户端
-export async function createAdminClient() {
+export function createAdminClient() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
   
@@ -23,7 +23,7 @@ export async function createAdminClient() {
 
 // 增加一个创建事务支持的管理员客户端函数
 export async function createTransactionalAdminClient() {
-  const client = await createAdminClient();
+  const client = createAdminClient();
   
   // 为客户端添加executeTransaction方法，用于执行事务
   const executeTransaction = async <T>(callback: (client: any) => Promise<T>): Promise<T> => {

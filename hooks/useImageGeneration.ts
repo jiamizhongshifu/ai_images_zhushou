@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { generatePromptWithStyle } from '@/app/config/styles';
 import { cacheService, CACHE_PREFIXES } from '@/utils/cache-service';
 import { GenerationStage } from '@/components/ui/skeleton-generation';
+import { v4 as uuid } from 'uuid';
 
 const USER_CREDITS_CACHE_KEY = CACHE_PREFIXES.USER_CREDITS + ':main';
 const HISTORY_CACHE_KEY = CACHE_PREFIXES.HISTORY + ':recent';
@@ -31,7 +32,7 @@ export interface UseImageGenerationResult {
 type NotificationCallback = (message: string, type: 'success' | 'error' | 'info') => void;
 
 /**
- * 自定义Hook用于处理图片生成
+ * 自定义Hook用于处理图片生成 - 使用异步任务系统
  */
 export default function useImageGeneration(
   onNotify?: NotificationCallback,
@@ -46,8 +47,9 @@ export default function useImageGeneration(
   const [generationStage, setGenerationStage] = useState<GenerationStage>('preparing');
   const [generationPercentage, setGenerationPercentage] = useState<number>(0);
   
-  // 使用ref存储进度更新计时器，确保可以在任何地方清除
-  const processingTimerRef = useRef<NodeJS.Timeout | null>(null);
+  // 任务ID和轮询间隔
+  const [currentTaskId, setCurrentTaskId] = useState<string | null>(null);
+  const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const startTimeRef = useRef<number>(0);
 
   // 添加生成的图片到列表
@@ -78,66 +80,129 @@ export default function useImageGeneration(
     console.log(`[useImageGeneration] 生成阶段: ${stage}, 进度: ${percentage}%`);
   };
   
-  // 停止所有进度计时器
+  // 停止所有计时器
   const clearAllTimers = () => {
-    if (processingTimerRef.current) {
-      clearInterval(processingTimerRef.current);
-      processingTimerRef.current = null;
+    if (pollingIntervalRef.current) {
+      clearInterval(pollingIntervalRef.current);
+      pollingIntervalRef.current = null;
     }
   };
 
-  // 启动长时间处理进度跟踪
-  const startLongProcessingTimer = () => {
+  // 清理函数 - 组件卸载时调用
+  useEffect(() => {
+    return () => {
+      clearAllTimers();
+    };
+  }, []);
+
+  // 基于等待时间动态计算显示的阶段和进度
+  const calculateStageFromWaitTime = (waitTime: number): [GenerationStage, number] => {
+    if (waitTime < 5) return ['preparing', 5];
+    if (waitTime < 10) return ['configuring', 10];
+    if (waitTime < 15) return ['sending_request', 20];
+    if (waitTime < 30) return ['processing', 30 + Math.min(30, waitTime)];
+    if (waitTime < 120) return ['processing', Math.min(80, 30 + waitTime / 2)];
+    return ['extracting_image', Math.min(85, 60 + waitTime / 10)];
+  };
+
+  // 开始轮询任务状态
+  const startPollingTaskStatus = (taskId: string) => {
+    // 清除任何现有的轮询
+    clearAllTimers();
+
     // 记录开始时间
     startTimeRef.current = Date.now();
     
-    // 清除任何现有的计时器
-    clearAllTimers();
+    // 立即检查一次
+    checkTaskStatus(taskId);
     
-    // 启动一个较长期的进度更新计时器，支持最长5分钟的API调用时间
-    let processingTime = 0;
-    const maxTime = 300; // 5分钟，单位秒
-    
-    // 设置初始AI处理阶段
-    updateGenerationStage('processing', 30);
-    
-    // 创建并存储计时器引用
-    processingTimerRef.current = setInterval(() => {
-      // 计算已处理时间（秒）
-      processingTime = Math.floor((Date.now() - startTimeRef.current) / 1000);
-      
-      // 计算动态进度百分比，最高到85%
-      // 进度会随时间缓慢增加，但永远不会自动到达完成阶段
-      if (processingTime > 5) {
-        const dynamicPercentage = Math.min(
-          85, 
-          30 + Math.floor((processingTime / maxTime) * 55)
-        );
-        
-        // 根据处理时间调整显示的阶段
-        if (processingTime > 120 && generationStage === 'processing') {
-          // 超过2分钟，显示更详细的处理阶段
-          updateGenerationStage('extracting_image', dynamicPercentage);
-        } else if (processingTime > 30 && generationStage === 'processing') {
-          // 处理中，更新进度百分比
-          updateGenerationStage('processing', dynamicPercentage);
-        }
-        
-        // 记录长时间处理
-        if (processingTime % 30 === 0) { // 每30秒记录一次
-          console.log(`[useImageGeneration] 长时间处理中，已用时: ${processingTime}秒`);
-        }
-      }
-      
-      // 超过最大时间后停止更新
-      if (processingTime >= maxTime) {
-        console.log(`[useImageGeneration] 处理超时，已达最大等待时间: ${maxTime}秒`);
-        clearAllTimers();
-      }
-    }, 2000); // 每2秒更新一次进度
+    // 设置轮询间隔
+    pollingIntervalRef.current = setInterval(() => {
+      checkTaskStatus(taskId);
+    }, 2000);
   };
 
-  // 生成图片
+  // 检查任务状态
+  const checkTaskStatus = async (taskId: string) => {
+    try {
+      const response = await fetch(`/api/image-task-status/${taskId}`);
+      const data = await response.json();
+      
+      // 计算已等待时间
+      const waitTime = data.waitTime || Math.floor((Date.now() - startTimeRef.current) / 1000);
+      
+      // 基于状态更新UI
+      switch (data.status) {
+        case 'completed':
+          // 更新进度到85%
+          updateGenerationStage('extracting_image', 85);
+          
+          // 完成阶段
+          setTimeout(() => {
+            updateGenerationStage('finalizing', 95);
+            
+            // 延迟后显示完成
+            setTimeout(() => {
+              updateGenerationStage('completed', 100);
+              
+              // 停止轮询
+              clearAllTimers();
+              
+              // 更新UI状态
+              setIsGenerating(false);
+              setStatus('success');
+              setCurrentTaskId(null);
+              
+              // 添加生成的图片
+              if (data.imageUrl) {
+                addGeneratedImage(data.imageUrl);
+                
+                // 刷新缓存
+                cacheService.delete(USER_CREDITS_CACHE_KEY);
+                cacheService.delete(HISTORY_CACHE_KEY);
+                
+                // 调用回调函数
+                if (refreshCredits) refreshCredits();
+                if (refreshHistory) refreshHistory();
+                if (onSuccess) onSuccess(data.imageUrl);
+                
+                // 显示成功通知
+                notify('图片生成成功！', 'success');
+              }
+            }, 300);
+          }, 300);
+          break;
+          
+        case 'failed':
+          // 更新为失败状态
+          updateGenerationStage('failed', 0);
+          setError(data.error || '图像生成失败');
+          setIsGenerating(false);
+          setStatus('error');
+          setCurrentTaskId(null);
+          
+          // 停止轮询
+          clearAllTimers();
+          
+          // 显示错误通知
+          notify(`生成失败: ${data.error || '未知错误'}`, 'error');
+          break;
+          
+        case 'pending':
+        case 'processing':
+        default:
+          // 根据等待时间动态更新阶段和进度
+          const [stage, percentage] = calculateStageFromWaitTime(waitTime);
+          updateGenerationStage(stage, percentage);
+          break;
+      }
+    } catch (err) {
+      console.error('检查任务状态失败:', err);
+      // 暂不设置错误，继续轮询
+    }
+  };
+
+  // 生成图片 - 调用异步API
   const generateImage = async (options: GenerationOptions): Promise<string | null> => {
     const { prompt, image, style, aspectRatio, standardAspectRatio } = options;
     
@@ -149,9 +214,9 @@ export default function useImageGeneration(
     setError(null);
     setIsGenerating(true);
     setStatus('loading');
-    
-    // 重置进度状态并启动计时
     startTimeRef.current = Date.now();
+    
+    // 重置进度状态
     updateGenerationStage('preparing', 5);
     
     try {
@@ -184,11 +249,8 @@ export default function useImageGeneration(
       // 发送请求阶段
       updateGenerationStage('sending_request', 20);
       
-      // 开始长时间处理进度跟踪
-      startLongProcessingTimer();
-      
-      // 调用API端点生成图片
-      const response = await fetch("/api/generate-image-direct", {
+      // 调用异步API创建任务
+      const response = await fetch("/api/generate-image-task", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -196,75 +258,34 @@ export default function useImageGeneration(
         body: JSON.stringify(requestData),
       });
       
-      // API响应返回，清除进度计时器
-      clearAllTimers();
-      
-      // 计算总耗时
-      const totalSeconds = Math.floor((Date.now() - startTimeRef.current) / 1000);
-      console.log(`[useImageGeneration] API请求完成，总耗时: ${totalSeconds}秒`);
-      
-      // 提取图像阶段
-      updateGenerationStage('extracting_image', 85);
-      
       const data = await response.json().catch(err => {
-        console.error('[useImageGeneration] 解析生成图片响应失败:', err);
-        return { success: false, error: '解析响应数据失败' };
+        console.error('[useImageGeneration] 解析创建任务响应失败:', err);
+        return { error: '解析响应数据失败' };
       });
       
-      if (!response.ok || !data.success) {
-        throw new Error(data.error || `生成图片失败: HTTP ${response.status}`);
+      if (!response.ok || !data.taskId) {
+        throw new Error(data.error || `创建图像任务失败: HTTP ${response.status}`);
       }
       
-      if (data.success && data.imageUrl) {
-        // 完成处理阶段
-        updateGenerationStage('finalizing', 95);
-        await new Promise(resolve => setTimeout(resolve, 300));
-        
-        console.log(`[useImageGeneration] 图片生成成功，URL: ${data.imageUrl}`);
-        
-        // 添加生成的图片到列表
-        addGeneratedImage(data.imageUrl);
-        
-        // 重置状态
-        updateGenerationStage('completed', 100);
-        
-        // 延迟短暂时间后重置生成状态，确保用户能看到完成动画
-        setTimeout(() => {
-          setIsGenerating(false);
-          setStatus('success');
-          setError(null);
-        }, 800);
-        
-        // 使缓存过期，确保下次获取时刷新数据
-        cacheService.delete(USER_CREDITS_CACHE_KEY);
-        cacheService.delete(HISTORY_CACHE_KEY);
-        
-        // 调用回调函数
-        if (refreshCredits) refreshCredits();
-        if (refreshHistory) refreshHistory();
-        if (onSuccess) onSuccess(data.imageUrl);
-        
-        // 显示成功通知
-        notify('图片生成成功！', 'success');
-        
-        return data.imageUrl;
-      } else {
-        throw new Error(data.error || "生成图片失败，服务器返回无效响应");
-      }
+      // 保存任务ID并开始轮询
+      setCurrentTaskId(data.taskId);
+      console.log(`[useImageGeneration] 创建任务成功，任务ID: ${data.taskId}`);
+      
+      // 开始轮询任务状态
+      updateGenerationStage('processing', 30);
+      startPollingTaskStatus(data.taskId);
+      
+      return null; // 异步API中初始返回为null
     } catch (err) {
+      // 处理错误
       const errorMessage = err instanceof Error ? err.message : String(err);
-      console.error("[useImageGeneration] 生成图片失败:", errorMessage);
+      console.error('[useImageGeneration] 生成图片失败:', errorMessage);
       
-      // 清除所有进度计时器
-      clearAllTimers();
-      
-      setError(errorMessage || "生成图片时发生错误");
-      setStatus('error');
+      // 更新状态
+      setError(errorMessage);
       setIsGenerating(false);
+      setStatus('error');
       updateGenerationStage('failed', 0);
-      
-      // 刷新点数（可能已经退还）
-      if (refreshCredits) refreshCredits();
       
       // 显示错误通知
       notify(`生成失败: ${errorMessage}`, 'error');
@@ -272,13 +293,6 @@ export default function useImageGeneration(
       return null;
     }
   };
-  
-  // 组件卸载时清除计时器
-  useEffect(() => {
-    return () => {
-      clearAllTimers();
-    };
-  }, []);
 
   return {
     generatedImages,
