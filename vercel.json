@@ -13,8 +13,8 @@
   },
   "crons": [
     {
-      "path": "/api/cron/check-pending-tasks",
-      "schedule": "*/5 * * * *"
+      "path": "/api/cron/cleanup-tasks",
+      "schedule": "0 0 * * *"
     }
   ]
 } 

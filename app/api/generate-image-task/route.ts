@@ -88,55 +88,61 @@ export async function POST(request: NextRequest) {
       prompt,
       style,
       aspect_ratio: aspectRatio,
-      status: 'pending',
+      status: 'processing', // 直接设为处理中
       created_at: now,
       updated_at: now,
       provider: 'tuzi',
       model,
-      attempt_count: 0
+      attempt_count: 1
     });
     
     logger.info(`创建图像任务: ${taskId}, 用户: ${user.id}, 提示词: ${prompt}`);
     
-    // 尝试立即启动生成(如果API响应较快，可能直接完成)
-    try {
-      const tuziClient = createTuziClient();
-      // 非阻塞调用API，不等待结果
-      tuziClient.images.generate({
-        prompt,
-        model,
-        response_format: 'url',
-        // 可以添加唯一标识符用于后续查询
-        user: `task_${taskId}`
-      }).then(async (result) => {
-        // 异步处理结果，不会阻塞当前请求
-        if (result && result.data && result.data[0]?.url) {
-          logger.info(`任务 ${taskId} 已完成，更新数据库`);
+    // 创建一个Promise，但不等待它完成
+    // 这样API可以快速返回，同时任务继续在后台处理
+    const generatePromise = (async () => {
+      try {
+        const tuziClient = createTuziClient();
+        
+        // 调用图像生成API
+        const response = await tuziClient.images.generate({
+          prompt,
+          model,
+          response_format: 'url',
+          user: `task_${taskId}`
+        });
+        
+        // 处理成功响应
+        if (response && response.data && response.data[0]?.url) {
+          logger.info(`任务 ${taskId} 图像生成成功, 更新状态`);
+          
+          // 更新任务状态为完成
           await supabase.from('image_tasks').update({
             status: 'completed',
-            image_url: result.data[0].url,
+            image_url: response.data[0].url,
             completed_at: new Date().toISOString(),
             updated_at: new Date().toISOString()
           }).eq('id', taskId);
+        } else {
+          throw new Error('API未返回有效的图像URL');
         }
-      }).catch(async (error) => {
-        logger.error(`任务 ${taskId} 立即执行失败: ${error.message}`);
+      } catch (error) {
+        logger.error(`任务 ${taskId} 图像生成失败: ${error instanceof Error ? error.message : String(error)}`);
+        
+        // 更新任务状态为失败
         await supabase.from('image_tasks').update({
           status: 'failed',
-          error_message: `初始尝试失败: ${error.message}`,
+          error_message: error instanceof Error ? error.message : String(error),
           updated_at: new Date().toISOString()
         }).eq('id', taskId);
-      });
-    } catch (error) {
-      logger.error(`启动任务 ${taskId} 失败: ${error instanceof Error ? error.message : String(error)}`);
-      // 不抛出错误，让Cron任务稍后重试
-    }
+      }
+    })();
     
-    // 立即返回任务ID
+    // 不等待生成完成，直接返回任务ID
     return NextResponse.json({ 
       taskId, 
-      status: 'pending',
-      message: '图像生成任务已创建，请稍后查询结果' 
+      status: 'processing',
+      message: '图像正在生成中，请稍后查询结果' 
     });
     
   } catch (error) {
