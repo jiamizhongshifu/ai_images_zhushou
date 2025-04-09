@@ -261,32 +261,6 @@ function extractUrlFromContent(content: string): string | null {
   }
 }
 
-// 添加图片生成提示词前缀，避免模型误解
-function addGenerationPrefix(prompt: string, style: string | null): string {
-  // 基础前缀，明确表明是生成图像的请求
-  const basePrefix = "请根据以下描述生成一张新图像：";
-  
-  // 根据风格添加不同的专业化前缀
-  if (style) {
-    switch(style) {
-      case "迪士尼":
-        return `${basePrefix}使用迪士尼风格创作一张新图像，内容是：${prompt}`;
-      case "皮克斯":
-        return `${basePrefix}使用皮克斯风格创作一张新图像，内容是：${prompt}`;
-      case "吉卜力":
-      case "宫崎骏":
-        return `${basePrefix}使用吉卜力/宫崎骏风格创作一张新图像，内容是：${prompt}`;
-      case "新海诚":
-        return `${basePrefix}使用新海诚风格创作一张新图像，内容是：${prompt}`;
-      default:
-        return `${basePrefix}使用${style}风格创作一张新图像，内容是：${prompt}`;
-    }
-  }
-  
-  // 没有风格时使用基础前缀
-  return `${basePrefix}${prompt}`;
-}
-
 // 直接生成图像API - 按照tuzi-openai.md重写
 export async function POST(request: NextRequest) {
   // 防止并发请求
@@ -483,16 +457,13 @@ export async function POST(request: NextRequest) {
       
       // 准备消息内容 - 严格按照tuzi-openai.md的格式
       const messages: any[] = [{
-        role: 'system',
-        content: "你是一个专业的图像生成助手。用户请求你生成图像时，你需要创建符合描述的新图像并提供可访问的URL链接。不要分析用户上传的图像，而是基于用户的描述生成全新的图像。"
-      }, {
         role: 'user',
         content: []
       }];
       
       // 如果有图片，添加图片内容
       if (base64Image) {
-        messages[1].content.push({
+        messages[0].content.push({
           type: "image_url",
           image_url: {
             url: base64Image
@@ -524,22 +495,17 @@ export async function POST(request: NextRequest) {
           
           if (selectedStyle === "皮克斯") {
             // 皮克斯风格特别处理
-            finalPrompt = `请根据以下描述生成一张新图像：${prompt}。务必使用 ${ratioToUse} 的标准宽高比，生成宽 ${width} 高 ${height} 比例的图片。使用皮克斯风格。`;
+            finalPrompt = `${prompt}。请务必使用 ${ratioToUse} 的标准宽高比，生成宽 ${width} 高 ${height} 比例的图片。使用皮克斯风格。`;
             logger.info(`为皮克斯风格添加了标准比例要求: ${ratioToUse}`);
           } else {
             // 其他风格也添加比例信息，但用更柔和的方式
-            finalPrompt = addGenerationPrefix(prompt, selectedStyle) + `。请使用 ${ratioToUse} 的标准宽高比。`;
+            finalPrompt = `${prompt}。请使用 ${ratioToUse} 的标准宽高比。`;
             logger.info(`为风格 ${selectedStyle} 添加了标准比例提示: ${ratioToUse}`);
           }
-        } else {
-          finalPrompt = addGenerationPrefix(prompt, selectedStyle);
         }
-      } else {
-        // 没有参考图片时，直接应用前缀
-        finalPrompt = addGenerationPrefix(prompt, selectedStyle);
       }
       
-      messages[1].content.push({
+      messages[0].content.push({
         type: "text",
         text: finalPrompt
       });
