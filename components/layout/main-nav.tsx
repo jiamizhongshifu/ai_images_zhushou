@@ -9,6 +9,7 @@ import { buttonVariants } from "@/components/ui/button";
 import { authService, clearAuthState } from "@/utils/auth-service";
 import { createClient } from "@/utils/supabase/client";
 import UserCreditDisplay from "@/components/user-credit-display";
+import { creditService, resetCreditsState } from '@/utils/credit-service';
 
 // 导航项定义
 type NavItem = {
@@ -274,7 +275,25 @@ export function MainNav({ providedAuthState }: MainNavProps) {
         }
       } else {
         console.error('[MainNav] fetchCredits: 获取积分失败:', creditsResponse.status);
-        setCredits(0);
+        
+        // 增强错误处理：401未授权错误时，需要更新认证状态
+        if (creditsResponse.status === 401) {
+          console.warn('[MainNav] fetchCredits: 收到401未授权响应，更新认证状态为未登录');
+          setIsAuthenticated(false);
+          setAuthStateLocked(false);
+          setCredits(null);
+          
+          // 清除可能存在的认证cookie和标记
+          document.cookie = 'user_authenticated=; path=/; max-age=0';
+          localStorage.removeItem('wasAuthenticated');
+          sessionStorage.removeItem('activeAuth');
+          
+          // 通知开发者可能的认证状态不同步
+          console.warn('[MainNav] fetchCredits: 检测到认证状态不同步，前端状态与API响应不一致');
+        } else {
+          // 非401错误，只设置积分为0但不修改认证状态
+          setCredits(0);
+        }
       }
     } catch (error) {
       console.error('[MainNav] fetchCredits: 获取积分异常:', error);
@@ -295,12 +314,37 @@ export function MainNav({ providedAuthState }: MainNavProps) {
         setIsAuthenticated(false);
         setAuthStateLocked(false);
         setCredits(null);
+        
+        // 确保清理所有可能的认证标记
+        if (isInitialCheck) {
+          console.log('[MainNav] checkAuthState: 初始检查时会话获取失败，清理所有认证标记');
+          document.cookie = 'user_authenticated=; path=/; max-age=0';
+          localStorage.removeItem('wasAuthenticated');
+          sessionStorage.removeItem('activeAuth');
+        }
+        
         return false; // Indicate logged out
       }
 
       const session = data?.session;
       const currentIsAuthenticated = !!session;
       console.log(`[MainNav] checkAuthState: 会话检查结果: ${currentIsAuthenticated ? '有效' : '无效'}`);
+
+      // 如果是初始检查，确保状态更加可靠
+      if (isInitialCheck) {
+        // 如果会话无效但本地标志显示已登录，这是不一致的情况
+        const hasAuthCookie = document.cookie.includes('user_authenticated=true');
+        const wasAuthenticated = localStorage.getItem('wasAuthenticated') === 'true';
+        const activeAuth = sessionStorage.getItem('activeAuth') === 'true';
+        
+        if (!currentIsAuthenticated && (hasAuthCookie || wasAuthenticated || activeAuth)) {
+          console.warn('[MainNav] checkAuthState: 检测到认证状态不一致，服务端未认证但本地标记显示已登录');
+          // 清除所有错误的认证标记
+          document.cookie = 'user_authenticated=; path=/; max-age=0';
+          localStorage.removeItem('wasAuthenticated');
+          sessionStorage.removeItem('activeAuth');
+        }
+      }
 
       // Update state based *only* on the session result
       setIsAuthenticated(currentIsAuthenticated);
@@ -325,6 +369,14 @@ export function MainNav({ providedAuthState }: MainNavProps) {
       setIsAuthenticated(false);
       setAuthStateLocked(false);
       setCredits(null);
+      
+      // 清理认证标记
+      if (isInitialCheck) {
+        document.cookie = 'user_authenticated=; path=/; max-age=0';
+        localStorage.removeItem('wasAuthenticated');
+        sessionStorage.removeItem('activeAuth');
+      }
+      
       return false; // Indicate logged out on exception
     } finally {
       // End initial loading only after the *initial* check is complete
@@ -370,14 +422,62 @@ export function MainNav({ providedAuthState }: MainNavProps) {
       console.error('[MainNav] useEffect: V3 - 检查登出标记时出错:', error);
     }
 
-    // **2. If NOT logged out by flag, perform Initial Supabase Session Check**
+    // **2. 先检查API认证状态作为初始化验证 (新增) **
+    const checkAPIAuthState = async () => {
+      if (!isMounted) return;
+      try {
+        console.log("[MainNav] useEffect: 执行API认证状态检查");
+        // 发送一个简单的认证探测请求
+        const authProbeResponse = await fetch('/api/auth/status', { 
+          method: 'GET',
+          cache: 'no-store',
+          headers: { 'Cache-Control': 'no-cache' }
+        });
+        
+        if (!isMounted) return;
+        
+        if (authProbeResponse.ok) {
+          const authData = await authProbeResponse.json();
+          console.log("[MainNav] API认证状态检查结果:", authData);
+          
+          // 如果API返回未认证，则强制更新状态
+          if (!authData.authenticated) {
+            console.warn("[MainNav] API认证检查显示用户未登录，但前端可能状态不同步");
+            setIsAuthenticated(false);
+            setAuthStateLocked(false);
+            setCredits(null);
+            // 清除可能的错误cookie
+            document.cookie = 'user_authenticated=; path=/; max-age=0';
+            localStorage.removeItem('wasAuthenticated');
+            sessionStorage.removeItem('activeAuth');
+          } 
+          // 如果API返回已认证，但前端显示未认证，也同步更新
+          else if (authData.authenticated && !isAuthenticated && !authStateLocked) {
+            console.log("[MainNav] API认证检查显示用户已登录，更新前端状态");
+            setIsAuthenticated(true);
+            // 不锁定状态，等待后续Supabase会话检查结果
+          }
+        } else {
+          // API调用失败时，继续使用Supabase会话检查作为备选
+          console.warn("[MainNav] API认证状态检查失败:", authProbeResponse.status);
+        }
+      } catch (error) {
+        console.error("[MainNav] API认证状态检查异常:", error);
+      }
+    };
+    
+    // 只有在未被登出标记处理时，才进行API认证检查
     if (!loggedOutByFlag && isMounted) {
-      console.log("[MainNav] useEffect: V3 - 未检测到登出标记，执行初始会话检查 (checkAuthState)");
-      checkAuthState(true); // Pass true for initial check
+      checkAPIAuthState().then(() => {
+        // 无论API认证检查结果如何，都进行Supabase会话检查以获取最终确认
+        if (isMounted) {
+          console.log("[MainNav] useEffect: V3 - 未检测到登出标记，执行初始会话检查 (checkAuthState)");
+          checkAuthState(true); // Pass true for initial check
+        }
+      });
     } else if (loggedOutByFlag) {
-        console.log("[MainNav] useEffect: V3 - 已被登出标记处理，跳过初始会话检查。");
+      console.log("[MainNav] useEffect: V3 - 已被登出标记处理，跳过初始会话检查。");
     }
-
 
     // **3. Setup Supabase Auth Listener for subsequent changes**
     console.log("[MainNav] useEffect: V3 - 设置Supabase onAuthStateChange监听器");
@@ -502,33 +602,55 @@ export function MainNav({ providedAuthState }: MainNavProps) {
     try {
       setIsSigningOut(true);
       
-      // **1. Set logout flags FIRST** (Crucial)
-      localStorage.setItem('force_logged_out', 'true');
-      sessionStorage.setItem('isLoggedOut', 'true');
-      console.log("[MainNav] handleLogout: 已设置登出标记 (localStorage & sessionStorage)");
-
-      // 2. Clear local state immediately for UI responsiveness
+      // **立即添加特殊标记，确保后续检查可以识别登出状态**
+      document.body.setAttribute('data-logout-in-progress', 'true');
+      
+      // **1. 立即更新UI状态以提供即时反馈**
       setIsAuthenticated(false);
       setAuthStateLocked(false);
       setCredits(null);
-      console.log("[MainNav] handleLogout: 已清除本地认证状态和积分");
+      console.log("[MainNav] handleLogout: 已立即更新UI状态为未登录");
+      
+      // **1.1 立即重置点数服务状态** 
+      resetCreditsState();
+      console.log("[MainNav] handleLogout: 已重置点数服务状态");
+      
+      // **2. 坚决设置登出标记 (最高优先级)** 
+      localStorage.setItem('force_logged_out', 'true');
+      localStorage.setItem('logout_time', Date.now().toString());
+      sessionStorage.setItem('isLoggedOut', 'true');
+      console.log("[MainNav] handleLogout: 已设置登出标记 (localStorage & sessionStorage)");
 
-      // 3. Call Supabase signout (Best effort, might fail but flags are set)
+      // 3. 调用Supabase API进行登出
       console.log("[MainNav] handleLogout: 调用Supabase API signOut...");
-      const { error } = await supabase.auth.signOut();
-      if (error) {
-        console.error('[MainNav] handleLogout: Supabase API登出错误:', error);
-        // Don't stop the rest of the cleanup even if API fails
+      try {
+        const { error } = await supabase.auth.signOut();
+        if (error) {
+          console.error('[MainNav] handleLogout: Supabase API登出错误:', error);
+        }
+      } catch (err) {
+        console.error('[MainNav] handleLogout: Supabase signOut异常:', err);
+        // 继续执行后续清理，不中断流程
       }
       
-      // 4. Clear other auth service state and cookies (redundant but safe)
+      // 4. 彻底清理所有认证相关的状态和Cookie
       console.log("[MainNav] handleLogout: 清理authService状态和Cookies...");
-      clearAuthState(); // Assuming this clears its internal state
-      const cookieNames = ['sb-access-token', 'sb-refresh-token', '__session', 'sb-refresh-token-nonce', 'user_authenticated', 'sb-session-recovery', 'manualAuth'];
+      try {
+        clearAuthState(); // 清理认证服务状态
+      } catch (err) {
+        console.error('[MainNav] handleLogout: 清理authService状态出错:', err);
+      }
+      
+      // 清理所有相关cookie
+      const cookieNames = [
+        'sb-access-token', 'sb-refresh-token', '__session', 
+        'sb-refresh-token-nonce', 'user_authenticated', 
+        'sb-session-recovery', 'manualAuth', 'sb-auth-token'
+      ];
       const commonOptions = '; path=/; max-age=0; expires=Thu, 01 Jan 1970 00:00:00 GMT';
       cookieNames.forEach(cookieName => {
         document.cookie = `${cookieName}=${commonOptions}`;
-        try { // Be defensive about hostname access
+        try { // 添加域名相关的cookie清理
           const domainParts = window.location.hostname.split('.');
           if (domainParts.length > 1) {
             const rootDomain = domainParts.slice(-2).join('.');
@@ -537,23 +659,55 @@ export function MainNav({ providedAuthState }: MainNavProps) {
           document.cookie = `${cookieName}=${commonOptions}; domain=${window.location.hostname}`;
         } catch (e) { console.warn("Cookie clear domain error:", e);}
       });
-      const keysToRemove = ['supabase.auth.token', 'supabase.auth.expires_at', 'auth_state', 'auth_valid', 'auth_time', 'wasAuthenticated', 'activeAuth'];
-      keysToRemove.forEach(key => localStorage.removeItem(key));
+      
+      // 清理所有localStorage项
+      const keysToRemove = [
+        'supabase.auth.token', 'supabase.auth.expires_at', 
+        'auth_state', 'auth_valid', 'auth_time', 
+        'wasAuthenticated', 'activeAuth',
+        'sb:token', 'sb:session', 'sb-provider-token'
+      ];
+      keysToRemove.forEach(key => {
+        try {
+          localStorage.removeItem(key);
+        } catch (e) {
+          console.warn(`清理localStorage项 ${key} 出错:`, e);
+        }
+      });
+      
+      // 清理sessionStorage
+      try {
+        sessionStorage.clear();
+        // 重新设置登出标记，因为clear()会清除所有内容
+        sessionStorage.setItem('isLoggedOut', 'true');
+      } catch (e) {
+        console.warn("清理sessionStorage出错:", e);
+      }
+      
       console.log("[MainNav] handleLogout: 清理完成");
 
-      // 5. Redirect (Logout flags are set, so next load *should* detect them)
-      console.log("[MainNav] handleLogout: 重定向到首页...");
-      window.location.href = '/?logout=true'; // Use simple param, flags handle state
+      // 5. 强制页面重载而非简单重定向
+      console.log("[MainNav] handleLogout: 准备强制重载页面...");
+      
+      // 5.1 构建包含强制登出参数的URL
+      const logoutUrl = new URL('/', window.location.origin);
+      logoutUrl.searchParams.set('logout', 'true');
+      logoutUrl.searchParams.set('t', Date.now().toString()); // 添加时间戳防止缓存
+      logoutUrl.searchParams.set('force_logout', 'true');
+      
+      // 5.2 使用location.replace完全替换当前页面(不保留历史记录)
+      console.log("[MainNav] handleLogout: 执行页面重载", logoutUrl.toString());
+      window.location.replace(logoutUrl.toString());
       
     } catch (error) {
       console.error('[MainNav] handleLogout: 登出过程中发生异常:', error);
-      // Ensure UI reflects logout even on error
+      // 确保UI反映登出状态，即使发生错误
       setIsAuthenticated(false);
       setAuthStateLocked(false);
       setCredits(null);
-      alert("退出登录时发生错误，但已尝试清除本地状态。");
-    } finally {
-      setIsSigningOut(false);
+      
+      // 强制重载页面，确保状态重置
+      window.location.replace('/?logout=true&error=1');
     }
   };
 
@@ -561,6 +715,11 @@ export function MainNav({ providedAuthState }: MainNavProps) {
   if (!isClient) {
     return null;
   }
+
+  // 强制确认登录状态一致性 (如果已明确登出，确保显示登录按钮)
+  const forceLoggedOut = typeof localStorage !== 'undefined' && localStorage.getItem('force_logged_out') === 'true';
+  const sessionLogout = typeof sessionStorage !== 'undefined' && sessionStorage.getItem('isLoggedOut') === 'true';
+  const showLoginButton = !isAuthenticated || forceLoggedOut || sessionLogout;
 
   return (
     <nav className="flex items-center w-full justify-between flex-wrap md:flex-nowrap">
@@ -603,7 +762,21 @@ export function MainNav({ providedAuthState }: MainNavProps) {
       <div className="flex items-center gap-2 w-full md:w-auto justify-end ml-auto md:ml-0 mt-2 md:mt-0">
         {isInitialAuthLoading ? (
           <div className="h-8 w-20 animate-pulse bg-gray-200 dark:bg-gray-700 rounded-md"></div>
-        ) : isAuthenticated ? (
+        ) : showLoginButton ? (
+          <button
+            onClick={handleLoginClick}
+            className={cn(
+              buttonVariants({
+                variant: "outline",
+                size: "sm",
+              }),
+              "flex items-center gap-1"
+            )}
+          >
+            <LogIn className="h-4 w-4" />
+            <span>登录</span>
+          </button>
+        ) : (
           <>
             <UserCreditDisplay className="bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded-md" />
             <div className="h-4 w-px bg-gray-300 dark:bg-gray-700 mx-1" />
@@ -622,20 +795,6 @@ export function MainNav({ providedAuthState }: MainNavProps) {
               <span className="hidden sm:inline">{isSigningOut ? "退出中..." : "退出"}</span>
             </button>
           </>
-        ) : (
-          <button
-            onClick={handleLoginClick}
-            className={cn(
-              buttonVariants({
-                variant: "outline",
-                size: "sm",
-              }),
-              "flex items-center gap-1"
-            )}
-          >
-            <LogIn className="h-4 w-4" />
-            <span>登录</span>
-          </button>
         )}
       </div>
     </nav>

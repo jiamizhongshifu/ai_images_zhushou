@@ -265,18 +265,38 @@ class CreditService {
   }
   
   /**
-   * 清除点数缓存，强制下次获取从API获取
+   * 清除点数缓存
    */
   public clearCache(): void {
     cacheService.delete(CREDITS_CACHE_KEY);
+    console.log('[CreditService] 已清除点数缓存');
+  }
+  
+  /**
+   * 完全重置点数状态（用于登出）
+   */
+  public resetState(): void {
+    // 清除缓存
+    this.clearCache();
+    
+    // 重置状态
+    this.setCreditState({
+      credits: null,
+      lastUpdate: Date.now(),
+      isLoading: false
+    });
+    
+    console.log('[CreditService] 已完全重置点数状态');
   }
 }
 
 // 创建单例实例
-export const creditService = CreditService.getInstance();
+const creditService = CreditService.getInstance();
 
-// 导出便捷方法
+// 导出方法
+export { creditService };
 export const getCredits = () => creditService.getCredits();
 export const fetchCredits = (forceRefresh?: boolean) => creditService.fetchCredits(forceRefresh);
 export const updateCredits = (newCredits: number) => creditService.updateCredits(newCredits);
-export const clearCreditsCache = () => creditService.clearCache(); 
+export const clearCreditsCache = () => creditService.clearCache();
+export const resetCreditsState = () => creditService.resetState(); 
