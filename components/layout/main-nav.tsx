@@ -340,77 +340,96 @@ export function MainNav({ providedAuthState }: MainNavProps) {
     setIsClient(true);
     let isMounted = true;
 
-    console.log("[MainNav] useEffect: 开始执行初始加载和监听器设置");
+    console.log("[MainNav] useEffect: V3 - 开始执行初始加载和监听器设置");
     setIsInitialAuthLoading(true); // Start loading
 
-    // **1. Absolute Priority: Check Logout Flags**
+    // **1. Check for Logout Flags (Highest Priority)**
     let loggedOutByFlag = false;
-    if (typeof document !== 'undefined') {
-      const forceLoggedOut = localStorage.getItem('force_logged_out') === 'true';
-      const isLoggedOut = sessionStorage.getItem('isLoggedOut') === 'true';
-      if (forceLoggedOut || isLoggedOut) {
-        console.log('[MainNav] useEffect: 检测到登出标记，强制设置为未登录状态');
-        loggedOutByFlag = true;
-        setIsAuthenticated(false);
-        setAuthStateLocked(false);
-        setCredits(null);
-        localStorage.removeItem('force_logged_out');
-        sessionStorage.removeItem('isLoggedOut');
-        document.cookie = 'user_authenticated=; path=/; max-age=0'; // Clear cookie too
-        localStorage.removeItem('wasAuthenticated'); // Clear other markers
-        setIsInitialAuthLoading(false); // End loading immediately
+    try {
+      if (typeof window !== 'undefined') {
+        const forceLoggedOut = localStorage.getItem('force_logged_out') === 'true';
+        const isLoggedOut = sessionStorage.getItem('isLoggedOut') === 'true';
+        if (forceLoggedOut || isLoggedOut) {
+          console.log('[MainNav] useEffect: V3 - 检测到登出标记，强制设置为未登录状态');
+          loggedOutByFlag = true;
+          // Set state immediately
+          setIsAuthenticated(false);
+          setAuthStateLocked(false); // Ensure unlocked
+          setCredits(null);
+          // Clear flags
+          localStorage.removeItem('force_logged_out');
+          sessionStorage.removeItem('isLoggedOut');
+          // Clear potential cookies (redundant but safe)
+          document.cookie = 'user_authenticated=; path=/; max-age=0';
+          localStorage.removeItem('wasAuthenticated');
+          // End loading immediately
+          setIsInitialAuthLoading(false);
+        }
       }
+    } catch (error) {
+      console.error('[MainNav] useEffect: V3 - 检查登出标记时出错:', error);
     }
 
-    // **2. If not logged out by flag, perform initial session check**
+    // **2. If NOT logged out by flag, perform Initial Supabase Session Check**
     if (!loggedOutByFlag && isMounted) {
-      console.log("[MainNav] useEffect: 未检测到登出标记，执行初始会话检查 (checkAuthState)");
-      checkAuthState(true); // Pass true to indicate initial check
+      console.log("[MainNav] useEffect: V3 - 未检测到登出标记，执行初始会话检查 (checkAuthState)");
+      checkAuthState(true); // Pass true for initial check
+    } else if (loggedOutByFlag) {
+        console.log("[MainNav] useEffect: V3 - 已被登出标记处理，跳过初始会话检查。");
     }
+
 
     // **3. Setup Supabase Auth Listener for subsequent changes**
-    console.log("[MainNav] useEffect: 设置Supabase onAuthStateChange监听器");
+    console.log("[MainNav] useEffect: V3 - 设置Supabase onAuthStateChange监听器");
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       (event, session) => {
         if (!isMounted) {
-           console.log("[MainNav] onAuthStateChange: 组件已卸载，忽略事件:", event);
+           console.log("[MainNav] onAuthStateChange: V3 - 组件已卸载，忽略事件:", event);
            return;
         }
-        console.log(`[MainNav] onAuthStateChange: 事件: ${event}, 会话: ${session ? '存在' : '不存在'}`);
-        const serverIsAuthenticated = !!session;
+        console.log(`[MainNav] onAuthStateChange: V3 - 事件: ${event}, 会话: ${session ? '存在' : '不存在'}`);
 
-        // Only update if the state *actually* changes based on the event
-        // Let checkAuthState handle the initial state setting
-        if (serverIsAuthenticated !== isAuthenticated) {
-             console.log(`[MainNav] onAuthStateChange: 服务端状态 (${serverIsAuthenticated}) 与当前 (${isAuthenticated}) 不同，触发 checkAuthState 进行权威更新`);
-            // Re-run checkAuthState to get the most definitive state and handle side effects (like credits)
-            // Avoid directly setting state here to prevent race conditions with initial check
-             checkAuthState(false); // Pass false for subsequent checks
-        } else {
-             console.log(`[MainNav] onAuthStateChange: 服务端状态 (${serverIsAuthenticated}) 与当前 (${isAuthenticated}) 相同，无需操作`);
+        // CRITICAL: Always re-run checkAuthState to ensure consistent state handling
+        // regardless of the event type or current local state.
+        // checkAuthState is now the single source of truth updater based on Supabase.
+        console.log("[MainNav] onAuthStateChange: V3 - 触发 checkAuthState 进行权威状态更新");
+        checkAuthState(false); // Pass false for subsequent checks
+
+        // Ensure loading indicator is off if an event happens while it's somehow still on
+        if (isInitialAuthLoading) {
+           console.warn("[MainNav] onAuthStateChange: V3 - 初始加载状态仍为true，强制结束");
+           setIsInitialAuthLoading(false);
         }
-        
-         // Ensure loading finishes if somehow still true after an event
-         if (isInitialAuthLoading) {
-            console.warn("[MainNav] onAuthStateChange: 初始加载状态仍为true，强制结束");
-            setIsInitialAuthLoading(false);
-         }
       }
     );
 
+    // **4. Remove Visibility Change Listener**
+    // The onAuthStateChange listener and checking session on load should be sufficient.
+    // Re-checking on visibility often caused conflicts.
+    // If needed later, it should call checkAuthState.
+    /*
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible' && isMounted) {
+        console.log('[MainNav] 页面变为可见，重新检查认证状态 (调用 checkAuthState)');
+        checkAuthState(false); // Call the authoritative function
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    */
+
     // Cleanup function
     return () => {
-      console.log("[MainNav] useEffect: 清理函数执行，组件卸载");
+      console.log("[MainNav] useEffect: V3 - 清理函数执行，组件卸载");
       isMounted = false;
+      //document.removeEventListener('visibilitychange', handleVisibilityChange); // Remove if listener was added
       if (subscription) {
-        console.log("[MainNav] useEffect: 取消Supabase onAuthStateChange订阅");
+        console.log("[MainNav] useEffect: V3 - 取消Supabase onAuthStateChange订阅");
         subscription.unsubscribe();
       } else {
-        console.warn("[MainNav] useEffect: 无法取消订阅，subscription对象未定义？");
+        console.warn("[MainNav] useEffect: V3 - 无法取消订阅，subscription对象未定义？");
       }
     };
     // Dependencies: Only supabase client and the checkAuthState function itself
-    // fetchCredits is called *by* checkAuthState, so it's an indirect dependency
   }, [supabase, checkAuthState]);
 
   // 处理导航项点击
@@ -471,30 +490,10 @@ export function MainNav({ providedAuthState }: MainNavProps) {
 
   // 处理登录按钮点击
   const handleLoginClick = () => {
-    // 清除登出标记，以防有残留
-    if (typeof localStorage !== 'undefined') {
-      localStorage.removeItem('force_logged_out');
-    }
-    if (typeof sessionStorage !== 'undefined') {
-      sessionStorage.removeItem('isLoggedOut');
-    }
-    
-    // 获取当前路径作为重定向目标
-    const currentPath = window.location.pathname;
-    
-    // 使用直接导航而非路由导航
-    if (currentPath === '/sign-in') {
-      window.location.href = '/sign-in';
-      return;
-    }
-    
-    // 如果当前路径是受保护页面或其他希望登录后返回的页面，添加重定向参数
-    if (currentPath !== '/') {
-      window.location.href = `/sign-in?redirect=${encodeURIComponent(currentPath)}`;
-    } else {
-      // 否则直接前往登录页
-      window.location.href = '/sign-in';
-    }
+    console.log("[MainNav] handleLoginClick: 跳转到登录页");
+    // 使用router.push确保同页SPA导航
+    // Provide default value for pathname in case it's null
+    router.push(`/login?redirect=${encodeURIComponent(pathname ?? '/')}`);
   };
 
   // 处理登出按钮点击
@@ -558,33 +557,6 @@ export function MainNav({ providedAuthState }: MainNavProps) {
     }
   };
 
-  // 导航处理函数
-  const handleNavigation = async (href: string, target?: string) => {
-    // 对于外部链接或指定target的链接，使用默认行为
-    if (target || href.startsWith('http')) {
-      return;
-    }
-    
-    // 对于创作页和历史页，检查认证状态
-    if ((href === '/create' || href === '/history') && !isAuthenticated) {
-      console.log(`[MainNav] 未认证用户尝试访问 ${href}，重定向到登录页`);
-      // 使用window.location而非router，确保状态清理
-      window.location.href = `/sign-in?next=${encodeURIComponent(href)}`;
-      return;
-    }
-    
-    // 根据不同页面使用不同导航方式
-    if (href === '/sign-in' || href === '/create' || href === '/history') {
-      // 使用window.location确保完全刷新页面状态
-      console.log(`[MainNav] 使用硬跳转导航到: ${href}`);
-      window.location.href = href;
-    } else {
-      // 其他页面使用router导航
-      console.log(`[MainNav] 使用路由导航到: ${href}`);
-      router.push(href);
-    }
-  };
-
   // 仅在客户端渲染导航栏
   if (!isClient) {
     return null;
@@ -600,15 +572,26 @@ export function MainNav({ providedAuthState }: MainNavProps) {
         {navItems.map((item) => (
           <button
             key={item.href}
-            onClick={(e) => handleNavClick(e, item)}
+            onClick={(e) => {
+              if (item.requiresAuth && !isAuthenticated) {
+                e.preventDefault();
+                console.log(`[MainNav] 导航到 ${item.href} 需要认证，跳转到登录页`);
+                handleLoginClick(); // Redirect to login if auth required and not authenticated
+              } else {
+                handleNavClick(e, item); // Proceed with navigation if auth not required or user is authenticated
+              }
+            }}
             className={cn(
               buttonVariants({
                 variant: pathname === item.href ? "secondary" : "ghost",
                 size: "sm",
               }),
               "flex items-center gap-1 my-1",
-              item.requiresAuth && !isAuthenticated ? "opacity-80" : ""
+              // Visually indicate disabled state if auth is required but user not logged in
+              item.requiresAuth && !isAuthenticated ? "opacity-50 cursor-not-allowed" : ""
             )}
+            // Disable button if auth is required but user not logged in
+            disabled={item.requiresAuth && !isAuthenticated && !isInitialAuthLoading}
           >
             {item.icon}
             <span>{item.name}</span>
