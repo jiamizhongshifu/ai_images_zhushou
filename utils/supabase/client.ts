@@ -11,7 +11,9 @@ const handleSessionChange = (event: AuthChangeEvent, session: Session | null) =>
       console.log(`[SupabaseClient] 用户已登录或刷新令牌，设置认证cookie`);
       
       // 用cookie记录认证状态，设置较长有效期
-      document.cookie = 'user_authenticated=true; path=/; max-age=604800'; // 7天
+      if (typeof document !== 'undefined') {
+        document.cookie = 'user_authenticated=true; path=/; max-age=604800'; // 7天
+      }
       
       // 确保持久化到localStorage
       if (typeof localStorage !== 'undefined') {
@@ -24,8 +26,12 @@ const handleSessionChange = (event: AuthChangeEvent, session: Session | null) =>
       // 确保这些标记在会话刷新时也会更新
       if (event === 'SIGNED_IN') {
         // 清除可能的登出标记
-        localStorage.removeItem('force_logged_out');
-        sessionStorage.removeItem('isLoggedOut');
+        if (typeof localStorage !== 'undefined') {
+          localStorage.removeItem('force_logged_out');
+        }
+        if (typeof sessionStorage !== 'undefined') {
+          sessionStorage.removeItem('isLoggedOut');
+        }
       }
     } 
     
@@ -34,7 +40,9 @@ const handleSessionChange = (event: AuthChangeEvent, session: Session | null) =>
       console.log(`[SupabaseClient] 用户已登出，清除认证cookie`);
       
       // 清除认证cookie
-      document.cookie = 'user_authenticated=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
+      if (typeof document !== 'undefined') {
+        document.cookie = 'user_authenticated=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
+      }
       
       // 清除localStorage中的认证记录
       if (typeof localStorage !== 'undefined') {
@@ -66,10 +74,12 @@ const setupAuthPersistence = () => {
   // 每30分钟检查一次认证状态
   const interval = setInterval(() => {
     try {
+      if (typeof localStorage === 'undefined') return;
+      
       const authTime = localStorage.getItem('auth_time');
       const wasAuthenticated = localStorage.getItem('wasAuthenticated');
       
-      if (wasAuthenticated === 'true') {
+      if (wasAuthenticated === 'true' && typeof document !== 'undefined') {
         console.log(`[SupabaseClient] 续期认证状态`);
         // 续期cookie (7天)
         document.cookie = 'user_authenticated=true; path=/; max-age=604800';
@@ -99,6 +109,16 @@ export const createClient = () => {
   }
 
   try {
+    // 检查是否在服务器端环境
+    const isServer = typeof window === 'undefined';
+    
+    if (isServer) {
+      // 在服务器端环境下使用基本配置创建客户端
+      console.log("[SupabaseClient] 在服务器端创建简化客户端");
+      return createBrowserClient(supabaseUrl, supabaseAnonKey);
+    }
+    
+    // 在浏览器环境下使用完整配置
     // 使用正确的创建客户端参数格式
     const client = createBrowserClient(supabaseUrl, supabaseAnonKey, {
       // 浏览器客户端必要的cookie方法
@@ -106,6 +126,8 @@ export const createClient = () => {
         get: (name) => {
           try {
             // 从document.cookie获取
+            if (typeof document === 'undefined') return null;
+            
             const value = `; ${document.cookie}`;
             const parts = value.split(`; ${name}=`);
             if (parts.length === 2) return parts.pop()?.split(';').shift() || null;
@@ -118,6 +140,8 @@ export const createClient = () => {
         set: (name, value, options) => {
           try {
             // 设置到document.cookie，添加适当的选项
+            if (typeof document === 'undefined') return;
+            
             let cookie = `${name}=${value}`;
             if (options?.maxAge) cookie += `; Max-Age=${options.maxAge}`;
             if (options?.path) cookie += `; Path=${options.path}`;
@@ -150,6 +174,8 @@ export const createClient = () => {
         remove: (name, options) => {
           try {
             // 从document.cookie移除
+            if (typeof document === 'undefined') return;
+            
             document.cookie = `${name}=; Max-Age=0; Path=${options?.path || '/'}`;
             
             // 如果移除认证token，也清除认证标记
@@ -178,7 +204,7 @@ export const createClient = () => {
     setTimeout(async () => {
       try {
         const { data: { session } } = await client.auth.getSession();
-        if (session) {
+        if (session && typeof document !== 'undefined') {
           console.log('[SupabaseClient] 初始会话检查发现有效会话，设置cookie标记');
           document.cookie = 'user_authenticated=true; path=/; max-age=604800';
           
