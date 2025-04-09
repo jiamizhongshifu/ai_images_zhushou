@@ -1,0 +1,20 @@
+{
+  "buildCommand": "pnpm approve-builds sharp && pnpm run build",
+  "installCommand": "pnpm install",
+  "builds": [
+    {
+      "src": "package.json",
+      "use": "@vercel/next"
+    }
+  ],
+  "functions": {
+    "app/api/generate-image-direct/route.ts": {
+      "memory": 1024,
+      "maxDuration": 300
+    },
+    "app/api/generate-image/route.ts": {
+      "memory": 1024,
+      "maxDuration": 300
+    }
+  }
+} 

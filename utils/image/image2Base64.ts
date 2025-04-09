@@ -170,14 +170,20 @@ export async function compressImageServer(
     quality = 80
 ): Promise<string> {
     try {
-        // 动态导入sharp库，仅在服务器端使用
-        // 使用类型断言来解决类型问题
-        const sharp = await import('sharp') as any;
-        
         // 提取base64数据和MIME类型
         const matches = base64Image.match(/^data:([A-Za-z-+/]+);base64,(.+)$/);
         if (!matches || matches.length !== 3) {
             throw new Error('无效的base64图片');
+        }
+        
+        // 动态导入sharp库
+        let sharp;
+        try {
+            const sharpModule = await import('sharp');
+            sharp = sharpModule.default;
+        } catch (err) {
+            console.warn('无法加载sharp库，将返回原始图像:', err);
+            return base64Image;
         }
         
         const mimeType = matches[1];
@@ -187,7 +193,7 @@ export async function compressImageServer(
         const buffer = Buffer.from(base64Data, 'base64');
         
         // 使用sharp处理图片
-        const result = await sharp.default(buffer)
+        const result = await sharp(buffer)
             .resize(maxWidth, maxHeight, {
                 fit: 'inside',
                 withoutEnlargement: true

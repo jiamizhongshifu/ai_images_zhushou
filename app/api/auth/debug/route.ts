@@ -6,7 +6,7 @@ export async function GET(request: Request) {
   console.log('[调试API] 处理认证调试请求');
   
   // 获取所有cookie
-  const cookieStore = cookies();
+  const cookieStore = await cookies();
   // 无需使用getAll方法，直接获取所有cookie
   const allCookies = cookieStore.getAll();
   
