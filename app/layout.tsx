@@ -11,6 +11,7 @@ import { Navbar } from "@/components/layout/navbar";
 import { ToastProvider, ToastViewport } from "@/components/ui/enhanced-toast";
 import { Toaster } from "@/components/ui/toaster";
 import LogoutHandler from "@/components/layout/logout-handler";
+import { Suspense } from 'react';
 
 const defaultUrl = process.env.VERCEL_URL
   ? `https://${process.env.VERCEL_URL}`
@@ -68,7 +69,9 @@ export default function RootLayout({
         >
           <ToastProvider>
             {/* 登出状态处理器 - 不可见组件，用于处理登出状态 */}
-            <LogoutHandler />
+            <Suspense fallback={null}>
+              <LogoutHandler />
+            </Suspense>
             
             {/* 全局导航栏 */}
             <Navbar />
