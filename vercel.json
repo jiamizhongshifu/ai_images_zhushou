@@ -1,5 +1,5 @@
 {
-  "buildCommand": "pnpm dlx sharp-cli --install && pnpm run build",
+  "buildCommand": "SHARP_IGNORE_GLOBAL=true CI=true pnpm dlx sharp-cli --install && pnpm run build",
   "installCommand": "pnpm install --no-frozen-lockfile",
   "framework": "nextjs",
   "functions": {
@@ -17,10 +17,5 @@
       "path": "/api/cron/cleanup-tasks",
       "schedule": "0 0 * * *"
     }
-  ],
-  "buildEnvironment": {
-    "SHARP_IGNORE_GLOBAL": "true",
-    "CI": "true",
-    "PNPM_FLAGS": "--no-interactive"
-  }
+  ]
 }
