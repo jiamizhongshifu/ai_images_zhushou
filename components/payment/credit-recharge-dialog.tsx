@@ -10,7 +10,7 @@ import OrderHistoryDialog from '@/components/payment/order-history-dialog';
 interface CreditRechargeDialogProps {
   isOpen: boolean;
   onClose: () => void;
-  onSuccess?: (newCredits: number) => void;
+  onSuccess?: () => Promise<void>;
   credits: number;
 }
 
@@ -126,7 +126,7 @@ export default function CreditRechargeDialog({ isOpen, onClose, onSuccess, credi
               
               // 调用上层回调
               if (onSuccess) {
-                onSuccess(newCredits);
+                await onSuccess();
               }
               
               return;
@@ -263,7 +263,7 @@ export default function CreditRechargeDialog({ isOpen, onClose, onSuccess, credi
   };
   
   // 确保点数被刷新的多次尝试函数
-  const ensureCreditsRefreshed = async (): Promise<number> => {
+  const ensureCreditsRefreshed = async (): Promise<number | null> => {
     try {
       // 多次尝试刷新点数
       for (let i = 0; i < 3; i++) {
@@ -288,10 +288,10 @@ export default function CreditRechargeDialog({ isOpen, onClose, onSuccess, credi
       }
       
       console.warn('多次尝试刷新点数未成功');
-      return initialCredits || 0; // 返回初始点数
+      return null;
     } catch (error) {
       console.error('刷新点数过程中出错:', error);
-      return initialCredits || 0; // 出错时返回初始点数
+      return null;
     }
   };
   
@@ -318,7 +318,7 @@ export default function CreditRechargeDialog({ isOpen, onClose, onSuccess, credi
           setCredits(newCredits);
           
           if (onSuccess) {
-            onSuccess(newCredits);
+            await onSuccess();
           }
           
           // 刷新路由，但不关闭对话框
@@ -403,17 +403,17 @@ export default function CreditRechargeDialog({ isOpen, onClose, onSuccess, credi
                       
                       // 处理支付成功
                       setPaymentSuccess(true);
-                      ensureCreditsRefreshed();
                       
-                      // 通知上层组件支付成功
+                      // 通知上层组件支付成功，让 UserStateProvider 刷新
                       if (onSuccess) {
-                        onSuccess(credits);
+                        await onSuccess();
                       }
                       
                       // 延迟关闭对话框
                       setTimeout(() => {
-                        // 刷新页面获取最新点数
-                        router.refresh();
+                        // 刷新页面获取最新点数 - 可以考虑移除，依赖 onSuccess 的刷新
+                        // router.refresh(); 
+                        onClose(); // 直接关闭对话框
                       }, 2000);
                       
                       return;
@@ -480,20 +480,28 @@ export default function CreditRechargeDialog({ isOpen, onClose, onSuccess, credi
       if (success) {
         // 支付成功
         setPaymentSuccess(true);
-        const newCredits = await ensureCreditsRefreshed();
+        
+        // 通知上层组件支付成功，让 UserStateProvider 刷新
+        if (onSuccess) {
+          await onSuccess();
+        }
+        
+        // 获取最新的积分（可选，主要为了显示消息）
+        const newCredits = await ensureCreditsRefreshed(); 
         
         // 获取充值前点数
         const packageInfo = CREDIT_PACKAGES.find(p => p.id === selectedPackage);
         const creditsAdded = packageInfo?.credits || 0;
-        const previousCredits = newCredits - creditsAdded;
+        const previousCredits = newCredits !== null ? newCredits - creditsAdded : initialCredits;
         
         // 显示成功消息
-        setError(`充值成功！您的点数已从 ${previousCredits} 增加到 ${newCredits}`);
+        setError(`充值成功！${newCredits !== null ? `当前点数: ${newCredits}` : ''}`);
         
-        // 通知上层组件支付成功
-        if (onSuccess) {
-          onSuccess(newCredits);
-        }
+        // 延迟关闭对话框
+        setTimeout(() => {
+          onClose();
+        }, 2000);
+        
       } else {
         // 支付未完成
         setIsCheckingPayment(false);
@@ -504,6 +512,9 @@ export default function CreditRechargeDialog({ isOpen, onClose, onSuccess, credi
       const errorMessage = error instanceof Error ? error.message : String(error);
       console.error('检查支付状态失败:', errorMessage);
       setError(`检查支付失败: ${errorMessage}`);
+    } finally {
+      // 手动检查完成后，重置 isCheckingPayment 状态
+      setIsCheckingPayment(false);
     }
   };
   
@@ -773,10 +784,10 @@ export default function CreditRechargeDialog({ isOpen, onClose, onSuccess, credi
       <OrderHistoryDialog 
         open={showHistory} 
         onOpenChange={(open) => setShowHistory(open)}
-        onOrderUpdated={(newCredits) => {
-          setCredits(newCredits);
+        // 历史订单更新成功后，也触发全局刷新
+        onOrderUpdated={async () => {
           if (onSuccess) {
-            onSuccess(newCredits);
+            await onSuccess();
           }
         }}
       />

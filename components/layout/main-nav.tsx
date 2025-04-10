@@ -40,96 +40,12 @@ export function MainNav({ providedAuthState }: MainNavProps) {
   const router = useRouter();
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [userEmail, setUserEmail] = useState<string | null>(null);
-  const [credits, setCredits] = useState<number | null>(null);
   const [isClient, setIsClient] = useState(false);
   const [isInitialAuthLoading, setIsInitialAuthLoading] = useState(true);
   const supabase = createClient();
   const [isSigningOut, setIsSigningOut] = useState(false);
   const [authStateLocked, setAuthStateLocked] = useState(false);
   const initialAuthStateCheckedRef = useRef<boolean>(false);
-  const lastCreditsRequestTimeRef = useRef<number>(0);
-  const CREDITS_REQUEST_DEBOUNCE = 5000; // 5秒防抖
-  
-  // 替换原有的refreshCredits实现，使用request-limiter
-  const refreshCredits = useCallback(async (forceRefresh = true) => {
-    try {
-      // 确保使用最新的认证状态
-      const { forceSyncAuthState } = await import('@/utils/auth-service');
-      forceSyncAuthState();
-      
-      if (!authService.isAuthenticated()) {
-        console.log('[MainNav] 未认证，跳过获取积分');
-        setCredits(null);
-        return null;
-      }
-      
-      // 使用请求限制器，确保不会频繁发送请求
-      return await limitRequest(
-        REQUEST_KEYS.CREDITS,
-        async () => {
-          console.log('[MainNav] 通过限制器获取积分，强制刷新:', forceRefresh);
-          
-          // 直接调用API获取积分
-          const response = await fetch(`/api/credits/get${forceRefresh ? '?force=1' : ''}`, {
-            method: 'GET',
-            headers: {
-              'Cache-Control': 'no-cache',
-              'Pragma': 'no-cache'
-            },
-            credentials: 'include'
-          });
-          
-          if (response.ok) {
-            const data = await response.json();
-            if (data.success && typeof data.credits === 'number') {
-              console.log('[MainNav] 成功获取积分:', data.credits);
-              setCredits(data.credits);
-              return data.credits;
-            }
-          }
-          
-          // 如果直接API调用失败，尝试使用creditService
-          return await creditService.fetchCredits(forceRefresh);
-        },
-        15000, // 15秒冷却
-        forceRefresh
-      );
-    } catch (error) {
-      // 如果是请求限制错误，忽略
-      if ((error as Error).message.includes('冷却时间内')) {
-        console.log('[MainNav] 积分请求在冷却中，继续使用当前值');
-        return credits;
-      }
-      
-      console.error('[MainNav] 获取积分失败:', error);
-      return null;
-    }
-  }, [credits]);
-  
-  // 增强的fetchCredits函数，确保只在认证状态下调用
-  const fetchCredits = useCallback(async () => {
-    if (authService.isAuthenticated()) {
-      // 检查上次更新时间
-      const now = Date.now();
-      if (credits !== null && now - lastCreditsRequestTimeRef.current < CREDITS_REQUEST_DEBOUNCE) {
-        console.log('[MainNav] 上次更新点数时间较近，跳过常规刷新');
-        return credits;
-      }
-
-      try {
-        console.log('[MainNav] 刷新点数');
-        const credits = await refreshCredits(true);
-        return credits;
-      } catch (error) {
-        console.error('[MainNav] 刷新点数出错:', error);
-        return null;
-      }
-    } else {
-      console.log('[MainNav] 用户未认证，不获取点数');
-      setCredits(null);
-      return null;
-    }
-  }, [refreshCredits, credits]);
 
   // 导航项配置
   const navItems: NavItem[] = [
@@ -153,29 +69,13 @@ export function MainNav({ providedAuthState }: MainNavProps) {
     },
   ];
 
-  // 优化authChange处理函数，确保在认证状态变化时立即更新UI
+  // 优化authChange处理函数，只处理认证状态，移除积分逻辑
   useEffect(() => {
     const handleAuthChange = (state: { isAuthenticated: boolean }) => {
       console.log('[MainNav] 认证状态变化处理函数执行, 认证状态:', state.isAuthenticated);
       
       // 立即更新组件的认证状态
       setIsAuthenticated(state.isAuthenticated);
-      
-      if (state.isAuthenticated) {
-        console.log('[MainNav] 用户已认证，检查是否需要获取点数');
-        
-        // 使用较短的延迟确保快速响应登录状态变化
-        setTimeout(() => {
-          // 使用请求限制器检查是否在冷却时间内
-          refreshCredits(true).catch(e => 
-            console.error('[MainNav] 认证状态变化后获取点数失败:', e)
-          );
-        }, 500);
-      } else {
-        // 未认证时重置点数显示
-        console.log('[MainNav] 用户未认证，重置点数状态');
-        setCredits(null);
-      }
     };
     
     // 订阅认证状态变化
@@ -193,13 +93,6 @@ export function MainNav({ providedAuthState }: MainNavProps) {
         console.log('[MainNav] 初始检查认证状态:', isAuth ? '已登录' : '未登录');
         setIsAuthenticated(isAuth);
         setIsInitialAuthLoading(false);
-        
-        // 如果已认证，获取积分
-        if (isAuth) {
-          refreshCredits(false).catch(e => 
-            console.error('[MainNav] 初始认证检查后获取点数失败:', e)
-          );
-        }
       } catch (e) {
         console.warn('[MainNav] 初始认证检查失败:', e);
         setIsInitialAuthLoading(false);
@@ -212,29 +105,12 @@ export function MainNav({ providedAuthState }: MainNavProps) {
     return () => {
       unsubscribe();
     };
-  }, [refreshCredits]);
+  }, []);
   
   // 登录后立即检查认证状态和获取点数
   useEffect(() => {
-    if (isAuthenticated && !initialAuthStateCheckedRef.current) {
-      initialAuthStateCheckedRef.current = true;
-      
-      // 使用请求限制器检查是否需要刷新
-      if (!isRequestInCooldown(REQUEST_KEYS.CREDITS)) {
-        console.log('[MainNav] 检测到认证状态为已登录，获取点数');
-        refreshCredits(false).catch(e => 
-          console.error('[MainNav] 登录后获取点数失败:', e)
-        );
-      } else {
-        console.log('[MainNav] 登录后积分请求在冷却中，跳过');
-      }
-    }
-  }, [isAuthenticated, refreshCredits]);
-  
-  // 优化useEffect hook处理认证状态和URL参数
-  useEffect(() => {
     if (typeof window !== 'undefined') {
-    setIsClient(true);
+      setIsClient(true);
       
       // 1. 检查URL中的auth_session参数（登录成功标志）
       const url = new URL(window.location.href);
@@ -270,20 +146,6 @@ export function MainNav({ providedAuthState }: MainNavProps) {
         // 清除URL参数，避免刷新后重复处理
         url.searchParams.delete('auth_session');
         window.history.replaceState({}, '', url.toString());
-        
-        // 立即获取点数，但避免过早请求
-        // 使用较长的延迟确保认证状态已完全同步
-        setTimeout(() => {
-          // 使用请求限制器检查是否在冷却时间内
-          if (!isRequestInCooldown(REQUEST_KEYS.CREDITS)) {
-            console.log('[MainNav] 检测到auth_session参数，获取点数');
-            refreshCredits(false).catch(e => 
-              console.error('[MainNav] auth_session处理：获取点数失败:', e)
-            );
-      } else {
-            console.log('[MainNav] URL参数处理时积分请求在冷却中，跳过');
-          }
-        }, 2000);
       }
       
       // 2. 检查localStorage中的认证状态
@@ -295,8 +157,6 @@ export function MainNav({ providedAuthState }: MainNavProps) {
             if (parsed && parsed.isAuthenticated) {
               console.log('[MainNav] 从持久化存储恢复认证状态');
               setIsAuthenticated(true);
-              
-              // 不立即请求积分，等待认证状态完全确认后再请求
             }
           } catch (e) {
             console.warn('[MainNav] 解析持久化认证状态失败', e);
@@ -317,7 +177,7 @@ export function MainNav({ providedAuthState }: MainNavProps) {
         console.warn('[MainNav] 检查临时认证标记失败', e);
       }
     }
-  }, [pathname, isAuthenticated, authStateLocked, refreshCredits, credits]);
+  }, [pathname, isAuthenticated, authStateLocked]);
 
   // 添加处理登录点击的函数
   const handleLoginClick = useCallback(() => {
@@ -371,7 +231,6 @@ export function MainNav({ providedAuthState }: MainNavProps) {
       
       // 立即更新状态
       setIsAuthenticated(false);
-      setCredits(null);
       
       // 4. 跳转到首页
       router.push('/?logged_out=true');

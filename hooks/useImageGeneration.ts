@@ -3,6 +3,7 @@ import { generatePromptWithStyle } from '@/app/config/styles';
 import { cacheService, CACHE_PREFIXES } from '@/utils/cache-service';
 import { GenerationStage } from '@/components/ui/skeleton-generation';
 import { v4 as uuid } from 'uuid';
+import { useUserState } from '@/app/components/providers/user-state-provider';
 
 const USER_CREDITS_CACHE_KEY = CACHE_PREFIXES.USER_CREDITS + ':main';
 const HISTORY_CACHE_KEY = CACHE_PREFIXES.HISTORY + ':recent';
@@ -37,7 +38,6 @@ type NotificationCallback = (message: string, type: 'success' | 'error' | 'info'
 export default function useImageGeneration(
   onNotify?: NotificationCallback,
   onSuccess?: (imageUrl: string) => void,
-  refreshCredits?: () => void,
   refreshHistory?: () => void
 ): UseImageGenerationResult {
   const [generatedImages, setGeneratedImages] = useState<string[]>([]);
@@ -51,6 +51,8 @@ export default function useImageGeneration(
   const [currentTaskId, setCurrentTaskId] = useState<string | null>(null);
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const startTimeRef = useRef<number>(0);
+
+  const { triggerCreditRefresh } = useUserState();
 
   // 添加生成的图片到列表
   const addGeneratedImage = (imageUrl: string) => {
@@ -142,7 +144,7 @@ export default function useImageGeneration(
             updateGenerationStage('finalizing', 95);
             
             // 延迟后显示完成
-            setTimeout(() => {
+            setTimeout(async () => {
               updateGenerationStage('completed', 100);
               
               // 停止轮询
@@ -162,7 +164,7 @@ export default function useImageGeneration(
                 cacheService.delete(HISTORY_CACHE_KEY);
                 
                 // 调用回调函数
-                if (refreshCredits) refreshCredits();
+                await triggerCreditRefresh();
                 if (refreshHistory) refreshHistory();
                 if (onSuccess) onSuccess(data.imageUrl);
                 

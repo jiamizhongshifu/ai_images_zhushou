@@ -46,31 +46,43 @@ function getRequestKey(key: RequestKey): string {
  * 限制请求频率，合并重复请求
  * @param key 请求标识符
  * @param requestFn 实际发起请求的函数
- * @param cooldownMs 冷却时间（毫秒）
+ * @param cooldownMs 冷却时间（毫秒） - 对于非强制刷新
  * @param forceRefresh 是否强制刷新（忽略冷却时间）
  * @returns 请求结果
  */
 export async function limitRequest<T>(
   key: RequestKey,
   requestFn: () => Promise<T>,
-  cooldownMs: number = 5000,
+  cooldownMs: number = 30000, // 默认冷却时间增加到 30 秒
   forceRefresh: boolean = false
 ): Promise<T> {
   const now = Date.now();
   const requestKey = getRequestKey(key);
   
-  // 检查是否在冷却时间内
-  if (!forceRefresh && requestCooldowns[requestKey] && now - requestCooldowns[requestKey] < cooldownMs) {
-    console.log(`[RequestLimiter] 请求 "${requestKey}" 在冷却时间内，跳过`);
-    throw new Error(`请求 "${requestKey}" 在冷却时间内，请稍后再试`);
-  }
-  
-  // 检查是否有进行中的相同请求
-  const activeRequest = activeRequests[requestKey];
-  if (activeRequest && (!forceRefresh || activeRequest.forceRefresh === forceRefresh)) {
-    // 如果存在活跃请求且不强制刷新，或强制刷新状态相同，则复用请求
-    console.log(`[RequestLimiter] 复用进行中的 "${requestKey}" 请求`);
-    return activeRequest.promise;
+  // --- 强制刷新逻辑调整 ---
+  if (forceRefresh) {
+    const activeRequest = activeRequests[requestKey];
+    // 如果存在强制刷新请求，并且时间很短（例如500ms内），则复用
+    if (activeRequest && activeRequest.forceRefresh && now - activeRequest.timestamp < 500) {
+      console.log(`[RequestLimiter] 合并短时间内的强制刷新请求 "${requestKey}"`);
+      return activeRequest.promise;
+    }
+    // 如果存在非强制刷新的活跃请求，允许强制刷新覆盖
+    console.log(`[RequestLimiter] 强制刷新请求 "${requestKey}"`);
+  } else {
+    // --- 非强制刷新逻辑 ---
+    // 检查是否在冷却时间内
+    if (requestCooldowns[requestKey] && now - requestCooldowns[requestKey] < cooldownMs) {
+      console.log(`[RequestLimiter] 请求 "${requestKey}" 在冷却时间内 (${cooldownMs}ms)，跳过`);
+      throw new Error(`请求 "${requestKey}" 在冷却时间内，请稍后再试`);
+    }
+    
+    // 检查是否有进行中的相同请求
+    const activeRequest = activeRequests[requestKey];
+    if (activeRequest) {
+      console.log(`[RequestLimiter] 复用进行中的 "${requestKey}" 请求`);
+      return activeRequest.promise;
+    }
   }
   
   // 创建新请求
@@ -81,7 +93,7 @@ export async function limitRequest<T>(
     try {
       const result = await requestFn();
       
-      // 设置冷却时间
+      // 设置冷却时间 (仅在请求成功时设置)
       requestCooldowns[requestKey] = Date.now();
       
       // 请求完成后删除活跃请求记录
@@ -91,6 +103,7 @@ export async function limitRequest<T>(
     } catch (error) {
       // 请求失败也要删除活跃请求记录
       delete activeRequests[requestKey];
+      // 请求失败时不设置冷却时间，允许快速重试
       throw error;
     }
   })();
@@ -108,12 +121,12 @@ export async function limitRequest<T>(
 /**
  * 检查请求是否在冷却中
  * @param key 请求标识符
- * @param cooldownMs 可选的自定义冷却时间
+ * @param cooldownMs 可选的自定义冷却时间，默认为 30 秒
  * @returns 是否在冷却中
  */
 export function isRequestInCooldown(
   key: RequestKey,
-  cooldownMs: number = 5000
+  cooldownMs: number = 30000 // 默认检查冷却时间改为 30 秒
 ): boolean {
   const now = Date.now();
   const requestKey = getRequestKey(key);
