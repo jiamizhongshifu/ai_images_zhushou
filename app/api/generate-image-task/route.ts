@@ -44,6 +44,59 @@ function createTuziClient() {
   });
 }
 
+// 保存生成历史到数据库
+async function saveGenerationHistory(
+  supabase: any, 
+  userId: string, 
+  imageUrl: string, 
+  prompt: string, 
+  style?: string | null, 
+  aspectRatio?: string | null,
+  standardAspectRatio?: string | null
+) {
+  try {
+    // 保存到历史记录表
+    const { error } = await supabase
+      .from('ai_images_creator_history')
+      .insert({
+        user_id: userId,
+        image_url: imageUrl,
+        prompt: prompt,
+        style: style,
+        aspect_ratio: aspectRatio,
+        standard_aspect_ratio: standardAspectRatio,
+        model_used: process.env.TUZI_MODEL || 'default-model',
+        status: 'completed',
+        created_at: new Date().toISOString()
+      });
+      
+    if (error) {
+      logger.error(`保存生成历史失败: ${error.message}`);
+      return false;
+    }
+    
+    logger.info(`成功保存图片生成历史记录`);
+    return true;
+  } catch (err) {
+    logger.error(`保存历史记录出错: ${err instanceof Error ? err.message : String(err)}`);
+    return false;
+  }
+}
+
+// 从聊天内容中提取图片URL
+function extractImageUrl(content: string): string | null {
+  // 尝试提取URL
+  const urlMatch = content.match(/(https?:\/\/[^\s"'<>]+\.(jpe?g|png|gif|webp|bmp))/i) || 
+                   content.match(/(https?:\/\/[^\s"'<>]+)/i);
+  
+  if (urlMatch && urlMatch[1]) {
+    logger.debug(`从内容中提取到URL: ${urlMatch[1]}`);
+    return urlMatch[1];
+  }
+  
+  return null;
+}
+
 export async function POST(request: NextRequest) {
   try {
     // 获取用户ID和请求数据
@@ -62,7 +115,9 @@ export async function POST(request: NextRequest) {
     const { 
       prompt,
       style = null,
-      aspectRatio = null
+      aspectRatio = null,
+      standardAspectRatio = null,
+      image = null // 添加图片参数
     } = requestData;
     
     // 验证提示词
@@ -81,6 +136,18 @@ export async function POST(request: NextRequest) {
     const apiConfig = getApiConfig('tuzi') as TuziConfig;
     const model = apiConfig.model || process.env.TUZI_MODEL || 'default-model';
     
+    // 记录详细的请求信息，便于调试
+    logger.info(`创建图像任务: ${taskId}, 用户: ${user.id}, 提示词: ${prompt.substring(0, 50)}${prompt.length > 50 ? '...' : ''}`);
+    
+    // 记录图片信息但不记录完整base64
+    if (image) {
+      const imgPrefix = image.substring(0, 30);
+      const imgLength = image.length;
+      logger.debug(`图片数据: ${imgPrefix}... (长度: ${imgLength}字符), 风格: ${style}, 比例: ${aspectRatio}`);
+    } else {
+      logger.debug(`没有上传图片, 风格: ${style}, 比例: ${aspectRatio}`);
+    }
+    
     // 创建任务记录
     await supabase.from('image_tasks').insert({
       id: taskId,
@@ -96,33 +163,178 @@ export async function POST(request: NextRequest) {
       attempt_count: 1
     });
     
-    logger.info(`创建图像任务: ${taskId}, 用户: ${user.id}, 提示词: ${prompt}`);
-    
     // 创建一个Promise，但不等待它完成
     // 这样API可以快速返回，同时任务继续在后台处理
     const generatePromise = (async () => {
       try {
         const tuziClient = createTuziClient();
+        let response;
         
-        // 调用图像生成API
-        const response = await tuziClient.images.generate({
-          prompt,
-          model,
-          response_format: 'url',
-          user: `task_${taskId}`
-        });
+        // 根据是否有图片选择不同的处理逻辑
+        if (image) {
+          // ==============================================
+          // 图片变换模式：使用上传的图片作为参考进行生成
+          // ==============================================
+          
+          logger.debug(`使用图片变换模式`);
+          
+          // 准备基础图片数据
+          let imageData;
+          if (image.startsWith('data:image')) {
+            // 处理base64图片
+            const base64Data = image.split(',')[1];
+            imageData = `data:image/jpeg;base64,${base64Data}`;
+            logger.debug(`处理base64图片，长度: ${base64Data.length}`);
+          } else {
+            // 直接使用图片URL
+            imageData = image;
+            logger.debug(`使用图片URL: ${image.substring(0, 50)}...`);
+          }
+          
+          // 构建明确的提示词
+          const styleText = style ? `${style}风格` : '吉卜力风格';
+          const enhancedPrompt = `将这张图片转换为${styleText}的艺术作品。保留图片中的主要内容和场景，但使用${styleText}重新绘制。${prompt}`;
+          
+          logger.debug(`增强的提示词: ${enhancedPrompt}`);
+          
+          // ==== 方法1：使用聊天补全API进行图片变换 ====
+          
+          // 创建系统消息 - 明确指导模型生成图片而不是提问
+          const systemMessage = "你是一个专业的图像生成助手。你应该直接返回一个图像URL，而不是提问或解释。用户提供了图片和描述，你的任务是生成一个符合描述的新图片并返回它的URL。请直接返回一个图像链接，不要有任何其他文字。";
+          
+          // 创建API参数
+          const chatParams: any = {
+            model,
+            messages: [
+              {
+                role: "system",
+                content: systemMessage
+              },
+              {
+                role: "user",
+                content: [
+                  {
+                    type: "text", 
+                    text: enhancedPrompt
+                  },
+                  {
+                    type: "image_url",
+                    image_url: {
+                      url: imageData
+                    }
+                  }
+                ]
+              }
+            ],
+            temperature: 0.7,
+            max_tokens: 150,
+            user: `task_${taskId}`
+          };
+          
+          // 记录参数（不包含图片数据）
+          const logParams = JSON.parse(JSON.stringify(chatParams));
+          if (logParams.messages[1]?.content[1]?.image_url?.url?.startsWith('data:')) {
+            logParams.messages[1].content[1].image_url.url = '[BASE64_IMAGE_DATA]';
+          }
+          logger.debug(`聊天API调用参数: ${JSON.stringify(logParams, null, 2)}`);
+          
+          // 调用聊天API
+          logger.debug(`调用聊天API进行图片变换`);
+          try {
+            const chatResponse = await tuziClient.chat.completions.create(chatParams);
+            
+            // 处理聊天API响应
+            if (chatResponse.choices && chatResponse.choices[0]?.message?.content) {
+              const content = chatResponse.choices[0].message.content;
+              logger.debug(`聊天API返回内容: ${content}`);
+              
+              // 尝试从内容中提取URL
+              const imageUrl = extractImageUrl(content);
+              
+              if (imageUrl) {
+                // 如果成功提取到URL，使用这个URL
+                response = {
+                  data: [{ url: imageUrl }]
+                };
+                logger.debug(`成功从聊天API响应中提取图片URL: ${imageUrl}`);
+              } else {
+                // 无法从聊天API响应中提取URL，使用备选方案
+                logger.debug(`无法从聊天API响应中提取URL，尝试使用图像API`);
+                throw new Error("无法从聊天API响应提取图片URL");
+              }
+            } else {
+              logger.debug(`聊天API返回无效响应`);
+              throw new Error("聊天API返回无效响应");
+            }
+          } catch (chatError) {
+            // 聊天API调用失败，尝试使用图像API
+            logger.debug(`聊天API调用失败: ${chatError instanceof Error ? chatError.message : String(chatError)}`);
+            logger.debug(`尝试使用图像API作为备选方案`);
+            
+            // ==== 方法2：使用图像生成API作为备选方案 ====
+            
+            // 准备图像API参数
+            const imageParams = {
+              prompt: `${styleText}的${prompt}`,
+              model,
+              response_format: 'url' as const,
+              user: `task_${taskId}`
+            };
+            
+            logger.debug(`图像API调用参数: ${JSON.stringify(imageParams, null, 2)}`);
+            
+            // 调用图像API
+            response = await tuziClient.images.generate(imageParams);
+            logger.debug(`成功调用图像API`);
+          }
+        } else {
+          // ==============================================
+          // 普通图片生成模式：仅基于提示词生成
+          // ==============================================
+          
+          logger.debug(`使用普通图片生成模式`);
+          
+          // 构建提示词
+          const finalPrompt = style ? `${style}风格的${prompt}` : prompt;
+          
+          // 准备图像API参数
+          const imageParams = {
+            prompt: finalPrompt,
+            model,
+            response_format: 'url' as const,
+            user: `task_${taskId}`
+          };
+          
+          logger.debug(`图像API调用参数: ${JSON.stringify(imageParams, null, 2)}`);
+          
+          // 调用图像API
+          response = await tuziClient.images.generate(imageParams);
+          logger.debug(`成功调用图像API`);
+        }
         
         // 处理成功响应
         if (response && response.data && response.data[0]?.url) {
-          logger.info(`任务 ${taskId} 图像生成成功, 更新状态`);
+          const imageUrl = response.data[0].url;
+          logger.info(`任务 ${taskId} 图像生成成功，URL: ${imageUrl}`);
           
           // 更新任务状态为完成
           await supabase.from('image_tasks').update({
             status: 'completed',
-            image_url: response.data[0].url,
+            image_url: imageUrl,
             completed_at: new Date().toISOString(),
             updated_at: new Date().toISOString()
           }).eq('id', taskId);
+          
+          // 保存到历史记录表
+          await saveGenerationHistory(
+            supabase, 
+            user.id, 
+            imageUrl, 
+            prompt, 
+            style, 
+            aspectRatio, 
+            standardAspectRatio
+          );
         } else {
           throw new Error('API未返回有效的图像URL');
         }

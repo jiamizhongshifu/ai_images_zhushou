@@ -238,13 +238,20 @@ export default function useImageGeneration(
         standardAspectRatio
       };
       
-      console.log('[useImageGeneration] 开始生成图片，参数:', {
-        prompt: fullPrompt ? `${fullPrompt.slice(0, 30)}...` : '(空)',
-        hasImage: !!image,
-        style: requestData.style || '(自定义)',
-        aspectRatio: aspectRatio || '(默认)',
-        standardRatio: standardAspectRatio || '(默认)'
-      });
+      // 更详细的日志，包括完整的图片信息
+      console.log('[useImageGeneration] 开始生成图片，参数详情:');
+      console.log(`- 提示词: ${fullPrompt.length > 100 ? fullPrompt.substring(0, 100) + '...' : fullPrompt}`);
+      console.log(`- 风格: ${requestData.style || '(自定义)'}`);
+      console.log(`- 比例: ${aspectRatio || '(默认)'} / 标准比例: ${standardAspectRatio || '(默认)'}`);
+      
+      // 记录图片信息但不输出完整base64以避免日志过大
+      if (image) {
+        const imgPrefix = image.substring(0, 30);
+        const imgLength = image.length;
+        console.log(`- 图片数据: ${imgPrefix}... (长度: ${imgLength}字符)`);
+      } else {
+        console.log(`- 图片数据: 无`);
+      }
       
       // 发送请求阶段
       updateGenerationStage('sending_request', 20);

@@ -3,11 +3,11 @@ import { createClient } from '@/utils/supabase/server';
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { taskId: string } }
+  context: { params: { taskId: string } }
 ) {
   try {
     // 获取任务ID
-    const { taskId } = params;
+    const { taskId } = context.params;
     
     if (!taskId) {
       return NextResponse.json(
