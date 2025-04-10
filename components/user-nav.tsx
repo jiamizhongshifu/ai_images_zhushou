@@ -170,7 +170,15 @@ export default function UserNav() {
       // 2. 主动重置本地状态，确保UI立即响应
       resetLocalState();
       
-      // 3. 调用API登出端点，确保服务器端也清除会话
+      // 3. 调用Supabase直接登出，确保会话彻底清除
+      try {
+        console.log('[UserNav] 调用Supabase直接登出');
+        await supabase.auth.signOut({ scope: 'global' });
+      } catch (supabaseError) {
+        console.error('[UserNav] Supabase登出错误:', supabaseError);
+      }
+      
+      // 4. 调用API登出端点，确保服务器端也清除会话
       try {
         const response = await fetch('/api/auth/signout', {
           method: 'POST',
@@ -188,16 +196,19 @@ export default function UserNav() {
         console.error('[UserNav] 调用登出API出错:', apiError);
       }
       
-      // 4. 清除认证服务状态
+      // 5. 清除认证服务状态
       authService.clearAuthState();
       
-      // 5. 手动清除所有可能的Cookie
+      // 6. 手动清除所有可能的Cookie
       const cookieNames = [
         'sb-access-token', 
         'sb-refresh-token', 
         '__session', 
         'sb-refresh-token-nonce', 
-        'user_authenticated'
+        'user_authenticated',
+        'sb:token',        // 添加更多可能的Supabase cookie
+        'sb-provider-token',
+        'sb-auth-token'
       ];
       const commonOptions = '; path=/; max-age=0; expires=Thu, 01 Jan 1970 00:00:00 GMT';
       
@@ -215,35 +226,41 @@ export default function UserNav() {
         }
       });
       
-      // 6. 清除localStorage中所有可能的认证数据
+      // 7. 清除localStorage中所有可能的认证数据
       const keysToRemove = [
         'supabase.auth.token',
         'supabase.auth.expires_at',
         'auth_state',
         'auth_valid',
         'auth_time',
-        'wasAuthenticated'
+        'wasAuthenticated',
+        'sb-provider-token',
+        'sb-access-token',
+        'sb-refresh-token'
       ];
       keysToRemove.forEach(key => localStorage.removeItem(key));
       
-      // 7. 将登出状态保存到sessionStorage，增加时间戳防止缓存
+      // 8. 将登出状态保存到sessionStorage，增加时间戳防止缓存
       sessionStorage.setItem('isLoggedOut', 'true');
       sessionStorage.setItem('logoutTime', Date.now().toString());
       
-      // 8. 使用router保存状态并平滑跳转，而非硬刷新
-      console.log('[UserNav] 登出操作完成, 页面将重定向');
-      // 可以使用状态（如sessionStorage）来存储登出信息，而不是通过URL
-      sessionStorage.setItem('force_logged_out', 'true');
-      // 将跳转参数存储在sessionStorage中，供登录页使用
-      sessionStorage.setItem('logout_timestamp', Date.now().toString());
-      // 使用router跳转避免整页刷新
-      router.push('/?logged_out=true');
+      // 9. 创建特殊的持久化登出标记，确保刷新后也能识别
+      try {
+        document.cookie = `force_logged_out=true; path=/; max-age=86400; SameSite=Lax`;
+      } catch (e) {
+        console.warn('[UserNav] 设置持久化登出cookie失败:', e);
+      }
+      
+      // 10. 实施彻底解决方案 - 强制完全重载页面而非软导航
+      console.log('[UserNav] 登出操作完成, 执行硬刷新');
+      // 添加登出标记到URL
+      window.location.href = '/?logged_out=true&t=' + Date.now();
     } catch (error) {
       console.error('[UserNav] 登出过程中发生错误:', error);
       alert("退出登录时发生错误");
       
-      // 即使出错也尝试使用router跳转
-      router.push('/?error=logout_failed');
+      // 即使出错也尝试强制刷新页面
+      window.location.href = '/?error=logout_failed&t=' + Date.now();
     } finally {
       setIsSigningOut(false);
     }

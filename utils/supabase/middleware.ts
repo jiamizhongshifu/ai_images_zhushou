@@ -96,15 +96,53 @@ export const updateSession = async (request: NextRequest) => {
       return response;
     }
     
+    // 优先检查登出状态 - 检查优先级更高于会话检查
+    const url = new URL(request.url);
+    const hasLoggedOutParam = url.searchParams.has('logged_out') || 
+                              url.searchParams.has('logout') || 
+                              url.searchParams.has('force_logout');
+    
+    // 检查各种登出标记Cookies
+    const hasLogoutCookie = request.cookies.get('force_logged_out')?.value === 'true';
+    const hasIsLoggedOutCookie = request.cookies.get('isLoggedOut')?.value === 'true';
+    
+    // 如果检测到任何登出标记，直接处理为登出状态，不检查会话
+    if (hasLoggedOutParam || hasLogoutCookie || hasIsLoggedOutCookie) {
+      logger.info(`路径: ${request.nextUrl.pathname}, 检测到登出标记，强制设置用户状态为未登录`);
+      
+      // 设置登出Cookie，确保后续请求也能识别登出状态
+      response.cookies.set('force_logged_out', 'true', {
+        path: '/',
+        maxAge: 60 * 60 * 24, // 24小时过期，确保足够长的识别时间
+        httpOnly: false,
+        sameSite: 'lax'
+      });
+      
+      // 删除认证Cookie
+      response.cookies.delete('user_authenticated');
+      // 删除强制登录Cookie
+      response.cookies.delete('force_login');
+      // 删除会话验证Cookie
+      response.cookies.delete('session_verified');
+      
+      // 访问受保护页面时重定向到登录页
+      if (request.nextUrl.pathname.startsWith('/protected')) {
+        const redirectUrl = new URL('/sign-in', request.url);
+        return NextResponse.redirect(redirectUrl);
+      }
+      
+      // 不验证会话，直接返回响应
+      return response;
+    }
+    
     // 创建Supabase客户端
     const supabase = createClient(request);
     
-    // 检查是否有有效会话
+    // 检查会话是否有效
     const { data: { session } } = await supabase.auth.getSession();
     let isAuthenticated = !!session?.user;
     
     // 检查URL是否包含强制登录参数
-    const url = new URL(request.url);
     const hasForceLoginParam = url.searchParams.has('force_login');
     const hasForceLoginCookie = request.cookies.get('force_login')?.value === 'true';
     const hasClearLogoutParam = url.searchParams.has('clear_logout_flags');
@@ -118,8 +156,42 @@ export const updateSession = async (request: NextRequest) => {
     // 记录详细参数
     logger.debug(`认证相关参数: force_login=${hasForceLoginParam}, force_login_cookie=${hasForceLoginCookie}, clear_logout=${hasClearLogoutParam}, session_verified=${hasSessionVerifiedParam}, verify_time_valid=${isVerifyTimeValid}`);
     
-    // 验证会话有效性 - 只有当存在真实有效的会话时，强制登录参数才有效
-    const sessionIsValid = !!session?.user;
+    // 增加用户额外验证，不仅检查会话存在，还要验证其有效性
+    let sessionIsValid = false;
+    if (session?.user) {
+      try {
+        // 使用getUser进行额外验证（比getSession更可靠）
+        const { data: userData, error: userError } = await supabase.auth.getUser();
+        
+        if (userError) {
+          logger.warn(`会话看似有效但getUser失败: ${userError.message}`);
+          sessionIsValid = false;
+        } else if (userData.user) {
+          // 确认通过getUser验证的用户ID与会话一致
+          sessionIsValid = userData.user.id === session.user.id;
+          logger.debug(`会话额外验证: ${sessionIsValid ? '通过' : '失败'}`);
+        }
+      } catch (verifyError) {
+        logger.error(`验证会话时出错: ${verifyError}`);
+        sessionIsValid = false;
+      }
+    } else {
+      sessionIsValid = false;
+    }
+    
+    // 再次检查登出标记，确保优先级正确
+    const loginBlockedByLogout = 
+      request.cookies.get('force_logged_out')?.value === 'true' || 
+      request.cookies.get('isLoggedOut')?.value === 'true' ||
+      request.cookies.get('auth_logged_out')?.value === 'true' ||
+      request.cookies.get('logged_out')?.value === 'true';
+    
+    // 如果有明确的登出标记，则会话无效
+    if (loginBlockedByLogout) {
+      logger.info(`路径: ${request.nextUrl.pathname}, 检测到登出标记，忽略可能有效的会话`);
+      sessionIsValid = false;
+      isAuthenticated = false;
+    }
     
     // 记录会话状态
     logger.debug(`会话状态: ${sessionIsValid ? '有效' : '无效'}, 用户ID: ${session?.user?.id || '无'}`);
@@ -134,11 +206,12 @@ export const updateSession = async (request: NextRequest) => {
       hasClearLogoutParam;
     
     // 如果满足条件，优先处理，清除所有登出标记
-    if (shouldForceLogin) {
+    if (shouldForceLogin && !loginBlockedByLogout) {
       logger.info(`路径: ${request.nextUrl.pathname}, 检测到有效的认证标记和有效会话，清除所有登出状态`);
       
       // 清除登出Cookie
       response.cookies.delete('force_logged_out');
+      response.cookies.delete('isLoggedOut');
       
       // 如果有会话，设置认证状态
       if (sessionIsValid) {
@@ -165,29 +238,9 @@ export const updateSession = async (request: NextRequest) => {
     } 
     // 仅当没有强制登录请求时，才检查登出标记
     else {
-      // 检查URL是否包含登出参数，如果有，则认为用户已登出，不考虑会话状态
-      const hasLogoutParam = url.searchParams.has('logout') || url.searchParams.has('force_logout');
-      
-      // 检查Cookies中的登出标记
-      const hasLogoutCookie = request.cookies.get('force_logged_out')?.value === 'true';
-      
-      // 如果检测到登出参数或登出Cookie，强制认为用户未登录，无论会话状态如何
-      if (hasLogoutParam || hasLogoutCookie) {
-        logger.info(`路径: ${request.nextUrl.pathname}, 检测到登出标记，强制设置用户状态为未登录`);
-        isAuthenticated = false;
-        
-        // 设置登出Cookie，确保后续请求也能识别登出状态
-        response.cookies.set('force_logged_out', 'true', {
-          path: '/',
-          maxAge: 60 * 5, // 5分钟过期，足够处理登出后的短期访问
-          httpOnly: false,
-          sameSite: 'lax'
-        });
-        
-        // 删除认证Cookie
-        response.cookies.delete('user_authenticated');
-        // 删除强制登录Cookie
-        response.cookies.delete('force_login');
+      // 如果已经处于登出状态或没有有效会话，就不进一步设置登出标记
+      if (!isAuthenticated) {
+        logger.info(`路径: ${request.nextUrl.pathname}, 用户未登录，不设置额外登出标记`);
       }
     }
     
@@ -221,6 +274,16 @@ export const updateSession = async (request: NextRequest) => {
     } else {
       // 未登录时删除此cookie
       response.cookies.delete('user_authenticated');
+      
+      // 未登录状态也设置明确的登出Cookie，帮助前端识别
+      if (!hasLogoutCookie && !hasIsLoggedOutCookie) {
+        response.cookies.set('force_logged_out', 'true', {
+          path: '/',
+          maxAge: 60 * 60 * 24, // 24小时
+          httpOnly: false,
+          sameSite: 'lax'
+        });
+      }
     }
     
     return response;

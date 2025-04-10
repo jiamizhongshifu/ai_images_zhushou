@@ -259,3 +259,37 @@ export const signOutAction = async () => {
   await supabase.auth.signOut();
   return redirect("/sign-in");
 };
+
+/**
+ * 客户端调用的登出函数
+ * 与signOutAction不同，这个函数返回API响应结果而不是重定向
+ */
+export const handleLogout = async () => {
+  try {
+    const response = await fetch('/api/auth/signout', {
+      method: 'POST',
+      headers: {
+        'Cache-Control': 'no-cache',
+      },
+    });
+    
+    if (!response.ok) {
+      console.error('登出API调用失败，状态码:', response.status);
+      throw new Error('登出失败');
+    }
+    
+    const data = await response.json();
+    return {
+      ...data,
+      headers: response.headers
+    };
+  } catch (error) {
+    console.error('登出过程中出错:', error);
+    // 即使出错也返回一个对象，包含clearStorage标志
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : '登出时发生错误',
+      clearStorage: true
+    };
+  }
+};

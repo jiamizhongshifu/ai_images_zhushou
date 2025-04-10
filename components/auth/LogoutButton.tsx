@@ -1,96 +1,131 @@
-import { useState } from 'react';
-import { useRouter } from 'next/navigation';
-import { signOut } from '@/utils/auth-service';
-import enhanceAuthResilience, { isOfflineModeEnabled } from '@/utils/auth-resilience';
+import React from 'react';
 import { Button } from '@/components/ui/button';
+import { useUserStore, useUserAuth } from '@/store';
+import { handleLogout } from '@/app/actions';
+import { toast } from 'sonner';
+import { useRouter } from 'next/navigation';
 
-interface LogoutButtonProps {
-  className?: string;
-  variant?: 'default' | 'link' | 'outline' | 'destructive' | 'ghost';
-  size?: 'default' | 'sm' | 'lg';
-  children?: React.ReactNode;
-  redirectPath?: string;
-}
-
-export default function LogoutButton({
-  className = '',
-  variant = 'outline',
-  size = 'default',
-  children,
-  redirectPath = '/login'
-}: LogoutButtonProps) {
+export default function LogoutButton() {
   const router = useRouter();
-  const [isLoggingOut, setIsLoggingOut] = useState(false);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const resetUser = useUserStore((state: any) => state.resetUser);
+  const { setAuth } = useUserAuth();
 
-  const handleLogout = async () => {
+  // 清理本地存储中所有认证相关数据的函数
+  const clearLocalAuthData = () => {
+    console.log('清理本地认证数据');
+    
+    // 清理localStorage中所有可能的认证相关数据
+    const authKeys = [
+      'sb-access-token',
+      'sb-refresh-token',
+      'supabase.auth.token',
+      'supabase-auth-token',
+      'activeAuth',
+      'wasAuthenticated',
+      'user-data',
+      'user-credits',
+      'auth-state',
+      'last-auth-check',
+      'user-session',
+      'auth-persist',
+      'session_verified',
+      'sb-session-recovery',
+      'temp_auth_state',
+      'auth_state_persistent',
+      'auth_valid',
+      'auth_time'
+    ];
+    
+    authKeys.forEach(key => {
+      try {
+        localStorage.removeItem(key);
+        sessionStorage.removeItem(key);
+      } catch (e) {
+        console.error(`清理存储键 ${key} 时出错:`, e);
+      }
+    });
+    
+    // 尝试移除所有以supabase开头的键
     try {
-      setIsLoggingOut(true);
-      
-      // 检查是否在离线模式
-      if (isOfflineModeEnabled()) {
-        console.log('[登出] 检测到离线模式，直接删除Cookie');
-        // 删除离线模式Cookie
-        document.cookie = 'force_login=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
-        document.cookie = 'auth_connection_issue=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
-        
-        // 重定向到登录页
-        router.push(redirectPath);
-        return;
-      }
-      
-      // 正常登出流程
-      const success = await signOut();
-      
-      if (success) {
-        console.log('[登出] 成功登出');
-        
-        // 添加登出标记到会话存储
-        try {
-          sessionStorage.setItem('isLoggedOut', 'true');
-        } catch (storageError) {
-          console.warn('[登出] 无法写入会话存储，可能是隐私模式:', storageError);
-          // 触发存储访问失败处理 - 改用内联实现，避免导入问题
-          try {
-            console.warn('[认证弹性] 处理存储访问失败，可能在隐私模式下');
-            // 设置Cookie标记
-            if (typeof document !== 'undefined') {
-              document.cookie = 'storage_access_failed=true;path=/;max-age=' + (60 * 30); // 30分钟有效期
-            }
-          } catch (err) {
-            console.error('[认证弹性] 处理存储访问失败时出错:', err);
-          }
+      Object.keys(localStorage).forEach(key => {
+        if (key.startsWith('supabase') || key.startsWith('sb-') || key.includes('auth')) {
+          localStorage.removeItem(key);
         }
-        
-        // 设置强制登出标记为Cookie
-        document.cookie = 'force_logged_out=true; path=/; max-age=' + (60 * 5); // 5分钟有效期
-        
-        // 重定向到登录页
-        router.push(redirectPath);
-      } else {
-        console.error('[登出] 登出失败');
-        // 失败时也尝试强制登出
-        document.cookie = 'force_logged_out=true; path=/; max-age=' + (60 * 5);
-        router.push(redirectPath);
+      });
+      
+      Object.keys(sessionStorage).forEach(key => {
+        if (key.startsWith('supabase') || key.startsWith('sb-') || key.includes('auth')) {
+          sessionStorage.removeItem(key);
+        }
+      });
+    } catch (e) {
+      console.error('清理所有supabase相关存储时出错:', e);
+    }
+  };
+
+  const onLogout = async () => {
+    try {
+      // 调用后端登出API
+      const response = await handleLogout();
+      
+      // 检查响应中是否有清理存储的指令
+      if (response && response.clearStorage) {
+        clearLocalAuthData();
       }
+      
+      // 检查响应头中是否有清理存储的指令
+      if (response && response.headers) {
+        const headers = response.headers;
+        if (headers.get('X-Clear-Auth-Storage') === 'true') {
+          clearLocalAuthData();
+        }
+      }
+      
+      // 重置全局状态
+      resetUser();
+      setAuth(false);
+      
+      // 显示成功提示
+      toast.success('已成功登出');
+      
+      // 强制刷新页面以确保所有状态都被重置
+      setTimeout(() => {
+        window.location.href = '/';  // 使用硬重定向而非router.push以确保完全刷新
+      }, 500);
     } catch (error) {
-      console.error('[登出] 登出过程中出错:', error);
-      // 出错时也尝试强制登出
-      document.cookie = 'force_logged_out=true; path=/; max-age=' + (60 * 5);
-      router.push(redirectPath);
-    } finally {
-      setIsLoggingOut(false);
+      console.error('登出过程中出错:', error);
+      toast.error('登出时出现问题');
+      
+      // 即使发生错误也清理本地存储
+      clearLocalAuthData();
+      resetUser();
+      setAuth(false);
+      
+      // 强制刷新
+      setTimeout(() => {
+        window.location.href = '/';
+      }, 500);
     }
   };
 
   return (
-    <Button
-      variant={variant}
-      size={size}
-      className={className}
-      onClick={handleLogout}
-      disabled={isLoggingOut}
-    >
-      {isLoggingOut ? '登出中...' : children || '退出登录'}
+    <Button variant="ghost" onClick={onLogout} className="flex items-center gap-2">
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        className="h-5 w-5"
+        fill="none"
+        viewBox="0 0 24 24"
+        stroke="currentColor"
+      >
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={2}
+          d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"
+        />
+      </svg>
+      登出
     </Button>
   );
 } 
