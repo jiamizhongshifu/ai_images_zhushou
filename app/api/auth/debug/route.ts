@@ -6,30 +6,29 @@ export async function GET(request: Request) {
   console.log('[调试API] 处理认证调试请求');
   
   // 获取所有cookie
-  const cookieStore = await cookies();
-  // 无需使用getAll方法，直接获取所有cookie
+  const cookieStore = cookies();
   const allCookies = cookieStore.getAll();
   
-  // 获取Supabase会话
-  let sessionData = null;
-  let sessionError = null;
+  // 获取Supabase用户信息
+  let userData = null;
+  let userError = null;
   
   try {
     const supabase = await createClient();
-    const { data, error } = await supabase.auth.getSession();
+    const { data, error } = await supabase.auth.getUser();
     
     if (error) {
-      sessionError = error.message;
+      userError = error.message;
     } else {
-      sessionData = {
-        hasSession: !!data.session,
-        userId: data.session?.user?.id,
-        email: data.session?.user?.email,
-        expiresAt: data.session?.expires_at,
+      userData = {
+        userId: data.user?.id,
+        email: data.user?.email,
+        lastSignInAt: data.user?.last_sign_in_at,
+        createdAt: data.user?.created_at
       };
     }
   } catch (error) {
-    sessionError = error instanceof Error ? error.message : String(error);
+    userError = error instanceof Error ? error.message : String(error);
   }
   
   // 提取认证相关cookie
@@ -50,10 +49,10 @@ export async function GET(request: Request) {
     timestamp: new Date().toISOString(),
     authCookies,
     allCookiesCount: allCookies.length,
-    sessionStatus: {
-      hasSession: !!sessionData,
-      error: sessionError,
-      details: sessionData,
+    userStatus: {
+      hasUser: !!userData,
+      error: userError,
+      details: userData,
     },
     requestInfo: {
       method: request.method,

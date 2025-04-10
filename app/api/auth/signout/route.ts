@@ -12,14 +12,23 @@ export async function POST(request: NextRequest) {
     // 1. 创建服务端Supabase客户端
     const supabase = await createClient();
     
-    // 2. 首先获取当前会话信息（用于日志记录）
-    const { data: { session } } = await supabase.auth.getSession();
-    const userId = session?.user?.id;
+    // 2. 获取当前用户信息
+    const { data: { user }, error: userError } = await supabase.auth.getUser();
     
-    if (userId) {
-      console.log(`[API] 准备登出用户ID: ${userId}`);
-    } else {
-      console.log('[API] 无活动会话，可能已登出');
+    // 如果没有用户会话或获取用户出错，直接返回成功
+    if (userError || !user) {
+      console.log('登出处理：未检测到有效会话，直接标记登出状态');
+      
+      // 设置登出标记cookie
+      const cookieStore = cookies();
+      cookieStore.set('isLoggedOut', 'true', { 
+        path: '/',
+        maxAge: 60 * 5, // 5分钟
+        httpOnly: true,
+        sameSite: 'lax'
+      });
+      
+      return NextResponse.json({ success: true, message: '用户未登录或已登出' });
     }
     
     // 3. 执行Supabase登出
@@ -36,8 +45,8 @@ export async function POST(request: NextRequest) {
     }
     
     // 4. 验证登出是否成功 - 二次检查
-    const { data: { session: checkSession } } = await supabase.auth.getSession();
-    if (checkSession) {
+    const { data: { user: checkUser }, error: checkError } = await supabase.auth.getUser();
+    if (checkUser) {
       console.warn('[API] 警告：登出后仍检测到会话，将尝试二次登出');
       // 尝试再次登出
       await supabase.auth.signOut({ scope: 'global' });

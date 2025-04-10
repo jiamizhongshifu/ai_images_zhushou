@@ -10,10 +10,10 @@ export async function GET(request: NextRequest) {
     
     // 获取当前用户会话
     const {
-      data: { session },
-    } = await supabase.auth.getSession();
+      data: { user },
+    } = await supabase.auth.getUser();
     
-    if (!session) {
+    if (!user) {
       return NextResponse.json({ success: false, error: "未授权访问" }, { status: 401 });
     }
     
@@ -21,7 +21,7 @@ export async function GET(request: NextRequest) {
     const { data: orders, error } = await supabase
       .from('ai_images_creator_payments')
       .select('*')
-      .eq('user_id', session.user.id)
+      .eq('user_id', user.id)
       .order('created_at', { ascending: false })
       .limit(50);
     

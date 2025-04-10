@@ -5,6 +5,59 @@ import { getApiConfig } from '@/utils/env';
 import { v4 as uuid } from 'uuid';
 import { OpenAI } from 'openai';
 import { updateCredits } from '@/utils/credit-service';
+import { estimateBase64Size } from '@/utils/image/image2Base64';
+
+// 图片大小限制
+const MAX_REQUEST_SIZE_MB = 12; // 12MB
+const MAX_IMAGE_SIZE_MB = 8;    // 8MB
+const MB_TO_BYTES = 1024 * 1024;
+
+// 预处理请求，检查请求大小
+async function checkRequestSize(request: NextRequest): Promise<{isValid: boolean, error?: string}> {
+  try {
+    // 获取Content-Length头
+    const contentLength = request.headers.get('Content-Length');
+    
+    if (contentLength) {
+      const sizeInMB = parseInt(contentLength) / MB_TO_BYTES;
+      
+      if (sizeInMB > MAX_REQUEST_SIZE_MB) {
+        console.error(`请求体过大: ${sizeInMB.toFixed(2)}MB，超过限制(${MAX_REQUEST_SIZE_MB}MB)`);
+        return {
+          isValid: false,
+          error: `请求体过大(${sizeInMB.toFixed(1)}MB)，超过限制(${MAX_REQUEST_SIZE_MB}MB)，请减小图片尺寸或降低质量`
+        };
+      }
+    }
+    
+    return { isValid: true };
+  } catch (error) {
+    console.error('检查请求大小出错:', error);
+    return { isValid: true }; // 出错时放行，由后续步骤处理
+  }
+}
+
+// 检查图片大小
+function checkImageSize(imageBase64: string): {isValid: boolean, error?: string} {
+  try {
+    // 计算图片大小
+    const sizeKB = estimateBase64Size(imageBase64);
+    const sizeInMB = sizeKB / 1024;
+    
+    if (sizeInMB > MAX_IMAGE_SIZE_MB) {
+      console.error(`图片过大: ${sizeInMB.toFixed(2)}MB，超过限制(${MAX_IMAGE_SIZE_MB}MB)`);
+      return {
+        isValid: false,
+        error: `图片过大(${sizeInMB.toFixed(1)}MB)，超过限制(${MAX_IMAGE_SIZE_MB}MB)，请减小图片尺寸或降低质量`
+      };
+    }
+    
+    return { isValid: true };
+  } catch (error) {
+    console.error('检查图片大小出错:', error);
+    return { isValid: true }; // 出错时放行，由后续步骤处理
+  }
+}
 
 // 定义TuziConfig类型
 interface TuziConfig {
@@ -135,334 +188,149 @@ const notifyCreditsUpdate = async (userId: string, newCredits: number) => {
 
 export async function POST(request: NextRequest) {
   try {
-    // 获取用户ID和请求数据
-    const supabase = await createClient();
-    const { data: { user } } = await supabase.auth.getUser();
-    
-    if (!user) {
-      return NextResponse.json(
-        { error: '未授权访问' },
-        { status: 401 }
-      );
+    // 预检查请求大小
+    const sizeCheck = await checkRequestSize(request);
+    if (!sizeCheck.isValid) {
+      return NextResponse.json({ 
+        status: 'failed',
+        error: sizeCheck.error,
+        suggestion: '请使用较小的图片或降低图片质量后重试'
+      }, { status: 413 });
     }
     
-    // 解析请求数据
-    const requestData = await request.json();
-    const { 
-      prompt,
-      style = null,
-      aspectRatio = null,
-      standardAspectRatio = null,
-      image = null // 添加图片参数
-    } = requestData;
-    
-    // 验证提示词
-    if (!prompt || typeof prompt !== 'string' || prompt.trim().length === 0) {
-      return NextResponse.json(
-        { error: '提示词不能为空' },
-        { status: 400 }
-      );
-    }
-    
-    // 创建任务ID
-    const taskId = uuid();
-    const now = new Date().toISOString();
-    
-    // 获取Tuzi模型
-    const apiConfig = getApiConfig('tuzi') as TuziConfig;
-    const model = apiConfig.model || process.env.TUZI_MODEL || 'default-model';
-    
-    // 记录详细的请求信息，便于调试
-    logger.info(`创建图像任务: ${taskId}, 用户: ${user.id}, 提示词: ${prompt.substring(0, 50)}${prompt.length > 50 ? '...' : ''}`);
-    
-    // 记录图片信息但不记录完整base64
-    if (image) {
-      const imgPrefix = image.substring(0, 30);
-      const imgLength = image.length;
-      logger.debug(`图片数据: ${imgPrefix}... (长度: ${imgLength}字符), 风格: ${style}, 比例: ${aspectRatio}`);
-    } else {
-      logger.debug(`没有上传图片, 风格: ${style}, 比例: ${aspectRatio}`);
-    }
-    
-    // 创建任务记录
-    await supabase.from('image_tasks').insert({
-      id: taskId,
-      user_id: user.id,
-      prompt,
-      style,
-      aspect_ratio: aspectRatio,
-      status: 'processing', // 直接设为处理中
-      created_at: now,
-      updated_at: now,
-      provider: 'tuzi',
-      model,
-      attempt_count: 1
+    // 解析请求体
+    const body = await request.json().catch((error) => {
+      console.error('解析请求JSON失败:', error);
+      throw new Error('无效的请求格式，无法解析JSON数据');
     });
     
-    // 创建一个Promise，但不等待它完成
-    // 这样API可以快速返回，同时任务继续在后台处理
-    const generatePromise = (async () => {
-      try {
-        const tuziClient = createTuziClient();
-        let response;
-        
-        // 根据是否有图片选择不同的处理逻辑
-        if (image) {
-          // ==============================================
-          // 图片变换模式：使用上传的图片作为参考进行生成
-          // ==============================================
-          
-          logger.debug(`使用图片变换模式`);
-          
-          // 准备基础图片数据
-          let imageData;
-          if (image.startsWith('data:image')) {
-            // 处理base64图片
-            const base64Data = image.split(',')[1];
-            imageData = `data:image/jpeg;base64,${base64Data}`;
-            logger.debug(`处理base64图片，长度: ${base64Data.length}`);
-          } else {
-            // 直接使用图片URL
-            imageData = image;
-            logger.debug(`使用图片URL: ${image.substring(0, 50)}...`);
-          }
-          
-          // 构建明确的提示词
-          const styleText = style ? `${style}风格` : '吉卜力风格';
-          const enhancedPrompt = `将这张图片转换为${styleText}的艺术作品。保留图片中的主要内容和场景，但使用${styleText}重新绘制。${prompt}`;
-          
-          logger.debug(`增强的提示词: ${enhancedPrompt}`);
-          
-          // ==== 方法1：使用聊天补全API进行图片变换 ====
-          
-          // 创建系统消息 - 明确指导模型生成图片而不是提问
-          const systemMessage = "你是一个专业的图像生成助手。你应该直接返回一个图像URL，而不是提问或解释。用户提供了图片和描述，你的任务是生成一个符合描述的新图片并返回它的URL。请直接返回一个图像链接，不要有任何其他文字。";
-          
-          // 创建API参数
-          const chatParams: any = {
-            model,
-            messages: [
-              {
-                role: "system",
-                content: systemMessage
-              },
-              {
-                role: "user",
-                content: [
-                  {
-                    type: "text", 
-                    text: enhancedPrompt
-                  },
-                  {
-                    type: "image_url",
-                    image_url: {
-                      url: imageData
-                    }
-                  }
-                ]
-              }
-            ],
-            temperature: 0.7,
-            max_tokens: 150,
-            user: `task_${taskId}`
-          };
-          
-          // 记录参数（不包含图片数据）
-          const logParams = JSON.parse(JSON.stringify(chatParams));
-          if (logParams.messages[1]?.content[1]?.image_url?.url?.startsWith('data:')) {
-            logParams.messages[1].content[1].image_url.url = '[BASE64_IMAGE_DATA]';
-          }
-          logger.debug(`聊天API调用参数: ${JSON.stringify(logParams, null, 2)}`);
-          
-          // 调用聊天API
-          logger.debug(`调用聊天API进行图片变换`);
-          try {
-            const chatResponse = await tuziClient.chat.completions.create(chatParams);
-            
-            // 处理聊天API响应
-            if (chatResponse.choices && chatResponse.choices[0]?.message?.content) {
-              const content = chatResponse.choices[0].message.content;
-              logger.debug(`聊天API返回内容: ${content}`);
-              
-              // 尝试从内容中提取URL
-              const imageUrl = extractImageUrl(content);
-              
-              if (imageUrl) {
-                // 如果成功提取到URL，使用这个URL
-                response = {
-                  data: [{ url: imageUrl }]
-                };
-                logger.debug(`成功从聊天API响应中提取图片URL: ${imageUrl}`);
-              } else {
-                // 无法从聊天API响应中提取URL，使用备选方案
-                logger.debug(`无法从聊天API响应中提取URL，尝试使用图像API`);
-                throw new Error("无法从聊天API响应提取图片URL");
-              }
-            } else {
-              logger.debug(`聊天API返回无效响应`);
-              throw new Error("聊天API返回无效响应");
-            }
-          } catch (chatError) {
-            // 聊天API调用失败，尝试使用图像API
-            logger.debug(`聊天API调用失败: ${chatError instanceof Error ? chatError.message : String(chatError)}`);
-            logger.debug(`尝试使用图像API作为备选方案`);
-            
-            // ==== 方法2：使用图像生成API作为备选方案 ====
-            
-            // 准备图像API参数
-            const imageParams = {
-              prompt: `${styleText}的${prompt}`,
-              model,
-              response_format: 'url' as const,
-              user: `task_${taskId}`
-            };
-            
-            logger.debug(`图像API调用参数: ${JSON.stringify(imageParams, null, 2)}`);
-            
-            // 调用图像API
-            response = await tuziClient.images.generate(imageParams);
-            logger.debug(`成功调用图像API`);
-          }
-        } else {
-          // ==============================================
-          // 普通图片生成模式：仅基于提示词生成
-          // ==============================================
-          
-          logger.debug(`使用普通图片生成模式`);
-          
-          // 构建提示词
-          const finalPrompt = style ? `${style}风格的${prompt}` : prompt;
-          
-          // 准备图像API参数
-          const imageParams = {
-            prompt: finalPrompt,
-            model,
-            response_format: 'url' as const,
-            user: `task_${taskId}`
-          };
-          
-          logger.debug(`图像API调用参数: ${JSON.stringify(imageParams, null, 2)}`);
-          
-          // 调用图像API
-          response = await tuziClient.images.generate(imageParams);
-          logger.debug(`成功调用图像API`);
-        }
-        
-        // 处理成功响应
-        if (response && response.data && response.data[0]?.url) {
-          const imageUrl = response.data[0].url;
-          logger.info(`任务 ${taskId} 图像生成成功，URL: ${imageUrl}`);
-          
-          // 更新任务状态为完成
-          await supabase.from('image_tasks').update({
-            status: 'completed',
-            image_url: imageUrl,
-            completed_at: new Date().toISOString(),
-            updated_at: new Date().toISOString()
-          }).eq('id', taskId);
-          
-          // 保存到历史记录表
-          await saveGenerationHistory(
-            supabase, 
-            user.id, 
-            imageUrl, 
-            prompt, 
-            style, 
-            aspectRatio, 
-            standardAspectRatio
-          );
-
-          // 扣除用户点数
-          try {
-            // 创建管理员客户端以便更新点数
-            const adminClient = await createAdminClient();
-            logger.info(`准备从用户 ${user.id} 扣除1点积分`);
-            
-            // 查询用户当前点数
-            const { data: creditsData, error: fetchError } = await adminClient
-              .from('ai_images_creator_credits')
-              .select('credits')
-              .eq('user_id', user.id)
-              .maybeSingle();
-              
-            if (fetchError) {
-              logger.error(`查询用户点数失败: ${fetchError.message}`);
-              throw new Error(`查询点数失败: ${fetchError.message}`);
-            }
-            
-            if (!creditsData) {
-              logger.info(`用户 ${user.id} 点数记录不存在，创建初始记录`);
-              
-              // 创建新记录，初始5点并扣除1点
-              const { data: newRecord, error: insertError } = await adminClient
-                .from('ai_images_creator_credits')
-                .insert({
-                  user_id: user.id,
-                  credits: 4, // 默认5点，减去本次使用的1点
-                  created_at: new Date().toISOString(),
-                  updated_at: new Date().toISOString()
-                })
-                .select('credits')
-                .single();
-                
-              if (insertError) {
-                logger.error(`创建用户点数记录失败: ${insertError.message}`);
-                throw new Error(`创建点数记录失败: ${insertError.message}`);
-              }
-              
-              logger.info(`成功为用户 ${user.id} 创建点数记录并扣除1点，剩余: ${newRecord.credits}`);
-
-              // 通知前端更新点数
-              await notifyCreditsUpdate(user.id, newRecord.credits);
-              
-              return;
-            }
-            
-            // 验证点数是否足够
-            if (creditsData.credits < 1) {
-              logger.error(`用户 ${user.id} 点数不足，当前点数: ${creditsData.credits}`);
-              throw new Error(`点数不足，无法生成图像`);
-            }
-            
-            // 更新用户点数
-            const newCredits = creditsData.credits - 1;
-            const { data: updatedRecord, error: updateError } = await adminClient
-              .from('ai_images_creator_credits')
-              .update({
-                credits: newCredits,
-                updated_at: new Date().toISOString()
-              })
-              .eq('user_id', user.id)
-              .select('credits')
-              .single();
-              
-            if (updateError) {
-              logger.error(`更新用户点数失败: ${updateError.message}`);
-              throw new Error(`点数扣除失败: ${updateError.message}`);
-            }
-            
-            logger.info(`成功从用户 ${user.id} 扣除1点，剩余点数: ${updatedRecord.credits}`);
-
-            // 通知前端更新点数
-            await notifyCreditsUpdate(user.id, updatedRecord.credits);
-          } catch (creditsError) {
-            logger.error(`扣除点数过程中出错: ${creditsError instanceof Error ? creditsError.message : String(creditsError)}`);
-            // 即使扣除点数失败，仍然继续，因为图片已生成成功
-          }
-        } else {
-          throw new Error('API未返回有效的图像URL');
-        }
-      } catch (error) {
-        logger.error(`任务 ${taskId} 图像生成失败: ${error instanceof Error ? error.message : String(error)}`);
-        
-        // 更新任务状态为失败
-        await supabase.from('image_tasks').update({
+    const { prompt, image, style } = body;
+    
+    // 验证必要参数
+    if (!prompt && !image) {
+      return NextResponse.json({
+        status: 'failed',
+        error: '提示词和图片至少需要提供一项'
+      }, { status: 400 });
+    }
+    
+    // 检查图片大小
+    if (image) {
+      const imageCheck = checkImageSize(image);
+      if (!imageCheck.isValid) {
+        return NextResponse.json({
           status: 'failed',
-          error_message: error instanceof Error ? error.message : String(error),
-          updated_at: new Date().toISOString()
-        }).eq('id', taskId);
+          error: imageCheck.error,
+          suggestion: '请使用较小的图片或降低图片质量后重试'
+        }, { status: 413 });
       }
-    })();
+    }
+    
+    // 验证用户身份
+    const supabase = await createClient();
+    const { data: { user }, error: authError } = await supabase.auth.getUser();
+    
+    if (authError || !user) {
+      console.error('未授权访问，无法获取用户信息:', authError?.message);
+      return NextResponse.json({
+        status: 'failed',
+        error: '请先登录再进行图片生成',
+        code: 'auth_required'
+      }, { status: 401 });
+    }
+    
+    // 检查用户点数
+    const { data: credits, error: creditsError } = await supabase
+      .from('ai_images_creator_credits')
+      .select('credits')
+      .eq('user_id', user.id)
+      .single();
+    
+    // 错误处理 - 查询点数失败
+    if (creditsError) {
+      console.error('获取用户点数失败:', creditsError.message);
+      return NextResponse.json({
+        status: 'failed',
+        error: '无法获取用户点数信息',
+        suggestion: '请刷新页面或重新登录后再试'
+      }, { status: 500 });
+    }
+    
+    // 检查用户点数是否足够
+    if (!credits || credits.credits < 1) {
+      return NextResponse.json({
+        status: 'failed',
+        error: '点数不足，无法生成图片',
+        code: 'insufficient_credits',
+        suggestion: '请充值点数后再试'
+      }, { status: 402 });
+    }
+    
+    // 生成任务ID
+    const taskId = uuid();
+    
+    // 在数据库中创建任务记录
+    const supabaseAdmin = await createAdminClient();
+    
+    try {
+      // 扣除用户1点积分
+      const { error: updateError } = await supabaseAdmin
+        .from('ai_images_creator_credits')
+        .update({
+          credits: credits.credits - 1,
+          updated_at: new Date().toISOString()
+        })
+        .eq('user_id', user.id);
+      
+      if (updateError) {
+        console.error('扣除用户点数失败:', updateError.message);
+        throw new Error('扣除用户点数失败');
+      }
+      
+      // 创建任务记录
+      const { error: taskError } = await supabaseAdmin
+        .from('ai_images_creator_tasks')
+        .insert({
+          user_id: user.id,
+          task_id: taskId,
+          status: 'pending',
+          prompt: prompt,
+          image_base64: image || null,
+          style: style || null,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        });
+      
+      if (taskError) {
+        console.error('创建任务记录失败:', taskError.message);
+        throw new Error('创建任务记录失败');
+      }
+    } catch (error) {
+      // 错误处理 - 回滚点数
+      console.error('创建任务失败，尝试回滚点数:', error);
+      
+      try {
+        // 尝试恢复用户点数
+        await supabaseAdmin
+          .from('ai_images_creator_credits')
+          .update({
+            credits: credits.credits,
+            updated_at: new Date().toISOString()
+          })
+          .eq('user_id', user.id);
+          
+        console.log('成功回滚用户点数');
+      } catch (rollbackError) {
+        console.error('回滚用户点数失败:', rollbackError);
+      }
+      
+      // 返回错误响应
+      return NextResponse.json({
+        status: 'failed',
+        error: '创建图像任务失败',
+        details: error instanceof Error ? error.message : String(error)
+      }, { status: 500 });
+    }
     
     // 不等待生成完成，直接返回任务ID
     return NextResponse.json({ 
@@ -472,10 +340,37 @@ export async function POST(request: NextRequest) {
     });
     
   } catch (error) {
-    logger.error(`处理图像生成请求失败: ${error instanceof Error ? error.message : String(error)}`);
+    console.error(`处理图像生成请求失败:`, error);
+    
+    // 判断错误类型，提供更友好的错误信息
+    let status = 500;
+    let errorMessage = '创建图像任务失败';
+    let suggestion = '请稍后重试';
+    
+    if (error instanceof Error) {
+      if (error.message.includes('JSON')) {
+        status = 400;
+        errorMessage = '无效的请求格式';
+        suggestion = '请确保发送的是有效的JSON数据';
+      } else if (error.message.includes('点数')) {
+        status = 402;
+        errorMessage = error.message;
+        suggestion = '请充值点数或联系客服';
+      } else if (error.message.includes('大小') || error.message.includes('尺寸')) {
+        status = 413;
+        errorMessage = error.message;
+        suggestion = '请减小图片尺寸或降低质量后重试';
+      }
+    }
+    
     return NextResponse.json(
-      { error: '创建图像任务失败', details: error instanceof Error ? error.message : String(error) },
-      { status: 500 }
+      { 
+        status: 'failed',
+        error: errorMessage, 
+        suggestion,
+        details: error instanceof Error ? error.message : String(error) 
+      },
+      { status }
     );
   }
 } 

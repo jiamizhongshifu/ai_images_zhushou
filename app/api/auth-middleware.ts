@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createServerClient, type CookieOptions } from '@supabase/ssr';
 import { cookies } from 'next/headers';
+import { SupabaseClient, User } from '@supabase/supabase-js';
 
 // 设置日志级别常量
 const LOG_LEVELS = {
@@ -25,24 +26,104 @@ const currentLogLevel = (() => {
 // 日志工具函数
 const logger = {
   error: (message: string) => {
-    console.error(`[API中间件错误] ${message}`);
+    console.error(`[Auth中间件错误] ${message}`);
   },
   warn: (message: string) => {
     if (currentLogLevel >= LOG_LEVELS.WARN) {
-      console.warn(`[API中间件警告] ${message}`);
+      console.warn(`[Auth中间件警告] ${message}`);
     }
   },
   info: (message: string) => {
     if (currentLogLevel >= LOG_LEVELS.INFO) {
-      console.log(`[API中间件] ${message}`);
+      console.log(`[Auth中间件] ${message}`);
     }
   },
   debug: (message: string) => {
     if (currentLogLevel >= LOG_LEVELS.DEBUG) {
-      console.log(`[API中间件调试] ${message}`);
+      console.log(`[Auth中间件调试] ${message}`);
     }
   }
 };
+
+/**
+ * 在中间件中处理未认证用户
+ */
+export function handleUnauthenticated() {
+  return Response.json(
+    { success: false, message: "未授权访问" },
+    { status: 401 }
+  );
+}
+
+/**
+ * 在API路由中处理未认证用户
+ */
+export function apiUnauthenticated() {
+  return Response.json(
+    { success: false, message: "未授权访问", needsAuth: true },
+    { status: 401 }
+  );
+}
+
+/**
+ * 在服务端组件中创建安全的Supabase客户端
+ * 可以处理未认证的会话或cookie问题
+ */
+export async function createSecureClient() {
+  try {
+    logger.debug("开始创建安全的Supabase客户端");
+    const cookieStore = cookies();
+
+    const supabase = createServerClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+      {
+        cookies: {
+          get(name: string) {
+            try {
+              return cookieStore.get(name)?.value;
+            } catch (error) {
+              logger.error(`获取cookie '${name}' 失败: ${error}`);
+              return undefined;
+            }
+          },
+          set(name: string, value: string, options: CookieOptions) {
+            try {
+              cookieStore.set({ name, value, ...options });
+            } catch (error) {
+              logger.error(`设置cookie '${name}' 失败: ${error}`);
+            }
+          },
+          remove(name: string, options: CookieOptions) {
+            try {
+              cookieStore.set({ name, value: '', ...options });
+            } catch (error) {
+              logger.error(`移除cookie '${name}' 失败: ${error}`);
+            }
+          },
+        },
+      }
+    );
+
+    logger.debug("安全的Supabase客户端创建成功");
+    return { supabase, cookieStore };
+  } catch (error) {
+    logger.error(`创建安全Supabase客户端失败: ${error}`);
+    throw new Error(`创建安全Supabase客户端失败: ${error}`);
+  }
+}
+
+// 获取用户ID的通用函数 - 使用getUser更安全
+export async function getCurrentUser(supabase: SupabaseClient): Promise<User | null> {
+  const { data: user } = await supabase.auth.getUser();
+  return user?.user || null;
+}
+
+// 验证用户是否已登录的中间件
+export async function validateLoggedIn(supabase: SupabaseClient): Promise<User | null> {
+  const user = await getCurrentUser(supabase);
+  return user;
+}
 
 export async function withApiAuth(
   req: Request, 
@@ -149,8 +230,8 @@ export async function withApiAuth(
     }
 
     // 检查会话是否有效
-    const { data: session } = await supabase.auth.getSession();
-    if (!session?.session) {
+    const { data: { user: sessionUser }, error: sessionError } = await supabase.auth.getUser();
+    if (!sessionUser || sessionError) {
       logger.warn(`会话无效或已过期: ${new URL(req.url).pathname}`);
       return new Response(JSON.stringify({ 
         success: false, 

@@ -4,6 +4,13 @@ import { cacheService, CACHE_PREFIXES } from '@/utils/cache-service';
 import { GenerationStage } from '@/components/ui/skeleton-generation';
 import { v4 as uuid } from 'uuid';
 import { useUserState } from '@/app/components/providers/user-state-provider';
+import { compressImage, estimateBase64Size } from '@/utils/image/compressImage';
+
+// 图片大小限制配置
+const MAX_IMAGE_SIZE_KB = 6144; // 6MB
+const MAX_IMAGE_WIDTH = 1024;
+const MAX_IMAGE_HEIGHT = 1024;
+const DEFAULT_QUALITY = 0.8;
 
 const USER_CREDITS_CACHE_KEY = CACHE_PREFIXES.USER_CREDITS + ':main';
 const HISTORY_CACHE_KEY = CACHE_PREFIXES.HISTORY + ':recent';
@@ -237,10 +244,46 @@ export default function useImageGeneration(
         generatePromptWithStyle(style, prompt.trim()) : 
         prompt.trim();
       
+      // 检查并压缩图片
+      let processedImage = image;
+      if (image) {
+        // 估算图片大小
+        const estimatedSize = estimateBase64Size(image);
+        console.log(`[useImageGeneration] 原始图片大小: ~${estimatedSize}KB`);
+        
+        // 如果图片大于限制，进行压缩
+        if (estimatedSize > MAX_IMAGE_SIZE_KB) {
+          updateGenerationStage('preparing', 7); // 更新进度以表示正在压缩
+          console.log(`[useImageGeneration] 图片超过大小限制(${MAX_IMAGE_SIZE_KB}KB)，开始压缩...`);
+          
+          try {
+            processedImage = await compressImage(
+              image,
+              MAX_IMAGE_WIDTH,
+              MAX_IMAGE_HEIGHT,
+              DEFAULT_QUALITY,
+              MAX_IMAGE_SIZE_KB
+            );
+            
+            const newSize = estimateBase64Size(processedImage);
+            console.log(`[useImageGeneration] 压缩完成，新大小: ~${newSize}KB (压缩率: ${(newSize/estimatedSize*100).toFixed(1)}%)`);
+            
+            // 如果压缩后仍然超过限制
+            if (newSize > MAX_IMAGE_SIZE_KB) {
+              console.warn(`[useImageGeneration] 警告：压缩后仍超过${MAX_IMAGE_SIZE_KB}KB，可能导致请求失败`);
+              notify(`图片尺寸较大(${(newSize/1024).toFixed(1)}MB)，可能影响生成速度或失败`, 'info');
+            }
+          } catch (compressError) {
+            console.error('[useImageGeneration] 图片压缩失败:', compressError);
+            notify('图片压缩失败，将使用原图，可能导致请求超时', 'info');
+          }
+        }
+      }
+      
       // 准备API请求数据
       const requestData = {
         prompt: fullPrompt,
-        image: image || undefined,
+        image: processedImage || undefined,
         style: style !== "自定义" ? style : undefined,
         aspectRatio,
         standardAspectRatio
@@ -253,9 +296,9 @@ export default function useImageGeneration(
       console.log(`- 比例: ${aspectRatio || '(默认)'} / 标准比例: ${standardAspectRatio || '(默认)'}`);
       
       // 记录图片信息但不输出完整base64以避免日志过大
-      if (image) {
-        const imgPrefix = image.substring(0, 30);
-        const imgLength = image.length;
+      if (processedImage) {
+        const imgPrefix = processedImage.substring(0, 30);
+        const imgLength = processedImage.length;
         console.log(`- 图片数据: ${imgPrefix}... (长度: ${imgLength}字符)`);
       } else {
         console.log(`- 图片数据: 无`);
@@ -272,6 +315,11 @@ export default function useImageGeneration(
         },
         body: JSON.stringify(requestData),
       });
+      
+      // 检查响应状态
+      if (response.status === 413) {
+        throw new Error('图片尺寸过大，请使用较小的图片或降低图片质量');
+      }
       
       const data = await response.json().catch(err => {
         console.error('[useImageGeneration] 解析创建任务响应失败:', err);

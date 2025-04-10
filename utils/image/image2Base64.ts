@@ -43,32 +43,94 @@ export function addBase64Prefix(base64String: string): string {
 }
 
 /**
- * 估算base64编码数据大小
- * @param base64String base64编码字符串
- * @returns 估算的字节大小
+ * 估算base64编码图片的大小（KB）
+ * @param base64String base64编码的图片
+ * @returns 估算大小（KB）
  */
 export function estimateBase64Size(base64String: string): number {
-    // 提取base64数据部分
-    const base64Data = base64String.includes('base64,') 
-        ? base64String.split('base64,')[1] 
-        : base64String;
-    
-    // 计算大小（每4个base64字符表示3个字节）
-    return (base64Data.length * 3) / 4;
+    try {
+        // 移除base64前缀
+        const base64 = base64String.includes(',') 
+            ? base64String.split(',')[1] 
+            : base64String;
+        
+        // base64编码会将3字节数据编码为4字节
+        // 所以实际大小约为编码大小的3/4
+        return Math.ceil((base64.length * 3) / 4 / 1024);
+    } catch (error) {
+        console.error('估算base64大小出错:', error);
+        return 0; // 出错时返回0
+    }
 }
 
 /**
- * 浏览器环境中将File对象转换为base64
- * @param file 文件对象
- * @returns Promise，解析为base64编码的data:URL
+ * 将URL图片转换为base64
+ * @param imageUrl 图片URL
+ * @returns Promise<string> base64字符串
+ */
+export async function urlToBase64(imageUrl: string): Promise<string> {
+    try {
+        // 获取图片
+        const response = await fetch(imageUrl);
+        const blob = await response.blob();
+        
+        // 转换为base64
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onloadend = () => {
+                const base64String = reader.result as string;
+                resolve(base64String);
+            };
+            reader.onerror = reject;
+            reader.readAsDataURL(blob);
+        });
+    } catch (error) {
+        console.error('URL转base64失败:', error);
+        throw error;
+    }
+}
+
+/**
+ * 将File对象转换为base64
+ * @param file File对象
+ * @returns Promise<string> base64字符串
  */
 export function fileToBase64(file: File): Promise<string> {
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
+        reader.onloadend = () => {
+            const base64String = reader.result as string;
+            resolve(base64String);
+        };
+        reader.onerror = reject;
         reader.readAsDataURL(file);
-        reader.onload = () => resolve(reader.result as string);
-        reader.onerror = error => reject(error);
     });
+}
+
+/**
+ * 检查图片大小是否超过限制
+ * @param base64String base64编码的图片
+ * @param maxSizeKB 最大大小（KB）
+ * @returns 是否超过限制
+ */
+export function isImageTooLarge(base64String: string, maxSizeKB: number): boolean {
+    const size = estimateBase64Size(base64String);
+    return size > maxSizeKB;
+}
+
+/**
+ * 获取图片类型
+ * @param base64String base64编码的图片
+ * @returns 图片MIME类型
+ */
+export function getImageType(base64String: string): string {
+    try {
+        const matches = base64String.match(/^data:([a-zA-Z0-9]+\/[a-zA-Z0-9-.+]+);base64,/);
+        return matches ? matches[1] : 'image/jpeg'; // 默认为JPEG
+    } catch (error) {
+        console.error('获取图片类型出错:', error);
+        return 'image/jpeg'; // 默认为JPEG
+    }
 }
 
 /**
