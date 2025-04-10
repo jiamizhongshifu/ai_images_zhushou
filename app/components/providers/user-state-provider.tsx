@@ -73,7 +73,7 @@ export function UserStateProvider({ children }: UserStateProviderProps) {
     try {
       // 防止短时间内多次重复调用
       const now = Date.now();
-      if (!forceRefresh && (refreshingRef.current || now - lastFetchTime < 2000)) {
+      if (!forceRefresh && (refreshingRef.current || now - lastFetchTime < 5000)) {
         console.log('[UserStateProvider] 跳过短时间内的重复请求');
         return;
       }
@@ -82,6 +82,15 @@ export function UserStateProvider({ children }: UserStateProviderProps) {
       
       if (showLoading) {
         setLoadingWithTimeout(true);
+      }
+      
+      // 强制同步认证状态，确保使用最新状态
+      try {
+        // 导入方式，避免循环引用
+        const { forceSyncAuthState } = await import('@/utils/auth-service');
+        forceSyncAuthState();
+      } catch (e) {
+        console.warn('[UserStateProvider] 强制同步认证状态失败:', e);
       }
       
       // 检查认证状态
@@ -96,8 +105,24 @@ export function UserStateProvider({ children }: UserStateProviderProps) {
         return;
       }
       
-      // 直接调用API获取积分，不经过creditService
+      // 直接调用API获取积分，不经过creditService，使用本地缓存机制
       try {
+        // 检查缓存，避免频繁请求
+        const cacheKey = `credits_cache_${forceRefresh ? 'force' : 'normal'}`;
+        const cachedData = sessionStorage.getItem(cacheKey);
+        const cacheTime = parseInt(sessionStorage.getItem(`${cacheKey}_time`) || '0', 10);
+        
+        // 如果缓存有效且未强制刷新，使用缓存数据
+        if (!forceRefresh && cachedData && now - cacheTime < 30000) {
+          const parsedCredits = parseInt(cachedData, 10);
+          if (!isNaN(parsedCredits)) {
+            console.log(`[UserStateProvider] 使用缓存的积分数据: ${parsedCredits}`);
+            setCredits(parsedCredits);
+            setLastFetchTime(now);
+            return;
+          }
+        }
+        
         console.log('[UserStateProvider] 直接调用API获取用户积分，强制刷新:', forceRefresh);
         const response = await fetch(`/api/credits/get${forceRefresh ? '?force=1' : ''}`, {
           method: 'GET',
@@ -111,33 +136,49 @@ export function UserStateProvider({ children }: UserStateProviderProps) {
         if (response.ok) {
           const data = await response.json();
           if (data.success && typeof data.credits === 'number') {
+            // 更新状态和缓存
             setCredits(data.credits);
-            setLastFetchTime(Date.now());
+            setLastFetchTime(now);
+            
+            // 保存到会话缓存
+            try {
+              sessionStorage.setItem(cacheKey, data.credits.toString());
+              sessionStorage.setItem(`${cacheKey}_time`, now.toString());
+            } catch (e) {
+              console.warn('[UserStateProvider] 保存积分到缓存失败:', e);
+            }
+            
             console.log(`[UserStateProvider] 成功获取用户积分: ${data.credits}`);
           } else {
             console.warn('[UserStateProvider] API返回成功但无效数据:', data);
             // 如果API返回成功但数据无效，尝试使用creditService
             const userCredits = await creditService.fetchCredits(forceRefresh);
-            setCredits(userCredits);
-            setLastFetchTime(Date.now());
-            console.log(`[UserStateProvider] 通过creditService成功获取用户积分: ${userCredits}`);
+            if (userCredits !== null) {
+              setCredits(userCredits);
+              setLastFetchTime(now);
+              console.log(`[UserStateProvider] 通过creditService成功获取用户积分: ${userCredits}`);
+            }
           }
         } else {
           console.warn('[UserStateProvider] API请求失败:', response.status);
           // 如果API请求失败，尝试使用creditService
           const userCredits = await creditService.fetchCredits(forceRefresh);
-          setCredits(userCredits);
-          setLastFetchTime(Date.now());
-          console.log(`[UserStateProvider] 通过creditService成功获取用户积分: ${userCredits}`);
+          if (userCredits !== null) {
+            setCredits(userCredits);
+            setLastFetchTime(now);
+            console.log(`[UserStateProvider] 通过creditService成功获取用户积分: ${userCredits}`);
+          }
         }
       } catch (apiError) {
         console.error('[UserStateProvider] 直接调用API获取积分失败:', apiError);
         // API调用失败时，使用creditService
         try {
           const userCredits = await creditService.fetchCredits(forceRefresh);
-          setCredits(userCredits);
-          setLastFetchTime(Date.now());
-          console.log(`[UserStateProvider] 使用备用方法获取用户积分: ${userCredits}`);
+          if (userCredits !== null) {
+            setCredits(userCredits);
+            setLastFetchTime(now);
+            console.log(`[UserStateProvider] 使用备用方法获取用户积分: ${userCredits}`);
+          }
         } catch (fallbackError) {
           console.error('[UserStateProvider] 备用获取积分方法也失败:', fallbackError);
           // 如果之前有积分数据，保持不变；否则设置为0

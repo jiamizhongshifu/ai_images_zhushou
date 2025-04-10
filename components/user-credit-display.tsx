@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Coins, PlusCircle, Loader2, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import CreditRechargeDialog from "@/components/payment/credit-recharge-dialog";
@@ -8,7 +8,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import { useUserState } from '@/app/components/providers/user-state-provider';
-import { authService } from '@/utils/auth-service';
+import { authService, forceSyncAuthState } from '@/utils/auth-service';
 import { fetchCredits } from '@/utils/credit-service';
 import { limitRequest, REQUEST_KEYS } from '@/utils/request-limiter';
 
@@ -23,6 +23,7 @@ export function UserCreditDisplay({ className }: UserCreditDisplayProps) {
   const [localCredits, setLocalCredits] = useState<number | null>(null);
   const [showCreditRechargeDialog, setShowCreditRechargeDialog] = useState(false);
   const [localLoading, setLocalLoading] = useState(false);
+  const [authChecked, setAuthChecked] = useState(false);
   
   // 使用ref而非state存储控制数据，避免触发重新渲染
   const lastRefreshTimeRef = useRef<number>(0);
@@ -32,12 +33,18 @@ export function UserCreditDisplay({ className }: UserCreditDisplayProps) {
   
   // 配置常量 - 使用较长的时间减少请求
   const REFRESH_COOLDOWN = 15000; // 15秒冷却时间
-  const MAX_REFRESH_ATTEMPTS = 3; // 最大尝试次数降低到3次
+  const MAX_REFRESH_ATTEMPTS = 5; // 增加最大尝试次数
   
   // 获取积分的安全方法，使用请求限制器
-  const fetchCreditsWithLimit = async (force: boolean = false): Promise<number | null> => {
+  const fetchCreditsWithLimit = useCallback(async (force: boolean = false): Promise<number | null> => {
     try {
-      if (!isAuthenticated) return null;
+      // 强制同步认证状态，确保组件拥有最新的认证信息
+      forceSyncAuthState();
+      
+      if (!authService.isAuthenticated()) {
+        console.log('[UserCreditDisplay] 用户未认证，不获取积分');
+        return null;
+      }
       
       // 使用请求限制器，复用进行中的请求并限制频率
       return await limitRequest(
@@ -54,10 +61,10 @@ export function UserCreditDisplay({ className }: UserCreditDisplayProps) {
       console.error('[UserCreditDisplay] 获取积分失败:', error);
       return null;
     }
-  };
+  }, [localCredits, credits]);
   
   // 处理刷新按钮点击 - 保持原有实现，但增加安全检查
-  const handleRefresh = async () => {
+  const handleRefresh = useCallback(async () => {
     const now = Date.now();
     if (now - lastRefreshTimeRef.current < REFRESH_COOLDOWN) {
       console.log('[UserCreditDisplay] 刷新频率过快，跳过此次请求');
@@ -69,6 +76,15 @@ export function UserCreditDisplay({ className }: UserCreditDisplayProps) {
     lastRefreshTimeRef.current = now;
     
     try {
+      // 强制同步认证状态
+      forceSyncAuthState();
+      
+      if (!authService.isAuthenticated()) {
+        console.log('[UserCreditDisplay] 刷新时检测到用户未认证');
+        setLocalCredits(null);
+        return;
+      }
+      
       const result = await fetchCreditsWithLimit(true);
       if (result !== null) {
         // 只在真正获取到新数据时更新本地状态
@@ -82,18 +98,63 @@ export function UserCreditDisplay({ className }: UserCreditDisplayProps) {
     } finally {
       setLocalLoading(false);
     }
-  };
+  }, [fetchCreditsWithLimit, refreshUserState]);
   
   // 处理充值按钮点击 - 保持不变
-  const handleRecharge = () => {
+  const handleRecharge = useCallback(() => {
     console.log('[UserCreditDisplay] 用户点击充值按钮');
     setShowCreditRechargeDialog(true);
-  };
+  }, []);
   
-  // 组件挂载后初始化 - 优化为单一useEffect
+  // 检测认证状态变化
   useEffect(() => {
-    if (!isAuthenticated) {
-      setLocalCredits(null);
+    console.log('[UserCreditDisplay] 设置认证状态监听');
+    
+    // 强制同步认证状态，确保组件拥有最新的认证信息
+    forceSyncAuthState();
+    setAuthChecked(true);
+    
+    // 添加认证状态变化监听
+    const unsubscribe = authService.subscribe((state) => {
+      console.log('[UserCreditDisplay] 认证状态变化:', state.isAuthenticated);
+      
+      if (state.isAuthenticated) {
+        if (!authChangedRef.current) {
+          authChangedRef.current = true;
+          console.log('[UserCreditDisplay] 检测到用户登录，立即获取积分');
+          
+          // 登录后立即尝试获取积分
+          setTimeout(() => {
+            fetchCreditsWithLimit(true)
+              .then(result => {
+                if (result !== null) {
+                  setLocalCredits(result);
+                }
+              })
+              .catch(error => {
+                console.error('[UserCreditDisplay] 认证状态变化后获取积分失败:', error);
+              });
+          }, 1000); // 短暂延迟确保认证状态已完全更新
+        }
+      } else {
+        // 退出登录时清空积分
+        setLocalCredits(null);
+        authChangedRef.current = false;
+      }
+    });
+    
+    return () => {
+      unsubscribe();
+    };
+  }, [fetchCreditsWithLimit]);
+  
+  // 首次加载和认证状态变化时获取积分
+  useEffect(() => {
+    if (!isAuthenticated || !authChecked) {
+      // 如果未认证或认证状态未检查，不获取积分
+      if (localCredits !== null) {
+        setLocalCredits(null);
+      }
       return;
     }
     
@@ -153,7 +214,7 @@ export function UserCreditDisplay({ className }: UserCreditDisplayProps) {
       
       initializeCredits();
     }
-  }, [isAuthenticated, credits, refreshUserState]);
+  }, [isAuthenticated, credits, refreshUserState, fetchCreditsWithLimit, authChecked]);
   
   // 监听全局积分变化
   useEffect(() => {
@@ -166,7 +227,7 @@ export function UserCreditDisplay({ className }: UserCreditDisplayProps) {
   // 渲染组件 - 优先使用本地积分，并简化刷新逻辑
   return (
     <div className={cn("flex items-center gap-1", className)}>
-      {isAuthenticated && (
+      {authService.isAuthenticated() && (
         <>
           <div className="flex items-center gap-1 text-sm">
             <Coins className="text-primary h-4 w-4" />

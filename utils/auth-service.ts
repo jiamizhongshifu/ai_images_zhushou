@@ -32,6 +32,7 @@ const DEFAULT_AUTH_STATE: AuthState = {
 const AUTH_STATE_KEY = 'auth_state_persistent';
 const AUTH_VALID_KEY = 'auth_valid';
 const AUTH_TIME_KEY = 'auth_time';
+const SESSION_STATE_KEY = 'session_state';
 
 // 为认证状态添加缓存
 const AUTH_CACHE_KEY = 'auth_state';
@@ -243,44 +244,39 @@ class AuthService {
   private async initAuthState(): Promise<void> {
     try {
       this.isInitializing = true;
-      // 先尝试从localStorage获取持久化的状态
+      
+      // 首先检查是否存在持久化的认证状态
       if (typeof window !== 'undefined') {
         try {
-          // 尝试获取持久化的认证状态
+          // 检查localStorage中的认证状态
           const persistedState = localStorage.getItem(AUTH_STATE_KEY);
           if (persistedState) {
-            const parsed = JSON.parse(persistedState);
-            if (parsed && parsed.isAuthenticated) {
-              console.log('[AuthService] 从持久化存储恢复认证状态');
-              memoryAuthState.isAuthenticated = true;
-              
-              // 同时尝试设置一个临时标记到sessionStorage
-              try {
-                sessionStorage.setItem('temp_auth_state', 'true');
-              } catch (e) {
-                console.warn('[AuthService] 无法设置临时会话标记', e);
+            try {
+              const parsedState = JSON.parse(persistedState);
+              if (parsedState && parsedState.isAuthenticated) {
+                console.log('[AuthService] 从持久化存储恢复认证状态');
+                // 立即更新内存状态，确保页面加载时已有认证状态
+                this.setAuthState({
+                  isAuthenticated: true,
+                  lastAuthTime: Date.now()
+                });
               }
-              
-              // 触发认证状态变更事件
-              this.notifySubscribers();
-              return;
+            } catch (e) {
+              console.warn('[AuthService] 解析持久化认证状态失败:', e);
             }
           }
           
-          // 尝试从sessionStorage获取临时标记
-          try {
-            const tempAuth = sessionStorage.getItem('temp_auth_state');
-            if (tempAuth === 'true') {
-              console.log('[AuthService] 从临时会话存储恢复认证状态');
-              memoryAuthState.isAuthenticated = true;
-              this.notifySubscribers();
-              return;
-            }
-          } catch (e) {
-            console.warn('[AuthService] 无法读取临时会话标记', e);
+          // 检查sessionStorage中的临时会话状态
+          const sessionState = sessionStorage.getItem(SESSION_STATE_KEY);
+          if (sessionState === 'true' && !memoryAuthState.isAuthenticated) {
+            console.log('[AuthService] 从会话存储恢复认证状态');
+            this.setAuthState({
+              isAuthenticated: true,
+              lastAuthTime: Date.now()
+            });
           }
         } catch (e) {
-          console.error('[AuthService] 访问存储出错:', e);
+          console.warn('[AuthService] 检查持久化认证状态失败:', e);
         }
       }
       
@@ -468,68 +464,81 @@ class AuthService {
   }
 
   /**
-   * 设置认证状态
+   * 设置认证状态并通知订阅者
    */
   private setAuthState(partialState: Partial<AuthState>): void {
-    try {
-      // 更新内存状态
-      const newState: AuthState = {
-        ...memoryAuthState,
-        ...partialState,
-        lastAuthTime: Date.now() // 总是更新时间戳
-      };
-      
-      memoryAuthState = newState;
-      
-      // 尝试持久化存储
+    memoryAuthState = {
+      ...memoryAuthState,
+      ...partialState
+    };
+    
+    // 如果设置为已认证状态，同时保存到持久化存储
+    if (partialState.isAuthenticated === true) {
       try {
-        const stateJson = JSON.stringify(newState);
-        storage.setItem(AUTH_STATE_KEY, stateJson);
+        // 保存到localStorage以便在页面刷新后恢复
+        localStorage.setItem(AUTH_STATE_KEY, JSON.stringify({
+          isAuthenticated: true,
+          timestamp: Date.now()
+        }));
         
-        // 更新缓存有效性标记
-        storage.setItem(AUTH_CACHE_VALID_KEY, 'true');
-        storage.setItem(AUTH_CACHE_TIME_KEY, Date.now().toString());
-      } catch (storageError) {
-        console.warn('[AuthService] 持久化存储认证状态失败:', storageError);
+        // 同时保存到sessionStorage作为备份
+        sessionStorage.setItem(SESSION_STATE_KEY, 'true');
+        
+        console.log('[AuthService] 已将认证状态保存到持久化存储');
+      } catch (e) {
+        console.warn('[AuthService] 保存认证状态到持久化存储失败:', e);
       }
-      
-      // 通知订阅者
-      this.notifySubscribers();
-    } catch (error) {
-      console.error('[AuthService] 设置认证状态时出错:', error);
+    } else if (partialState.isAuthenticated === false) {
+      // 如果设置为未认证状态，清除持久化存储
+      try {
+        localStorage.removeItem(AUTH_STATE_KEY);
+        sessionStorage.removeItem(SESSION_STATE_KEY);
+        console.log('[AuthService] 已清除持久化存储中的认证状态');
+      } catch (e) {
+        console.warn('[AuthService] 清除持久化存储中的认证状态失败:', e);
+      }
     }
+    
+    // 通知所有订阅者
+    this.notifySubscribers();
   }
 
   /**
    * 清除认证状态
    */
   public clearAuthState(): boolean {
-    console.log('[AuthService] 清除认证状态');
-    
     try {
-      if (this.isClientSide()) {
-        // 清除所有相关存储
+      // 先清除内存状态
+      memoryAuthState = { ...DEFAULT_AUTH_STATE };
+      
+      // 清除所有持久化存储
+      try {
         localStorage.removeItem(AUTH_STATE_KEY);
-        localStorage.setItem('force_logged_out', 'true');
+        sessionStorage.removeItem(SESSION_STATE_KEY);
+        localStorage.removeItem(AUTH_VALID_KEY);
+        localStorage.removeItem(AUTH_TIME_KEY);
+        sessionStorage.removeItem(AUTH_VALID_KEY);
+        sessionStorage.removeItem(AUTH_TIME_KEY);
         
-        try {
-          sessionStorage.removeItem('temp_auth_state');
-          sessionStorage.setItem('isLoggedOut', 'true');
-        } catch (e) {
-          console.warn('[AuthService] 清除会话存储出错:', e);
-        }
+        // 清除可能存在的其他认证相关存储
+        localStorage.removeItem('sb-auth-token-persistent');
+        sessionStorage.removeItem('sb-auth-token');
+        
+        // 设置登出标记
+        localStorage.setItem('force_logged_out', 'true');
+        sessionStorage.setItem('isLoggedOut', 'true');
+      } catch (e) {
+        console.warn('[AuthService] 清除持久化存储失败:', e);
       }
-    } catch (e) {
-      console.error('[AuthService] 清除认证状态出错:', e);
-    }
-    
-    // 然后更新内存中的状态
-    if (memoryAuthState.isAuthenticated) {
-      memoryAuthState.isAuthenticated = false;
+      
+      // 通知所有订阅者
       this.notifySubscribers();
+      
+      return true;
+    } catch (error) {
+      console.error('[AuthService] 清除认证状态失败:', error);
+      return false;
     }
-    
-    return true;
   }
 
   /**
@@ -934,6 +943,112 @@ class AuthService {
       return false;
     }
   }
+
+  /**
+   * 强制同步认证状态
+   * 用于解决组件间认证状态不同步的问题
+   */
+  public forceSyncAuthState(): void {
+    console.log('[AuthService] 强制同步认证状态');
+    
+    // 检查本地存储状态
+    try {
+      const persistedState = localStorage.getItem(AUTH_STATE_KEY);
+      const sessionState = sessionStorage.getItem(SESSION_STATE_KEY);
+      
+      if ((persistedState && JSON.parse(persistedState).isAuthenticated) || sessionState === 'true') {
+        // 本地存储显示已登录，但内存状态可能不同步
+        if (!memoryAuthState.isAuthenticated) {
+          console.log('[AuthService] 本地存储显示已登录，但内存状态未同步，正在更新');
+          this.setAuthState({
+            isAuthenticated: true,
+            lastAuthTime: Date.now()
+          });
+        }
+      } else {
+        // 本地存储显示未登录，但内存状态可能仍显示登录
+        if (memoryAuthState.isAuthenticated) {
+          console.log('[AuthService] 本地存储显示未登录，但内存状态仍显示登录，正在更新');
+          this.setAuthState({
+            isAuthenticated: false,
+            lastAuthTime: Date.now()
+          });
+        }
+      }
+      
+      // 确保状态一致，通知所有订阅者
+      this.notifySubscribers();
+    } catch (e) {
+      console.warn('[AuthService] 强制同步认证状态失败:', e);
+    }
+  }
+
+  /**
+   * 刷新会话状态
+   */
+  public async refreshSessionStatus(): Promise<boolean> {
+    // 先检查本地存储，确保状态一致
+    this.forceSyncAuthState();
+    
+    // 如果本地存储显示未登录，则无需进行API请求
+    const persistedState = localStorage.getItem(AUTH_STATE_KEY);
+    const sessionState = sessionStorage.getItem(SESSION_STATE_KEY);
+    
+    if (!persistedState && sessionState !== 'true') {
+      console.log('[AuthService] 本地存储显示未登录，跳过会话刷新');
+      return false;
+    }
+    
+    // 继续进行正常的会话刷新流程
+    try {
+      // 如果已有刷新请求进行中，返回该请求的结果
+      if (isRefreshingSession && refreshPromise) {
+        console.log('[AuthService] 会话刷新已在进行中，复用现有请求');
+        return refreshPromise;
+      }
+      
+      isRefreshingSession = true;
+      refreshPromise = (async () => {
+        try {
+          console.log('[AuthService] 开始刷新会话状态');
+          
+          // 检查本地缓存是否有效
+          if (isAuthCacheValid()) {
+            console.log('[AuthService] 认证缓存有效，跳过API请求');
+            return memoryAuthState.isAuthenticated;
+          }
+          
+          // 通过API检查会话状态
+          const isValid = await this.checkServerSession();
+          console.log(`[AuthService] 服务器会话检查结果: ${isValid ? '有效' : '无效'}`);
+          
+          // 如果会话无效但内存状态仍为已认证，则清除认证状态
+          if (!isValid && memoryAuthState.isAuthenticated) {
+            console.log('[AuthService] 会话无效但内存状态为已认证，清除认证状态');
+            this.clearAuthState();
+            return false;
+          }
+          
+          return isValid;
+        } catch (error) {
+          console.error('[AuthService] 刷新会话状态失败:', error);
+          
+          // 保守策略：出错时不更改当前认证状态
+          return memoryAuthState.isAuthenticated;
+        } finally {
+          isRefreshingSession = false;
+          refreshPromise = null;
+        }
+      })();
+      
+      return await refreshPromise;
+    } catch (error) {
+      console.error('[AuthService] 启动会话刷新失败:', error);
+      isRefreshingSession = false;
+      refreshPromise = null;
+      return memoryAuthState.isAuthenticated;
+    }
+  }
 }
 
 // 导出单例实例
@@ -944,4 +1059,5 @@ export const isAuthenticated = () => authService.isAuthenticated();
 export const getAuthState = () => authService.getAuthState();
 export const refreshSession = () => authService.refreshSession();
 export const signOut = () => authService.signOut();
-export const clearAuthState = () => authService.clearAuthState(); 
+export const clearAuthState = () => authService.clearAuthState();
+export const forceSyncAuthState = () => authService.forceSyncAuthState(); 
