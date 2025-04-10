@@ -72,7 +72,7 @@ export function apiUnauthenticated() {
 export async function createSecureClient() {
   try {
     logger.debug("开始创建安全的Supabase客户端");
-    const cookieStore = cookies();
+    const cookieStore = await cookies();
 
     const supabase = createServerClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,

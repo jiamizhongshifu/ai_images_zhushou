@@ -20,7 +20,7 @@ export async function POST(request: NextRequest) {
       console.log('登出处理：未检测到有效会话，直接标记登出状态');
       
       // 设置登出标记cookie
-      const cookieStore = cookies();
+      const cookieStore = await cookies();
       cookieStore.set('isLoggedOut', 'true', { 
         path: '/',
         maxAge: 60 * 5, // 5分钟

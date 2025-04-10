@@ -6,7 +6,7 @@ export async function GET(request: Request) {
   console.log('[调试API] 处理认证调试请求');
   
   // 获取所有cookie
-  const cookieStore = cookies();
+  const cookieStore = await cookies();
   const allCookies = cookieStore.getAll();
   
   // 获取Supabase用户信息
