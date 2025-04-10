@@ -62,11 +62,17 @@ export default function ProtectedPage() {
     generationStage,
     generationPercentage
   } = useImageGeneration(
-    showNotification,
-    undefined,
-    () => refreshCredits(false, true),
-    () => refreshHistory(true, false)
+    showNotification
   );
+  
+  // 监听生成完成状态
+  useEffect(() => {
+    if (generationStage === 'completed') {
+      // 刷新点数和历史记录
+      refreshCredits(false, true);
+      refreshHistory(true);
+    }
+  }, [generationStage, refreshCredits, refreshHistory]);
   
   // 初始加载时同步历史记录图片到生成状态
   useEffect(() => {

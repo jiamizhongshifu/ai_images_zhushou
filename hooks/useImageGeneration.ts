@@ -38,7 +38,7 @@ type NotificationCallback = (message: string, type: 'success' | 'error' | 'info'
 export default function useImageGeneration(
   onNotify?: NotificationCallback,
   onSuccess?: (imageUrl: string) => void,
-  refreshHistory?: () => void
+  refreshHistory?: () => void | Promise<void>
 ): UseImageGenerationResult {
   const [generatedImages, setGeneratedImages] = useState<string[]>([]);
   const [status, setStatus] = useState<GenerationStatus>('idle');
@@ -165,7 +165,13 @@ export default function useImageGeneration(
                 
                 // 调用回调函数
                 await triggerCreditRefresh();
-                if (refreshHistory) refreshHistory();
+                if (refreshHistory) {
+                  const result = refreshHistory();
+                  // 如果返回Promise则等待完成
+                  if (result instanceof Promise) {
+                    await result;
+                  }
+                }
                 if (onSuccess) onSuccess(data.imageUrl);
                 
                 // 显示成功通知
