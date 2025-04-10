@@ -41,8 +41,29 @@ export function UserStateProvider({ children }: UserStateProviderProps) {
   const initialCheckDoneRef = useRef<boolean>(false);
   const pageReloadCheckRef = useRef<boolean>(false);
   const initialLoadTimeRef = useRef<number>(Date.now());
+  const loadingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   
   const supabase = createClient();
+
+  // 设置加载超时，确保加载状态不会卡住
+  const setLoadingWithTimeout = (loading: boolean) => {
+    // 清除之前的超时计时器
+    if (loadingTimeoutRef.current) {
+      clearTimeout(loadingTimeoutRef.current);
+      loadingTimeoutRef.current = null;
+    }
+    
+    if (loading) {
+      setIsLoading(true);
+      // 设置新的超时计时器，确保加载状态不会无限期地保持
+      loadingTimeoutRef.current = setTimeout(() => {
+        console.log('[UserStateProvider] 加载超时，强制重置加载状态');
+        setIsLoading(false);
+      }, 10000); // 10秒后强制结束加载状态
+    } else {
+      setIsLoading(false);
+    }
+  };
 
   // 统一获取用户信息和积分的方法
   const refreshUserState = useCallback(async (options?: { showLoading?: boolean; forceRefresh?: boolean }) => {
@@ -60,7 +81,7 @@ export function UserStateProvider({ children }: UserStateProviderProps) {
       refreshingRef.current = true;
       
       if (showLoading) {
-        setIsLoading(true);
+        setLoadingWithTimeout(true);
       }
       
       // 检查认证状态
@@ -70,31 +91,83 @@ export function UserStateProvider({ children }: UserStateProviderProps) {
       if (!currentAuthState) {
         console.log('[UserStateProvider] 用户未认证，跳过获取积分');
         setCredits(null);
-        if (showLoading) setIsLoading(false);
+        if (showLoading) setLoadingWithTimeout(false);
         refreshingRef.current = false;
         return;
       }
       
-      // 使用creditService获取积分
-      console.log('[UserStateProvider] 获取用户积分，强制刷新:', forceRefresh);
-      const userCredits = await creditService.fetchCredits(forceRefresh);
-      
-      setCredits(userCredits);
-      setLastFetchTime(Date.now());
-      
-      console.log(`[UserStateProvider] 成功获取用户积分: ${userCredits}`);
+      // 直接调用API获取积分，不经过creditService
+      try {
+        console.log('[UserStateProvider] 直接调用API获取用户积分，强制刷新:', forceRefresh);
+        const response = await fetch(`/api/credits/get${forceRefresh ? '?force=1' : ''}`, {
+          method: 'GET',
+          headers: {
+            'Cache-Control': 'no-cache',
+            'Pragma': 'no-cache'
+          },
+          credentials: 'include'
+        });
+        
+        if (response.ok) {
+          const data = await response.json();
+          if (data.success && typeof data.credits === 'number') {
+            setCredits(data.credits);
+            setLastFetchTime(Date.now());
+            console.log(`[UserStateProvider] 成功获取用户积分: ${data.credits}`);
+          } else {
+            console.warn('[UserStateProvider] API返回成功但无效数据:', data);
+            // 如果API返回成功但数据无效，尝试使用creditService
+            const userCredits = await creditService.fetchCredits(forceRefresh);
+            setCredits(userCredits);
+            setLastFetchTime(Date.now());
+            console.log(`[UserStateProvider] 通过creditService成功获取用户积分: ${userCredits}`);
+          }
+        } else {
+          console.warn('[UserStateProvider] API请求失败:', response.status);
+          // 如果API请求失败，尝试使用creditService
+          const userCredits = await creditService.fetchCredits(forceRefresh);
+          setCredits(userCredits);
+          setLastFetchTime(Date.now());
+          console.log(`[UserStateProvider] 通过creditService成功获取用户积分: ${userCredits}`);
+        }
+      } catch (apiError) {
+        console.error('[UserStateProvider] 直接调用API获取积分失败:', apiError);
+        // API调用失败时，使用creditService
+        try {
+          const userCredits = await creditService.fetchCredits(forceRefresh);
+          setCredits(userCredits);
+          setLastFetchTime(Date.now());
+          console.log(`[UserStateProvider] 使用备用方法获取用户积分: ${userCredits}`);
+        } catch (fallbackError) {
+          console.error('[UserStateProvider] 备用获取积分方法也失败:', fallbackError);
+          // 如果之前有积分数据，保持不变；否则设置为0
+          if (credits === null) {
+            setCredits(0);
+            console.log('[UserStateProvider] 设置默认积分为0');
+          }
+        }
+      }
     } catch (error) {
       console.error('[UserStateProvider] 获取用户状态失败:', error);
+      // 错误情况下如果之前没有积分数据，设为0确保UI能显示
+      if (credits === null) {
+        setCredits(0);
+      }
     } finally {
       if (showLoading) {
-        setIsLoading(false);
+        setLoadingWithTimeout(false);
       }
       // 设置延时，避免频繁重复请求
       setTimeout(() => {
         refreshingRef.current = false;
       }, 300);
+      
+      // 确保初始化状态结束
+      if (isInitializing) {
+        setIsInitializing(false);
+      }
     }
-  }, [lastFetchTime]);
+  }, [lastFetchTime, credits, isInitializing]);
   
   // 检测页面是否刚刚重新加载
   useEffect(() => {
@@ -136,6 +209,20 @@ export function UserStateProvider({ children }: UserStateProviderProps) {
       }
     }
   }, [refreshUserState]);
+  
+  // 确保加载状态不会卡住
+  useEffect(() => {
+    // 如果加载时间超过10秒，强制重置加载状态
+    const resetLoadingTimeout = setTimeout(() => {
+      if (isLoading || isInitializing) {
+        console.log('[UserStateProvider] 检测到加载状态持续时间过长，强制重置');
+        setIsLoading(false);
+        setIsInitializing(false);
+      }
+    }, 10000);
+    
+    return () => clearTimeout(resetLoadingTimeout);
+  }, [isLoading, isInitializing]);
   
   // 初始化和认证状态变化时获取数据
   useEffect(() => {
@@ -202,6 +289,12 @@ export function UserStateProvider({ children }: UserStateProviderProps) {
         console.log('[UserStateProvider] 执行延迟的积分检查');
         refreshUserState({ forceRefresh: true });
       }
+      
+      // 确保初始化状态不会卡住
+      if (isInitializing) {
+        console.log('[UserStateProvider] 初始化状态持续过长，强制结束');
+        setIsInitializing(false);
+      }
     }, 2500);
     
     return () => {
@@ -210,8 +303,13 @@ export function UserStateProvider({ children }: UserStateProviderProps) {
         clearTimeout(authChangeDebounceRef.current);
       }
       clearTimeout(delayedCheck);
+      
+      // 清理加载定时器
+      if (loadingTimeoutRef.current) {
+        clearTimeout(loadingTimeoutRef.current);
+      }
     };
-  }, [refreshUserState, credits]);
+  }, [refreshUserState, credits, isInitializing]);
   
   // 提供上下文值
   const contextValue: UserStateContextType = {

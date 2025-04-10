@@ -11,8 +11,8 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useRef, useState } from "react";
 import { createClient } from "@/utils/supabase/client";
 
-// 使用时间戳生成唯一表单ID
-const generateFormKey = () => `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+// 使用稳定的表单ID，避免服务端和客户端渲染不一致
+const LOGIN_FORM_ID = 'login-form-stable';
 
 interface LoginFormProps {
   message: Message;
@@ -28,9 +28,6 @@ export default function LoginForm({ message }: LoginFormProps) {
   
   // 表单引用，用于手动处理表单提交
   const formRef = useRef<HTMLFormElement>(null);
-  
-  // 生成唯一的表单KEY
-  const formKey = generateFormKey();
   
   // 处理登录成功后的重定向
   const redirectToProtected = () => {
@@ -129,8 +126,8 @@ export default function LoginForm({ message }: LoginFormProps) {
         return;
       }
       
-      // 添加表单key到表单数据
-      formData.append("formKey", formKey);
+      // 添加固定表单id到表单数据
+      formData.append("formKey", LOGIN_FORM_ID);
       
       console.log('[客户端登录] 准备提交登录请求');
       
@@ -170,7 +167,7 @@ export default function LoginForm({ message }: LoginFormProps) {
   return (
     <form 
       className="flex flex-col w-full space-y-6" 
-      id={`login-form-${formKey}`} 
+      id={LOGIN_FORM_ID} 
       onSubmit={handleSubmit}
     >
       <div className="flex flex-col gap-4">
