@@ -1,5 +1,5 @@
 {
-  "buildCommand": "SHARP_IGNORE_GLOBAL=true CI=true pnpm dlx sharp-cli --install && pnpm run build",
+  "buildCommand": "SHARP_IGNORE_GLOBAL=true CI=true pnpm install sharp && pnpm run build",
   "installCommand": "pnpm install --no-frozen-lockfile",
   "framework": "nextjs",
   "functions": {
