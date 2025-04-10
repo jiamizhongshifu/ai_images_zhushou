@@ -275,8 +275,8 @@ export default function ProtectedPage() {
           <CreditRechargeDialog
             isOpen={true}
             onClose={() => setShowCreditRechargeDialog(false)}
-            onSuccess={() => {
-              refreshCredits(true, false);
+            onSuccess={async () => {
+              await refreshCredits(true, false);
               showNotification("充值成功，您的积分已更新");
             }}
             credits={credits || 0}
