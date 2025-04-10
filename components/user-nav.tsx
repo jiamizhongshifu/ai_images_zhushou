@@ -268,15 +268,20 @@ export default function UserNav() {
       sessionStorage.setItem('isLoggedOut', 'true');
       sessionStorage.setItem('logoutTime', Date.now().toString());
       
-      // 7. 刷新页面，传递参数确保中间件也知道登出状态
+      // 7. 使用router保存状态并平滑跳转，而非硬刷新
       console.log('[UserNav] 登出操作完成, 页面将重定向');
-      window.location.href = '/?force_logout=true&time=' + Date.now();
+      // 可以使用状态（如sessionStorage）来存储登出信息，而不是通过URL
+      sessionStorage.setItem('force_logged_out', 'true');
+      // 将跳转参数存储在sessionStorage中，供登录页使用
+      sessionStorage.setItem('logout_timestamp', Date.now().toString());
+      // 使用router跳转避免整页刷新
+      router.push('/?logged_out=true');
     } catch (error) {
       console.error('[UserNav] 登出过程中发生错误:', error);
       alert("退出登录时发生错误");
       
-      // 即使出错也尝试重定向
-      window.location.href = '/?force_logout=true&error=true';
+      // 即使出错也尝试使用router跳转
+      router.push('/?error=logout_failed');
     } finally {
       setIsSigningOut(false);
     }
@@ -348,15 +353,14 @@ export default function UserNav() {
     });
     
     // 设置重定向URL并添加时间戳参数防止缓存
-    const currentUrl = new URL('/sign-in', window.location.origin);
-    currentUrl.searchParams.set('clear_logout_flags', 'true');
-    currentUrl.searchParams.set('t', Date.now().toString());
+    const timestamp = Date.now().toString();
     
     // 添加强制登录标记cookie
     document.cookie = 'force_login=true; path=/; max-age=3600';
     
     console.log('[UserNav] 登出标记已清除，正在跳转到登录页面');
-    window.location.href = currentUrl.toString();
+    // 使用router跳转避免整页刷新
+    router.push(`/sign-in?clear_logout_flags=true&t=${timestamp}`);
   };
   
   if (isLoading) {

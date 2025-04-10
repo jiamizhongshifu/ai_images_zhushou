@@ -53,7 +53,6 @@ export default function LoginForm({ message }: LoginFormProps) {
       // 3. 直接设置认证cookie，确保所有页面立即识别登录状态
       const cookieOptions = '; path=/; max-age=86400; SameSite=Lax';
       document.cookie = `user_authenticated=true${cookieOptions}`;
-      document.cookie = `force_login=true${cookieOptions}`;
       document.cookie = `auth_time=${loginTime}${cookieOptions}`;
       
       // 4. 清除所有登出相关cookie
@@ -62,44 +61,16 @@ export default function LoginForm({ message }: LoginFormProps) {
       document.cookie = `force_logged_out=${expireOptions}`;
       document.cookie = `isLoggedOut=${expireOptions}`;
       
-      // 5. 尝试在根域名上也清除cookie
-      try {
-        const domainParts = window.location.hostname.split('.');
-        if (domainParts.length > 1) {
-          const rootDomain = domainParts.slice(-2).join('.');
-          document.cookie = `logged_out=${expireOptions}; domain=.${rootDomain}`;
-          document.cookie = `force_logged_out=${expireOptions}; domain=.${rootDomain}`;
-        }
-      } catch (e) {
-        console.warn('[登录表单] 清除根域名cookie出错:', e);
-      }
+      // 5. 在本地而不是通过API清除登出标记，避免异步请求和页面刷新竞争
+      console.log('[登录表单] 本地清除登出标记，不再调用API');
       
-      // 6. 使用完整URL调用API清除服务器端登出标记
-      const apiBaseUrl = window.location.origin;
-      fetch(`${apiBaseUrl}/api/auth/clear-logout-flags`, {
-        method: 'POST',
-        headers: {
-          'Cache-Control': 'no-cache, no-store',
-          'Pragma': 'no-cache'
-        },
-        credentials: 'include' // 确保包含cookie
-      }).then(response => {
-        if (response.ok) {
-          console.log('[登录表单] 服务器端登出标记清除成功');
-        } else {
-          console.warn('[登录表单] 服务器端登出标记清除失败');
-        }
-      }).catch(error => {
-        console.error('[登录表单] 清除服务器端登出标记出错:', error);
-      });
-      
-      // 7. 检查Supabase会话状态
+      // 6. 检查Supabase会话状态
       const supabase = createClient();
       supabase.auth.getSession().then(({ data }) => {
         if (data.session) {
           console.log('[登录表单] 验证Supabase会话有效');
         } else {
-          console.warn('[登录表单] 未检测到有效Supabase会话，将通过URL参数强制登录');
+          console.warn('[登录表单] 未检测到有效Supabase会话');
         }
       }).catch(e => {
         console.error('[登录表单] 检查Supabase会话出错:', e);
@@ -108,29 +79,27 @@ export default function LoginForm({ message }: LoginFormProps) {
       console.warn('[登录表单] 设置认证状态失败:', error);
     }
     
-    // 确定重定向目标，添加更多参数确保认证状态正确传递
-    let redirectTarget = `/protected?just_logged_in=true&login_time=${loginTime}&clear_logout_flags=true&force_login=true&auth_init=true`;
+    // 确定重定向目标，简化URL参数
+    // 使用auth_session参数代替auth_time，更简洁
+    let redirectTarget = `/protected?auth_session=${loginTime}`;
     
     // 如果存在重定向参数，优先使用该参数
     if (redirectParam) {
       // 检查是否为受保护路径，需要添加登录参数
       if (redirectParam.startsWith('/protected')) {
-        redirectTarget = `${redirectParam}?just_logged_in=true&login_time=${loginTime}&force_login=true&auth_init=true`;
+        redirectTarget = `${redirectParam}?auth_session=${loginTime}`;
       } else {
-        // 非受保护路径，直接跳转但仍添加认证参数
-        redirectTarget = `${redirectParam}?force_login=true&login_time=${loginTime}`;
+        // 非受保护路径，直接跳转但仍添加时间参数用于追踪
+        redirectTarget = `${redirectParam}?auth_session=${loginTime}`;
       }
       console.log(`[登录表单] 使用自定义重定向目标: ${redirectTarget}`);
     } else {
       console.log(`[登录表单] 使用默认保护页面重定向: ${redirectTarget}`);
     }
     
-    // 等待较长时间确保设置操作完成
-    setTimeout(() => {
-      console.log('[登录表单] 重定向开始');
-      // 使用window.location进行完全页面刷新，避免Next.js客户端路由可能的问题
-      window.location.href = redirectTarget;
-    }, 1200); // 增加等待时间到1200ms
+    // 使用Router.push代替window.location.href，避免整页刷新
+    console.log('[登录表单] 使用router.push进行客户端导航');
+    router.push(redirectTarget);
   };
 
   // 处理表单提交

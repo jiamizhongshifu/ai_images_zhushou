@@ -9,7 +9,7 @@ import { buttonVariants } from "@/components/ui/button";
 import { authService, clearAuthState } from "@/utils/auth-service";
 import { createClient } from "@/utils/supabase/client";
 import UserCreditDisplay from "@/components/user-credit-display";
-import { creditService, resetCreditsState } from '@/utils/credit-service';
+import { creditService, resetCreditsState, CREDIT_EVENTS } from '@/utils/credit-service';
 import { buildRelativeUrl } from '@/utils/url';
 import Image from 'next/image';
 import { Button } from '@/components/ui/button';
@@ -202,6 +202,7 @@ export function MainNav({ providedAuthState }: MainNavProps) {
             if (event === 'SIGNED_OUT' && isMounted) {
               setAuthStateLocked(false);
               setIsAuthenticated(false);
+              setCredits(null);
               return;
             }
             
@@ -228,9 +229,27 @@ export function MainNav({ providedAuthState }: MainNavProps) {
               setUserEmail(session?.user?.email || null);
             }
             
-            // 如果用户登录，尝试获取积分
+            // 如果用户登录，通过集中式creditService处理点数获取，避免各组件独立请求
             if (newIsAuthenticated && isMounted) {
-              fetchCredits();
+              // 不直接调用fetchCredits，而是通过creditService获取
+              console.log('[MainNav] 认证状态变化，等待creditService获取点数');
+              
+              // 订阅creditService状态变化，确保点数显示同步
+              const unsubscribe = creditService.subscribe((state) => {
+                if (state.credits !== null) {
+                  console.log('[MainNav] 从creditService获取到点数:', state.credits);
+                  setCredits(state.credits);
+                  // 已获取到点数后取消订阅
+                  unsubscribe();
+                }
+              });
+              
+              // 简单延迟后触发点数获取，确保认证已完成
+              setTimeout(() => {
+                creditService.fetchCredits(true).catch(error => {
+                  console.error('[MainNav] creditService获取点数失败:', error);
+                });
+              }, 1000);
             }
           }
         );
@@ -263,155 +282,177 @@ export function MainNav({ providedAuthState }: MainNavProps) {
     };
   }, [providedAuthState, supabase, authStateLocked]);
   
-  // 获取用户积分
-  const fetchCredits = useCallback(async () => {
+  // 替换为简化的获取点数方法，只通过creditService获取
+  const fetchCredits = useCallback(async (force = false) => {
+    if (!authService.isAuthenticated()) {
+      console.log('[MainNav] fetchCredits: 用户未认证，跳过获取点数');
+      return;
+    }
+    
+    console.log('[MainNav] fetchCredits: 通过creditService获取点数');
     try {
-      console.log('[MainNav] fetchCredits: 尝试获取用户积分 (前提: 已认证)');
-      const creditsResponse = await fetch('/api/credits/get', {
-        headers: { 'Cache-Control': 'no-cache' }
-      });
-      if (creditsResponse.ok) {
-        const creditsData = await creditsResponse.json();
-        console.log('[MainNav] fetchCredits: API响应:', JSON.stringify(creditsData));
-        if (creditsData.success && typeof creditsData.credits === 'number') {
-          setCredits(creditsData.credits);
-          console.log(`[MainNav] fetchCredits: 成功获取积分: ${creditsData.credits}`);
-        } else {
-          console.error('[MainNav] fetchCredits: 无法从响应中提取积分值，设为0');
-          setCredits(0);
-        }
-      } else {
-        console.error('[MainNav] fetchCredits: 获取积分失败:', creditsResponse.status);
-        
-        // 增强错误处理：401未授权错误时，需要更新认证状态
-        if (creditsResponse.status === 401) {
-          console.warn('[MainNav] fetchCredits: 收到401未授权响应，更新认证状态为未登录');
-          setIsAuthenticated(false);
-          setAuthStateLocked(false);
-          setCredits(null);
-          
-          // 清除所有认证相关的状态标记
-          // 1. 清除cookie
-          const cookiesToClear = [
-            'user_authenticated', 
-            'sb-access-token', 
-            'sb-refresh-token', 
-            '__session',
-            'force_login'
-          ];
-          
-          cookiesToClear.forEach(name => {
-            document.cookie = `${name}=; path=/; max-age=0; expires=Thu, 01 Jan 1970 00:00:00 GMT`;
-          });
-          
-          // 2. 设置登出标记
-          localStorage.setItem('force_logged_out', 'true');
-          sessionStorage.setItem('isLoggedOut', 'true');
-          
-          // 3. 清除其他认证标记
-          localStorage.removeItem('wasAuthenticated');
-          localStorage.removeItem('auth_time');
-          localStorage.removeItem('auth_state');
-          localStorage.removeItem('auth_valid');
-          sessionStorage.removeItem('activeAuth');
-          
-          // 4. 调用认证服务清除状态
-          try {
-            if (authService) {
-              console.log('[MainNav] fetchCredits: 调用认证服务清除状态');
-              authService.clearAuthState();
-            }
-          } catch (authError) {
-            console.error('[MainNav] fetchCredits: 调用认证服务清除状态失败:', authError);
-          }
-          
-          // 5. 尝试调用登出API完成服务端登出
-          try {
-            console.log('[MainNav] fetchCredits: 尝试调用登出API');
-            fetch('/api/auth/signout', {
-              method: 'POST',
-              headers: { 'Cache-Control': 'no-cache' }
-            }).catch(apiError => {
-              console.error('[MainNav] fetchCredits: 调用登出API失败:', apiError);
-            });
-          } catch (apiError) {
-            console.error('[MainNav] fetchCredits: 准备调用登出API时出错:', apiError);
-          }
-          
-          console.warn('[MainNav] fetchCredits: 检测到认证状态不同步，已同步清除所有认证状态');
-        } else {
-          // 非401错误，只设置积分为0但不修改认证状态
-          setCredits(0);
-        }
-      }
+      const result = await creditService.fetchCredits(force);
+      console.log('[MainNav] fetchCredits: creditService返回点数:', result);
     } catch (error) {
-      console.error('[MainNav] fetchCredits: 获取积分异常:', error);
-      setCredits(0);
+      console.error('[MainNav] fetchCredits: 通过creditService获取点数失败:', error);
     }
   }, []);
   
-  // API检查认证状态
+  // 添加对creditService状态的订阅
+  useEffect(() => {
+    console.log('[MainNav] 设置creditService订阅');
+    
+    // 订阅点数状态
+    const unsubscribe = creditService.subscribe((state) => {
+      console.log('[MainNav] creditService状态更新:', state);
+      if (state.credits !== null) {
+        setCredits(state.credits);
+      } else if (!isAuthenticated) {
+        // 确保未认证状态时点数为null
+        setCredits(null);
+      }
+    });
+    
+    // 订阅点数变化事件
+    const unsubscribeEvent = creditService.onEvent(CREDIT_EVENTS.CREDITS_CHANGED, (state) => {
+      console.log('[MainNav] 收到点数变化事件:', state);
+      if (state.credits !== null) {
+        setCredits(state.credits);
+      }
+    });
+    
+    // 刷新初始状态
+    if (authService.isAuthenticated() && !isInitialAuthLoading) {
+      // 使用短超时确保组件已完全挂载
+      setTimeout(() => {
+        console.log('[MainNav] 初始订阅后立即获取点数');
+        creditService.fetchCredits(true).catch(e => 
+          console.error('[MainNav] 初始获取点数失败:', e)
+        );
+      }, 500);
+    }
+    
+    return () => {
+      unsubscribe();
+      unsubscribeEvent();
+    };
+  }, [isAuthenticated, isInitialAuthLoading]);
+  
+  // 添加对认证状态变化的特殊处理
+  useEffect(() => {
+    const handleAuthChange = (state) => {
+      console.log('[MainNav] 认证状态变化处理函数执行, 认证状态:', state.isAuthenticated);
+      
+      if (state.isAuthenticated) {
+        console.log('[MainNav] 用户已认证，延迟获取点数');
+        // 确保有足够延迟让认证状态完全同步
+        setTimeout(() => {
+          // 强制更新点数
+          console.log('[MainNav] 认证状态变化后延迟获取点数');
+          creditService.fetchCredits(true).catch(e => 
+            console.error('[MainNav] 认证状态变化后获取点数失败:', e)
+          );
+        }, 1500); // 使用更长的延迟
+      } else if (!state.isAuthenticated) {
+        // 未认证时重置点数显示
+        console.log('[MainNav] 用户未认证，重置点数状态');
+        setCredits(null);
+      }
+    };
+    
+    // 订阅认证状态变化
+    const unsubscribe = authService.subscribe(handleAuthChange);
+    
+    return () => {
+      unsubscribe();
+    };
+  }, []);
+  
+  // 在页面可见性变化时刷新点数
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible' && authService.isAuthenticated()) {
+        console.log('[MainNav] 页面变为可见，刷新点数');
+        creditService.fetchCredits(true).catch(e => 
+          console.error('[MainNav] 页面可见性变化后获取点数失败:', e)
+        );
+      }
+    };
+    
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, []);
+  
+  // 监听路径变化时刷新点数
+  useEffect(() => {
+    if (isAuthenticated && !isInitialAuthLoading) {
+      console.log(`[MainNav] 路径变化 (${pathname})，刷新点数`);
+      // 延迟获取，确保路由变化完成
+      const timer = setTimeout(() => {
+        creditService.fetchCredits(true).catch(e => 
+          console.error('[MainNav] 路径变化后获取点数失败:', e)
+        );
+      }, 1000);
+      
+      return () => clearTimeout(timer);
+    }
+  }, [pathname, isAuthenticated, isInitialAuthLoading]);
+  
+  // 用于API检查认证状态的函数仍然保留，不再主动获取点数
   const checkAuthState = useCallback(async (isInitialCheck = false) => {
     console.log(`[MainNav] checkAuthState: ${isInitialCheck ? '初始检查' : '后续检查'} Supabase会话...`);
     try {
-      // **Always** check the Supabase session as the source of truth
       const { data, error } = await supabase.auth.getSession();
 
       if (error) {
         console.error('[MainNav] checkAuthState: 获取会话失败:', error.message);
-        // Treat session fetch error as logged out
         setIsAuthenticated(false);
         setAuthStateLocked(false);
         setCredits(null);
         
-        // 确保清理所有可能的认证标记
         if (isInitialCheck) {
-          console.log('[MainNav] checkAuthState: 初始检查时会话获取失败，清理所有认证标记');
           document.cookie = 'user_authenticated=; path=/; max-age=0';
           localStorage.removeItem('wasAuthenticated');
           sessionStorage.removeItem('activeAuth');
         }
         
-        return false; // Indicate logged out
+        return false;
       }
 
       const session = data?.session;
       const currentIsAuthenticated = !!session;
       console.log(`[MainNav] checkAuthState: 会话检查结果: ${currentIsAuthenticated ? '有效' : '无效'}`);
 
-      // 如果是初始检查，确保状态更加可靠
       if (isInitialCheck) {
-        // 如果会话无效但本地标志显示已登录，这是不一致的情况
         const hasAuthCookie = document.cookie.includes('user_authenticated=true');
         const wasAuthenticated = localStorage.getItem('wasAuthenticated') === 'true';
         const activeAuth = sessionStorage.getItem('activeAuth') === 'true';
         
         if (!currentIsAuthenticated && (hasAuthCookie || wasAuthenticated || activeAuth)) {
           console.warn('[MainNav] checkAuthState: 检测到认证状态不一致，服务端未认证但本地标记显示已登录');
-          // 清除所有错误的认证标记
           document.cookie = 'user_authenticated=; path=/; max-age=0';
           localStorage.removeItem('wasAuthenticated');
           sessionStorage.removeItem('activeAuth');
         }
       }
 
-      // Update state based *only* on the session result
       setIsAuthenticated(currentIsAuthenticated);
       setUserEmail(session?.user?.email || null);
-      setAuthStateLocked(currentIsAuthenticated); // Lock only if authenticated
+      setAuthStateLocked(currentIsAuthenticated);
 
       if (currentIsAuthenticated) {
-        // Fetch credits only if session is valid
-        fetchCredits();
-        // Optionally set local markers if needed by other parts (use with caution)
         localStorage.setItem('wasAuthenticated', 'true');
+        // 不再直接调用fetchCredits，而是触发事件
+        creditService.triggerRefresh();
       } else {
-        // Clear credits and local markers if session is invalid
         setCredits(null);
         localStorage.removeItem('wasAuthenticated');
-        document.cookie = 'user_authenticated=; path=/; max-age=0'; // Clear cookie too
+        document.cookie = 'user_authenticated=; path=/; max-age=0';
       }
-      return currentIsAuthenticated; // Return the definitive state
+      return currentIsAuthenticated;
 
     } catch (error) {
       console.error('[MainNav] checkAuthState: 检查会话异常:', error);
@@ -419,22 +460,20 @@ export function MainNav({ providedAuthState }: MainNavProps) {
       setAuthStateLocked(false);
       setCredits(null);
       
-      // 清理认证标记
       if (isInitialCheck) {
         document.cookie = 'user_authenticated=; path=/; max-age=0';
         localStorage.removeItem('wasAuthenticated');
         sessionStorage.removeItem('activeAuth');
       }
       
-      return false; // Indicate logged out on exception
+      return false;
     } finally {
-      // End initial loading only after the *initial* check is complete
       if (isInitialCheck) {
          console.log("[MainNav] checkAuthState: 初始检查完成，结束加载状态。");
          setIsInitialAuthLoading(false);
       }
     }
-  }, [supabase, fetchCredits]);
+  }, [supabase]);
 
   // 初次渲染和认证状态变化时检查
   useEffect(() => {
@@ -580,6 +619,30 @@ export function MainNav({ providedAuthState }: MainNavProps) {
     };
     // Dependencies: Only supabase client and the checkAuthState function itself
   }, [supabase, checkAuthState]);
+
+  // 添加一个新的useEffect，专门用于在认证状态变化时延迟获取点数
+  useEffect(() => {
+    // 只在客户端执行，并且只在用户认证状态为true时执行
+    if (typeof window !== 'undefined' && isAuthenticated && !isInitialAuthLoading) {
+      console.log('[MainNav] 检测到用户已认证，延迟获取点数');
+      
+      // 延迟获取点数，给认证状态同步留出时间
+      const timer = setTimeout(() => {
+        console.log('[MainNav] 开始延迟获取点数');
+        // 使用积分服务的fetchCredits，而不是组件内的fetchCredits
+        creditService.fetchCredits(true).then(credits => {
+          console.log('[MainNav] 通过积分服务成功获取点数:', credits);
+          if (credits !== null) {
+            setCredits(credits);
+          }
+        }).catch(error => {
+          console.error('[MainNav] 通过积分服务获取点数失败:', error);
+        });
+      }, 1000); // 延迟1秒
+      
+      return () => clearTimeout(timer);
+    }
+  }, [isAuthenticated, isInitialAuthLoading]);
 
   // 处理导航项点击
   const handleNavClick = async (e: React.MouseEvent, item: NavItem) => {

@@ -273,6 +273,17 @@ class CreditService {
     // 检查用户是否已认证
     if (!authService.isAuthenticated()) {
       console.log('[CreditService] 用户未认证，跳过获取点数');
+      
+      if (creditState.credits !== null) {
+        // 确保未认证状态下点数为null
+        this.setCreditState({
+          credits: null,
+          lastUpdate: Date.now()
+        });
+        // 触发点数变化事件
+        eventBus.emit(CREDIT_EVENTS.CREDITS_CHANGED, this.getCreditState());
+      }
+      
       return null;
     }
     
@@ -285,6 +296,9 @@ class CreditService {
     console.log('[CreditService] 开始获取点数，强制刷新:', forceRefresh);
     isRefreshing = true;
     this.setCreditState({ isLoading: true });
+    
+    // 增加随机延迟，避免多个组件同时初始化时的并发请求
+    await new Promise(resolve => setTimeout(resolve, Math.random() * 100));
     
     refreshPromise = (async () => {
       try {
@@ -302,18 +316,28 @@ class CreditService {
             const timestamp = Date.now();
             const randomParam = Math.random().toString(36).substring(2, 15);
             console.log('[CreditService] 从API获取点数');
+            
+            // 再次检查认证状态，确保在请求前用户仍然已认证
+            if (!authService.isAuthenticated()) {
+              console.log('[CreditService] 发起请求前用户已登出，取消获取点数');
+              throw new Error('用户未认证');
+            }
+            
             const response = await fetch(`/api/credits/get?_t=${timestamp}&_r=${randomParam}`, {
               headers: { 
                 'Cache-Control': 'no-cache, no-store, must-revalidate',
                 'Pragma': 'no-cache',
                 'Expires': '0'
-              }
+              },
+              // 添加凭据，确保带上认证Cookie
+              credentials: 'include'
             });
             
             if (!response.ok) {
               if (response.status === 401) {
                 // 清空点数状态，触发认证服务检查
-                authService.refreshSession();
+                console.warn('[CreditService] 收到401响应，尝试刷新会话');
+                await authService.refreshSession();
                 throw new Error('未授权，请重新登录');
               }
               throw new Error(`获取点数失败: HTTP ${response.status}`);
@@ -341,10 +365,24 @@ class CreditService {
           return data.credits;
         } else {
           console.error('[CreditService] 获取点数失败:', data.error);
-          return creditState.credits; // 返回当前的点数状态
+          // 保持当前点数状态不变
+          return creditState.credits; 
         }
       } catch (error) {
         console.error('[CreditService] 获取点数出错:', error);
+        
+        // 检查是否为认证错误，如果是则清空点数状态
+        if (error instanceof Error && 
+           (error.message.includes('未授权') || error.message.includes('未认证'))) {
+          console.log('[CreditService] 检测到认证错误，清空点数状态');
+          this.setCreditState({
+            credits: null,
+            lastUpdate: Date.now()
+          });
+          // 触发点数变化事件
+          eventBus.emit(CREDIT_EVENTS.CREDITS_CHANGED, this.getCreditState());
+        }
+        
         return creditState.credits; // 返回当前的点数状态
       } finally {
         this.setCreditState({ isLoading: false });

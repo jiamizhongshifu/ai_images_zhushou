@@ -6,6 +6,9 @@ import { NextRequest, NextResponse } from 'next/server';
  * 获取用户当前点数的API接口
  * 注意: 这个接口使用普通客户端，通过客户端的认证获取当前用户
  * 
+ * 请求参数:
+ * - force: 是否强制刷新 (0/1)
+ * 
  * 返回:
  * - success: 是否成功
  * - credits: 用户点数
@@ -14,6 +17,11 @@ import { NextRequest, NextResponse } from 'next/server';
 export async function GET(request: NextRequest) {
   try {
     console.log('[Credits API] 处理获取用户点数请求');
+    
+    // 检查是否需要强制刷新
+    const url = new URL(request.url);
+    const forceRefresh = url.searchParams.get('force') === '1';
+    console.log(`[Credits API] 强制刷新: ${forceRefresh}`);
     
     // 创建Supabase客户端
     const supabase = await createClient();
@@ -31,8 +39,11 @@ export async function GET(request: NextRequest) {
     
     console.log(`[Credits API] 用户已认证: ${user.id}`);
     
+    // 创建管理员客户端，以便获取最准确的数据
+    const adminClient = forceRefresh ? await createAdminClient() : supabase;
+    
     // 查询用户点数
-    const { data: creditsData, error: creditsError } = await supabase
+    const { data: creditsData, error: creditsError } = await adminClient
       .from('ai_images_creator_credits')
       .select('credits')
       .eq('user_id', user.id)
@@ -85,7 +96,7 @@ export async function GET(request: NextRequest) {
       );
     }
     
-    console.log(`[Credits API] 成功获取用户 ${user.id} 点数: ${creditsData.credits}`);
+    console.log(`[Credits API] 成功获取用户 ${user.id} 点数: ${creditsData.credits}${forceRefresh ? ' (强制刷新)' : ''}`);
     return NextResponse.json(
       { success: true, credits: creditsData.credits },
       { 

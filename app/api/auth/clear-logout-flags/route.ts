@@ -15,7 +15,13 @@ export async function GET(request: Request) {
   response.cookies.delete('isLoggedOut');
   
   // 使用多种方式清除cookie，确保彻底删除
-  const cookiesToClear = ['logged_out', 'force_logged_out', 'isLoggedOut'];
+  const cookiesToClear = [
+    'logged_out', 
+    'force_logged_out', 
+    'isLoggedOut',
+    'force_login' // 也清除force_login标记，避免重复刷新
+  ];
+  
   cookiesToClear.forEach(cookieName => {
     response.cookies.set(cookieName, '', {
       path: '/',
@@ -25,20 +31,14 @@ export async function GET(request: Request) {
     });
   });
   
-  // 设置一个强制登录标记，有效期长一些
-  response.cookies.set('force_login', 'true', {
-    path: '/',
-    maxAge: 60 * 60, // 1小时有效
-    httpOnly: false, // 允许JS访问以便前端可以检测
-    sameSite: 'lax'
-  });
+  // 不再设置强制登录标记，避免触发不必要的页面刷新
   
   // 设置头部指示进一步操作
   response.headers.set('X-Clear-Logout-Flags', 'true');
   response.headers.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
   response.headers.set('Pragma', 'no-cache');
   
-  console.log('[API] 成功清除所有登出标记并设置强制登录标记');
+  console.log('[API] 成功清除所有登出标记');
   return response;
 }
 

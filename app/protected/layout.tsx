@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/utils/supabase/client";
 import { authService } from "@/utils/auth-service";
@@ -22,6 +22,8 @@ export default function ProtectedLayout({
   // 添加加载状态
   const [loading, setLoading] = useState(true); // 默认显示加载状态
   const [showAccessButton, setShowAccessButton] = useState(false);
+  // 将useRef移到组件顶层
+  const initialCheckDone = useRef(false);
 
   // 启用认证弹性增强
   useEffect(() => {
@@ -34,40 +36,27 @@ export default function ProtectedLayout({
       try {
         console.log('[受保护布局] 开始检查用户状态');
         
-        // 检查URL参数
+        // 检查URL参数 - 简化参数检查
         const urlParams = new URLSearchParams(window.location.search);
         const skipCheck = urlParams.get('skip_middleware') === 'true';
-        const justLoggedIn = urlParams.get('just_logged_in') === 'true';
         const sessionVerified = urlParams.get('session_verified') === 'true';
-        const forceLogin = urlParams.get('force_login') === 'true';
         
-        // 验证URL参数时间戳的新鲜度
-        let isVerifyTimeValid = false;
-        const verifyTimeParam = urlParams.get('verify_time');
-        if (verifyTimeParam) {
-          const verifyTime = parseInt(verifyTimeParam, 10);
-          isVerifyTimeValid = !isNaN(verifyTime) && (Date.now() - verifyTime) < 5 * 60 * 1000; // 5分钟内有效
+        // 验证URL参数时间戳的新鲜度 - 使用auth_time参数替代多个参数
+        const authTimeParam = urlParams.get('auth_time');
+        let isAuthTimeValid = false;
+        if (authTimeParam) {
+          const authTime = parseInt(authTimeParam, 10);
+          isAuthTimeValid = !isNaN(authTime) && (Date.now() - authTime) < 5 * 60 * 1000; // 5分钟内有效
+          console.log('[受保护布局] 检测到auth_time参数:', authTimeParam, '有效:', isAuthTimeValid);
         }
 
         console.log('[受保护布局] URL参数检查:', {
           skipCheck, 
-          justLoggedIn, 
           sessionVerified, 
-          forceLogin,
-          verifyTime: verifyTimeParam,
-          isVerifyTimeValid
+          authTime: authTimeParam,
+          isAuthTimeValid
         });
         
-        // 如果用户刚刚登录，尝试清除所有登出标记
-        if (justLoggedIn) {
-          console.log('[受保护布局] 检测到用户刚刚登录，清除所有登出标记');
-          try {
-            await clearAllLogoutFlags();
-          } catch (error) {
-            console.error('[受保护布局] 清除登出标记失败:', error);
-          }
-        }
-
         // 首先检查登出标记，如果存在，则不信任其他参数
         const hasLogoutCookie = document.cookie.includes('force_logged_out=true');
         const forceLoggedOut = localStorage.getItem('force_logged_out') === 'true';
@@ -80,8 +69,40 @@ export default function ProtectedLayout({
           return;
         }
         
-        // 特殊处理：session_verified参数 - 这是由导航组件在确认有效会话后设置的
-        if (sessionVerified && isVerifyTimeValid) {
+        // 特殊处理：简化认证时间参数
+        if (authTimeParam && isAuthTimeValid) {
+          console.log('[受保护布局] 检测到有效的认证时间参数，允许访问');
+          // 设置认证cookie，便于后续快速检查
+          document.cookie = 'user_authenticated=true; path=/; max-age=86400';
+          
+          // 清除localStorage和sessionStorage中的登出标记 - 在本地直接处理
+          if (typeof localStorage !== 'undefined') {
+            localStorage.removeItem('force_logged_out');
+            localStorage.removeItem('logged_out');
+            // 设置认证标记
+            localStorage.setItem('wasAuthenticated', 'true');
+            localStorage.setItem('auth_time', authTimeParam);
+          }
+          if (typeof sessionStorage !== 'undefined') {
+            sessionStorage.removeItem('isLoggedOut');
+            sessionStorage.setItem('activeAuth', 'true');
+          }
+          
+          // 简化URL，移除认证参数
+          try {
+            const url = new URL(window.location.href);
+            url.searchParams.delete('auth_time');
+            window.history.replaceState({}, document.title, url.toString());
+          } catch (e) {
+            console.warn('[受保护布局] 清除URL参数失败:', e);
+          }
+          
+          setLoading(false);
+          return;
+        }
+        
+        // 特殊处理：session_verified参数
+        if (sessionVerified && isAuthTimeValid) {
           console.log('[受保护布局] 检测到有效的会话验证参数，允许访问');
           setLoading(false);
           // 设置认证cookie，便于后续快速检查
@@ -95,23 +116,6 @@ export default function ProtectedLayout({
           setLoading(false);
           document.cookie = 'user_authenticated=true; path=/; max-age=86400';
           return;
-        }
-        
-        // 处理force_login参数 - 需要进行会话验证
-        if (forceLogin) {
-          console.log('[受保护布局] 检测到force_login参数，进行会话验证');
-          // 验证Supabase会话是否真的存在
-          const { data: { session } } = await supabase.auth.getSession();
-          
-          if (session) {
-            console.log('[受保护布局] force_login参数验证通过，存在有效会话');
-            setLoading(false);
-            document.cookie = 'user_authenticated=true; path=/; max-age=86400';
-            return;
-          } else {
-            console.log('[受保护布局] force_login参数验证失败，没有有效会话');
-            // 继续进行下一步验证
-          }
         }
         
         // 尝试先检查localStorage中的认证标记，这是最快的
@@ -141,14 +145,6 @@ export default function ProtectedLayout({
         const hasAuthCookie = document.cookie.includes('user_authenticated=true');
         if (hasAuthCookie) {
           console.log('[受保护布局] 检测到认证cookie，允许访问');
-          setLoading(false);
-          return;
-        }
-        
-        // 检查强制登录标记
-        const hasForceLogin = document.cookie.includes('force_login=true');
-        if (hasForceLogin) {
-          console.log('[受保护布局] 检测到强制登录cookie，允许访问');
           setLoading(false);
           return;
         }
@@ -338,8 +334,8 @@ export default function ProtectedLayout({
           console.log('[Layout] 检测到登出标志，重定向到登录页');
           // 清除标志
           sessionStorage.removeItem('isLoggedOut');
-          // 强制跳转到登录页
-          window.location.href = '/sign-in';
+          // 使用router而不是硬跳转，避免整页刷新
+          router.push('/sign-in');
           return true;
         }
         return false;
@@ -349,42 +345,102 @@ export default function ProtectedLayout({
       }
     };
 
-    // 优先检查登出状态
-    if (checkLogoutState()) {
-      return;
-    }
-    
-    // 快速验证流程
-    const quickCheck = async () => {
-      try {
-        // 使用提升的验证逻辑，避免不必要的API调用
-        const isAuthenticated = await validateSession();
-        
-        if (!isAuthenticated && mounted) {
-          console.log("[受保护页面] 验证失败，但已显示临时访问按钮");
-          // 不再立即跳转，而是显示临时访问按钮
-          // router.push("/sign-in");
-        } else if (mounted) {
-          console.log("[受保护页面] 验证成功，用户可访问");
-          setLoading(false);
-        }
-      } catch (error) {
-        console.error("[受保护页面] 验证过程中出错:", error);
-        if (mounted) {
-          setShowAccessButton(true);
-        }
-      } finally {
-        // 无论结果如何，5秒后关闭加载状态，避免用户被卡在加载屏幕
-        if (mounted) {
-          setTimeout(() => {
+    // 只在第一次挂载时执行认证检查
+    if (!initialCheckDone.current) {
+      console.log('[受保护布局] 执行首次认证检查');
+      initialCheckDone.current = true;
+      
+      // 优先检查登出状态
+      if (checkLogoutState()) {
+        return;
+      }
+      
+      // 清除URL参数而不触发整页重新加载
+      if (typeof window !== 'undefined' && window.location.search) {
+        try {
+          console.log('[受保护布局] 检测到URL参数，整理URL', window.location.search);
+          // 保存重要参数
+          const url = new URL(window.location.href);
+          const hasAuthTime = url.searchParams.has('auth_time');
+          const hasAuthSession = url.searchParams.has('auth_session');
+          
+          // 如果有auth_session参数，这是登录后的简化参数，直接清除所有参数
+          if (hasAuthSession) {
+            console.log('[受保护布局] 检测到auth_session参数，完全清除URL参数');
+            // 保存认证状态到本地存储
+            localStorage.setItem('wasAuthenticated', 'true');
+            localStorage.setItem('auth_time', Date.now().toString());
+            // 设置cookie
+            document.cookie = 'user_authenticated=true; path=/; max-age=86400';
+            // 完全清除URL参数
+            url.search = '';
+            window.history.replaceState({}, document.title, url.toString());
+            // 完全移除URL参数后就不需要再处理其他参数了
+            console.log('[受保护布局] URL已简化，会话已保存到本地存储');
+            // 立即结束URL处理流程
             setLoading(false);
-          }, 5000);
+            return;
+          }
+          
+          // 如果有auth_time参数，记录到localStorage并清除URL
+          if (hasAuthTime) {
+            const authTime = url.searchParams.get('auth_time');
+            if (authTime) {
+              localStorage.setItem('auth_time', authTime);
+              localStorage.setItem('wasAuthenticated', 'true');
+              console.log('[受保护布局] 保存auth_time到localStorage:', authTime);
+            }
+            
+            // 简化URL，移除所有登录相关参数
+            url.search = '';
+            window.history.replaceState({}, document.title, url.toString());
+            
+            // 设置cookie标记，确保页面间导航正常
+            document.cookie = 'user_authenticated=true; path=/; max-age=86400';
+            console.log('[受保护布局] URL已简化，并设置认证Cookie');
+            
+            // 参数处理完毕，可以立即退出加载状态
+            setLoading(false);
+            return;
+          }
+        } catch (e) {
+          console.warn('[受保护布局] 处理URL参数时出错:', e);
         }
       }
-    };
-    
-    // 执行验证
-    quickCheck();
+      
+      // 快速验证流程
+      const quickCheck = async () => {
+        try {
+          console.log("[受保护页面] 开始首次验证流程");
+          // 使用提升的验证逻辑，避免不必要的API调用
+          const isAuthenticated = await validateSession();
+          
+          if (!isAuthenticated && mounted) {
+            console.log("[受保护页面] 验证失败，但已显示临时访问按钮");
+            // 不再立即跳转，而是显示临时访问按钮
+            // router.push("/sign-in");
+          } else if (mounted) {
+            console.log("[受保护页面] 验证成功，用户可访问");
+            setLoading(false);
+          }
+        } catch (error) {
+          console.error("[受保护页面] 验证过程中出错:", error);
+          if (mounted) {
+            setShowAccessButton(true);
+          }
+        } finally {
+          // 无论结果如何，5秒后关闭加载状态，避免用户被卡在加载屏幕
+          if (mounted) {
+            setTimeout(() => {
+              setLoading(false);
+            }, 5000);
+          }
+        }
+      };
+      
+      // 执行验证
+      quickCheck();
+    }
     
     // 清理函数
     return () => {

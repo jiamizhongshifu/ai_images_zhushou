@@ -177,11 +177,10 @@ export const signInAction = async (formData: FormData) => {
   // 添加一个小延迟，确保所有cookie操作已完成
   await new Promise(resolve => setTimeout(resolve, 1000));
   console.log("[登录] 重定向到受保护页面");
-  // 添加just_logged_in标记和登录时间戳，帮助客户端识别刚登录的状态
-  // 添加clear_logout_flags=true确保中间件清除所有登出标记
-  // 添加force_login=true强制清除所有登出状态
-  const loginTime = Date.now();
-  return redirect(`/protected?just_logged_in=true&login_time=${loginTime}&clear_logout_flags=true&force_login=true&auth_init=true`);
+  // 简化URL参数，使用单一auth_session参数代替多个参数
+  // 这样可以减少客户端的URL解析负担和页面刷新次数
+  const authSession = Date.now();
+  return redirect(`/protected?auth_session=${authSession}`);
 };
 
 export const forgotPasswordAction = async (formData: FormData) => {

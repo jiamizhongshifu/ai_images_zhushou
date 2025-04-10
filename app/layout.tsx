@@ -12,6 +12,7 @@ import { ToastProvider, ToastViewport } from "@/components/ui/enhanced-toast";
 import { Toaster } from "@/components/ui/toaster";
 import LogoutHandler from "@/components/layout/logout-handler";
 import { Suspense } from 'react';
+import { UserStateProvider } from '@/app/components/providers/user-state-provider';
 
 const defaultUrl = process.env.VERCEL_URL
   ? `https://${process.env.VERCEL_URL}`
@@ -68,40 +69,50 @@ export default function RootLayout({
           disableTransitionOnChange
         >
           <ToastProvider>
-            {/* 登出状态处理器 - 不可见组件，用于处理登出状态 */}
-            <Suspense fallback={null}>
-              <LogoutHandler />
-            </Suspense>
-            
-            {/* 全局导航栏 */}
-            <Navbar />
-            
-            <main className="min-h-screen flex flex-col items-center">
-              <div className="flex-1 w-full flex flex-col gap-20 items-center">
-                <div className="flex flex-col gap-20 w-full p-5 mt-8">
-                  {children}
-                </div>
+            {/* 用户状态提供器 - 统一管理用户认证和积分状态 */}
+            <UserStateProvider>
+              {/* 登出状态处理器 - 不可见组件，用于处理登出状态 */}
+              <Suspense fallback={null}>
+                <LogoutHandler />
+              </Suspense>
+              
+              {/* 全局导航栏 */}
+              <Navbar />
+              
+              <main className="min-h-screen flex flex-col items-center">
+                <div className="flex-1 w-full flex flex-col gap-20 items-center">
+                  <div className="flex flex-col gap-20 w-full p-5 mt-8">
+                    {/* 使用Suspense包装主内容，优化加载体验 */}
+                    <Suspense fallback={
+                      <div className="flex justify-center items-center py-12">
+                        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
+                      </div>
+                    }>
+                      {children}
+                    </Suspense>
+                  </div>
 
-                <footer className="w-full flex items-center justify-center border-t mx-auto text-center text-xs gap-8 py-16">
-                  <p>
-                    Powered by{" "}
-                    <a
-                      href="https://supabase.com/?utm_source=create-next-app&utm_medium=template&utm_term=nextjs"
-                      target="_blank"
-                      className="font-bold hover:underline"
-                      rel="noreferrer"
-                    >
-                      Supabase
-                    </a>
-                  </p>
-                  <ThemeSwitcher />
-                </footer>
-              </div>
-            </main>
-            
-            {/* 添加Toast视窗 */}
-            <ToastViewport />
-            <Toaster />
+                  <footer className="w-full flex items-center justify-center border-t mx-auto text-center text-xs gap-8 py-16">
+                    <p>
+                      Powered by{" "}
+                      <a
+                        href="https://supabase.com/?utm_source=create-next-app&utm_medium=template&utm_term=nextjs"
+                        target="_blank"
+                        className="font-bold hover:underline"
+                        rel="noreferrer"
+                      >
+                        Supabase
+                      </a>
+                    </p>
+                    <ThemeSwitcher />
+                  </footer>
+                </div>
+              </main>
+              
+              {/* 添加Toast视窗 */}
+              <ToastViewport />
+              <Toaster />
+            </UserStateProvider>
           </ToastProvider>
         </ThemeProvider>
       </body>

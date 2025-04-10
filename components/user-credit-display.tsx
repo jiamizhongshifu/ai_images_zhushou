@@ -1,229 +1,30 @@
 "use client";
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { Coins, PlusCircle, Loader2, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { creditService, CREDIT_EVENTS, onCreditEvent } from '@/utils/credit-service';
 import CreditRechargeDialog from "@/components/payment/credit-recharge-dialog";
 import { cn } from '@/lib/utils';
-import { authService } from '@/utils/auth-service';
-import { usePathname } from 'next/navigation';
-
-// 点数状态接口
-interface CreditState {
-  credits: number | null;
-  lastUpdate: number;
-  isLoading: boolean;
-}
+import { useUserState } from '@/app/components/providers/user-state-provider';
 
 export default function UserCreditDisplay({ className }: { className?: string }) {
-  const [creditState, setCreditState] = useState<CreditState>({
-    credits: null,
-    lastUpdate: 0,
-    isLoading: false
-  });
+  const { credits, isLoading, refreshUserState } = useUserState();
   const [showCreditRechargeDialog, setShowCreditRechargeDialog] = useState(false);
-  const isFirstRender = useRef(true);
-  const lastFetchTime = useRef(0);
-  const pathname = usePathname(); // 添加路径名监听
   
-  // 检查是否需要刷新
-  const shouldRefresh = () => {
-    const now = Date.now();
-    // 如果从未获取过或超过2分钟未获取，则需要刷新
-    const timeElapsed = now - lastFetchTime.current;
-    const needsRefresh = lastFetchTime.current === 0 || timeElapsed > 120000;
-    
-    if (needsRefresh) {
-      console.log(`[UserCreditDisplay] 需要刷新点数，已过时间: ${timeElapsed}ms`);
-    }
-    
-    return needsRefresh;
-  };
+  // 添加重试机制的状态和引用
+  const retryCountRef = useRef(0);
+  const maxRetries = 3;
+  const retryTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const isInitialRenderRef = useRef(true);
+  const isRefreshingRef = useRef(false);
   
-  // 直接从API获取点数
-  const fetchCreditsDirectly = async (force = false) => {
-    // 如果用户未登录，不进行获取
-    if (!authService.isAuthenticated()) {
-      console.log('[UserCreditDisplay] 用户未登录，跳过获取点数');
-      return;
-    }
-    
-    // 如果非强制且不需要刷新，则跳过
-    if (!force && !shouldRefresh()) {
-      console.log('[UserCreditDisplay] 跳过获取点数，上次获取时间较近');
-      return;
-    }
-    
-    try {
-      console.log('[UserCreditDisplay] 直接从API获取点数');
-      setCreditState(prev => ({ ...prev, isLoading: true }));
-      
-      // 添加时间戳和随机数参数，强制绕过缓存
-      const timestamp = Date.now();
-      const randomParam = Math.random().toString(36).substring(2, 15);
-      
-      const response = await fetch(`/api/credits/get?_t=${timestamp}&_r=${randomParam}`, {
-        headers: { 
-          'Cache-Control': 'no-cache, no-store, must-revalidate',
-          'Pragma': 'no-cache',
-          'Expires': '0'
-        }
-      });
-      
-      if (!response.ok) {
-        throw new Error(`获取点数失败: ${response.status}`);
-      }
-      
-      const data = await response.json();
-      
-      if (data.success) {
-        console.log('[UserCreditDisplay] 成功获取点数:', data.credits);
-        setCreditState({
-          credits: data.credits,
-          lastUpdate: timestamp,
-          isLoading: false
-        });
-        
-        // 更新最后获取时间
-        lastFetchTime.current = timestamp;
-        
-        // 同时更新creditService
-        creditService.updateCredits(data.credits);
-      } else {
-        console.error('[UserCreditDisplay] 获取点数失败:', data.error);
-        setCreditState(prev => ({ ...prev, isLoading: false }));
-      }
-    } catch (error) {
-      console.error('[UserCreditDisplay] 获取点数出错:', error);
-      setCreditState(prev => ({ ...prev, isLoading: false }));
-    }
-  };
-  
-  // 强制刷新点数的方法
-  const refreshCredits = async () => {
+  // 处理刷新按钮点击
+  const handleRefresh = async () => {
     console.log('[UserCreditDisplay] 用户手动刷新点数');
-    try {
-      // 强制刷新，直接从API获取
-      await fetchCreditsDirectly(true);
-    } catch (error) {
-      console.error('[UserCreditDisplay] 刷新点数失败:', error);
-    }
+    isRefreshingRef.current = true;
+    await refreshUserState({ forceRefresh: true });
+    isRefreshingRef.current = false;
   };
-  
-  // 监听路径变化 - 页面跳转时刷新点数
-  useEffect(() => {
-    console.log(`[UserCreditDisplay] 检测到路径变化: ${pathname}`);
-    
-    // 添加一个短暂延迟，确保页面已完全加载后才获取点数
-    const timer = setTimeout(() => {
-      if (authService.isAuthenticated()) {
-        console.log('[UserCreditDisplay] 页面跳转，立即刷新点数');
-        fetchCreditsDirectly(true);
-      }
-    }, 300);
-    
-    return () => clearTimeout(timer);
-  }, [pathname]);
-  
-  // 添加页面加载事件监听，确保页面加载完成后获取点数
-  useEffect(() => {
-    const handleLoad = () => {
-      console.log('[UserCreditDisplay] 页面加载完成，检查点数');
-      if (authService.isAuthenticated() && (creditState.credits === null || shouldRefresh())) {
-        fetchCreditsDirectly(true);
-      }
-    };
-    
-    // 如果页面已加载完成，立即执行一次
-    if (document.readyState === 'complete') {
-      handleLoad();
-    } else {
-      window.addEventListener('load', handleLoad);
-      return () => window.removeEventListener('load', handleLoad);
-    }
-  }, []);
-  
-  // 监听登录状态变化，登录后立即刷新点数
-  useEffect(() => {
-    console.log('[UserCreditDisplay] 设置认证状态监听器');
-
-    // 立即检查当前认证状态，确保组件挂载时立即获取点数
-    if (authService.isAuthenticated()) {
-      console.log('[UserCreditDisplay] 组件挂载时发现用户已登录，立即刷新点数');
-      fetchCreditsDirectly(true);
-    }
-    
-    const unsubscribe = authService.subscribe((authState) => {
-      console.log('[UserCreditDisplay] 认证状态变化:', authState.isAuthenticated ? '已登录' : '未登录');
-      
-      if (authState.isAuthenticated) {
-        console.log('[UserCreditDisplay] 检测到用户登录，立即刷新点数');
-        fetchCreditsDirectly(true);
-      } else {
-        console.log('[UserCreditDisplay] 检测到用户登出，清空点数显示');
-        setCreditState({
-          credits: null,
-          lastUpdate: Date.now(),
-          isLoading: false
-        });
-      }
-    });
-    
-    return () => {
-      unsubscribe();
-    };
-  }, []);
-  
-  // 监听点数变化事件
-  useEffect(() => {
-    console.log('[UserCreditDisplay] 设置点数事件监听器');
-    
-    // 监听点数变化事件
-    const unsubscribeChanged = onCreditEvent(CREDIT_EVENTS.CREDITS_CHANGED, (state: CreditState) => {
-      console.log('[UserCreditDisplay] 收到点数变化事件:', state);
-      setCreditState(state);
-      lastFetchTime.current = state.lastUpdate;
-    });
-    
-    // 监听需要刷新点数的事件
-    const unsubscribeRefresh = onCreditEvent(CREDIT_EVENTS.CREDITS_REFRESH_NEEDED, () => {
-      console.log('[UserCreditDisplay] 收到点数刷新请求事件');
-      fetchCreditsDirectly(true);
-    });
-    
-    return () => {
-      unsubscribeChanged();
-      unsubscribeRefresh();
-    };
-  }, []);
-  
-  // 常规获取点数逻辑
-  useEffect(() => {
-    // 添加页面可见性变化监听，但增加限流
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible' && shouldRefresh() && authService.isAuthenticated()) {
-        console.log('[UserCreditDisplay] 页面变为可见且需要刷新，获取点数');
-        fetchCreditsDirectly();
-      }
-    };
-    
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    
-    // 每3分钟自动刷新一次点数，而不是30秒
-    const intervalId = setInterval(() => {
-      if (shouldRefresh() && authService.isAuthenticated()) {
-        console.log('[UserCreditDisplay] 定时刷新点数');
-        fetchCreditsDirectly();
-      }
-    }, 180000); // 3分钟
-    
-    // 组件卸载时取消事件监听和定时器
-    return () => {
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-      clearInterval(intervalId);
-    };
-  }, []);
   
   // 处理充值按钮点击
   const handleRecharge = () => {
@@ -233,8 +34,108 @@ export default function UserCreditDisplay({ className }: { className?: string })
   // 充值成功回调
   const handleRechargeSuccess = async () => {
     // 强制刷新点数
-    await refreshCredits();
+    await refreshUserState({ forceRefresh: true });
   };
+  
+  // 自动重试获取积分
+  useEffect(() => {
+    // 页面加载完成后检查是否需要刷新积分
+    const checkCreditsAfterLoad = () => {
+      if (isInitialRenderRef.current) {
+        isInitialRenderRef.current = false;
+        
+        // 页面完全加载后，如果积分为空则进行强制刷新
+        if (credits === null) {
+          console.log('[UserCreditDisplay] 初始加载后积分为空，尝试强制刷新');
+          setTimeout(() => {
+            if (!isRefreshingRef.current) {
+              refreshUserState({ forceRefresh: true });
+            }
+          }, 800);
+        }
+      }
+    };
+    
+    // 根据积分是否为空执行重试策略
+    const executeRetryStrategy = () => {
+      if (credits === null && retryCountRef.current < maxRetries) {
+        const retryDelay = Math.min(1000 * (retryCountRef.current + 1), 3000);
+        console.log(`[UserCreditDisplay] 积分为空，将在${retryDelay}ms后进行第${retryCountRef.current + 1}次重试`);
+        
+        // 清除之前的定时器
+        if (retryTimeoutRef.current) {
+          clearTimeout(retryTimeoutRef.current);
+        }
+        
+        // 设置新的定时器
+        retryTimeoutRef.current = setTimeout(() => {
+          if (!isRefreshingRef.current) {
+            console.log(`[UserCreditDisplay] 执行第${retryCountRef.current + 1}次积分重试获取`);
+            retryCountRef.current++;
+            refreshUserState({ forceRefresh: true });
+          }
+        }, retryDelay);
+        
+        return true;
+      }
+      return false;
+    };
+    
+    // 初始加载检查
+    checkCreditsAfterLoad();
+    
+    // 监听页面可见性变化，页面从隐藏变为可见时刷新积分
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        console.log('[UserCreditDisplay] 页面变为可见，检查是否需要刷新积分');
+        if (credits === null) {
+          console.log('[UserCreditDisplay] 页面可见后积分为空，尝试刷新');
+          if (!isRefreshingRef.current) {
+            refreshUserState({ forceRefresh: true });
+          }
+        }
+      }
+    };
+    
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    
+    // 设置重试机制
+    if (credits === null && !isLoading) {
+      executeRetryStrategy();
+    } else {
+      // 如果已获取到积分，重置重试计数
+      retryCountRef.current = 0;
+    }
+    
+    return () => {
+      if (retryTimeoutRef.current) {
+        clearTimeout(retryTimeoutRef.current);
+      }
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [credits, isLoading, refreshUserState]);
+  
+  // 监听DOM加载完成
+  useEffect(() => {
+    const handleDOMContentLoaded = () => {
+      console.log('[UserCreditDisplay] DOM内容加载完成，检查积分状态');
+      if (credits === null && !isRefreshingRef.current) {
+        setTimeout(() => {
+          refreshUserState({ forceRefresh: true });
+        }, 1000);
+      }
+    };
+    
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', handleDOMContentLoaded);
+    } else {
+      handleDOMContentLoaded();
+    }
+    
+    return () => {
+      document.removeEventListener('DOMContentLoaded', handleDOMContentLoaded);
+    };
+  }, [credits, refreshUserState]);
   
   // 渲染组件
   return (
@@ -242,11 +143,11 @@ export default function UserCreditDisplay({ className }: { className?: string })
       <div className="flex items-center gap-1 text-sm">
         <Coins className="text-primary h-4 w-4" />
         
-        {creditState.isLoading ? (
+        {isLoading ? (
           <Loader2 className="h-4 w-4 animate-spin" />
         ) : (
           <span className="font-medium">
-            {creditState.credits !== null ? creditState.credits : '-'}
+            {credits !== null ? credits : '-'}
           </span>
         )}
         
@@ -257,11 +158,12 @@ export default function UserCreditDisplay({ className }: { className?: string })
         variant="ghost"
         size="icon"
         className="h-6 w-6"
-        onClick={refreshCredits}
+        onClick={handleRefresh}
         title="刷新点数"
         aria-label="刷新点数"
+        disabled={isLoading}
       >
-        <RefreshCw className="h-3.5 w-3.5" />
+        <RefreshCw className={cn("h-3.5 w-3.5", isLoading && "animate-spin")} />
       </Button>
       
       <Button
@@ -280,7 +182,7 @@ export default function UserCreditDisplay({ className }: { className?: string })
         isOpen={showCreditRechargeDialog}
         onClose={() => setShowCreditRechargeDialog(false)}
         onSuccess={handleRechargeSuccess}
-        credits={creditState.credits || 0}
+        credits={credits || 0}
       />
     </div>
   );
