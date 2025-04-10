@@ -7,6 +7,7 @@ import CreditRechargeDialog from "@/components/payment/credit-recharge-dialog";
 import { cn } from '@/lib/utils';
 import { useUserState } from '@/app/components/providers/user-state-provider';
 import { createClient } from '@/utils/supabase/client';
+import { useSearchParams } from 'next/navigation';
 
 // 简化接口定义
 interface UserCreditDisplayProps {
@@ -17,14 +18,53 @@ export function UserCreditDisplay({ className }: UserCreditDisplayProps) {
   // 直接从 useUserState 获取所需状态和触发器
   const { credits, isLoading, isAuthenticated, userInfoLoaded, triggerCreditRefresh } = useUserState();
   const [showCreditRechargeDialog, setShowCreditRechargeDialog] = useState(false);
+  const searchParams = useSearchParams(); // 获取URL参数
   
   // 添加本地状态，确保组件自身能判断用户登录状态
   const [localUserLoaded, setLocalUserLoaded] = useState(false);
   const [localCredits, setLocalCredits] = useState<number | null>(null);
   const [localLoading, setLocalLoading] = useState(false);
   
+  // 重置组件状态的函数
+  const resetLocalState = useCallback(() => {
+    console.log('[UserCreditDisplay] 重置本地状态');
+    setLocalUserLoaded(false);
+    setLocalCredits(null);
+    setLocalLoading(false);
+  }, []);
+  
+  // 监听URL参数变化，检测登出状态
+  useEffect(() => {
+    // 检查是否有登出参数
+    const loggedOut = searchParams?.get('logged_out') === 'true';
+    if (loggedOut) {
+      console.log('[UserCreditDisplay] 检测到登出URL参数，强制重置状态');
+      resetLocalState();
+    }
+  }, [searchParams, resetLocalState]);
+  
+  // 监听全局认证状态变化
+  useEffect(() => {
+    if (!isAuthenticated) {
+      console.log('[UserCreditDisplay] 全局认证状态为未登录，重置本地状态');
+      resetLocalState();
+    }
+  }, [isAuthenticated, resetLocalState]);
+  
   // 组件挂载时立即检查当前用户和获取积分
   useEffect(() => {
+    // 检查是否已登出
+    const isLoggedOut = typeof window !== 'undefined' && (
+      localStorage.getItem('force_logged_out') === 'true' || 
+      sessionStorage.getItem('isLoggedOut') === 'true'
+    );
+    
+    if (isLoggedOut) {
+      console.log('[UserCreditDisplay] 检测到登出标记，跳过会话检查');
+      resetLocalState();
+      return;
+    }
+    
     const checkLocalSession = async () => {
       const supabase = createClient();
       try {
@@ -55,16 +95,18 @@ export function UserCreditDisplay({ className }: UserCreditDisplayProps) {
           }
         } else {
           console.log('[UserCreditDisplay] 组件挂载时未检测到用户');
+          resetLocalState();
         }
       } catch (e) {
         console.error('[UserCreditDisplay] 检查会话出错:', e);
+        resetLocalState();
       } finally {
         setLocalLoading(false);
       }
     };
     
     checkLocalSession();
-  }, []);
+  }, [resetLocalState]);
   
   // 同步全局状态到本地状态
   useEffect(() => {
@@ -95,8 +137,14 @@ export function UserCreditDisplay({ className }: UserCreditDisplayProps) {
   // 当前正在加载
   const isCurrentlyLoading = isLoading || localLoading;
   
-  // 组合状态判断是否显示用户信息
-  const shouldShowUserInfo = isAuthenticated || userInfoLoaded || localUserLoaded;
+  // 检查是否已登出
+  const isLoggedOut = typeof window !== 'undefined' && (
+    localStorage.getItem('force_logged_out') === 'true' || 
+    sessionStorage.getItem('isLoggedOut') === 'true'
+  );
+  
+  // 组合状态判断是否显示用户信息 - 确保登出状态被考虑
+  const shouldShowUserInfo = !isLoggedOut && (isAuthenticated || userInfoLoaded || localUserLoaded);
   
   // 使用本地积分或全局积分
   const displayCredits = localCredits !== null ? localCredits : credits;

@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { createClient } from '@/utils/supabase/client';
 import { Button } from '@/components/ui/button';
 import { User, LogOut, LogIn } from 'lucide-react';
@@ -20,6 +20,8 @@ interface CreditsInfo {
 
 export default function UserNav() {
   const router = useRouter();
+  const searchParams = useSearchParams(); // 获取URL参数
+  
   // 使用全局状态作为主要状态源
   const { isAuthenticated, userInfoLoaded, triggerCreditRefresh, refreshUserState } = useUserState();
   
@@ -31,8 +33,44 @@ export default function UserNav() {
   const [localUserLoaded, setLocalUserLoaded] = useState(false);
   const supabase = createClient();
   
+  // 监听URL参数变化
+  useEffect(() => {
+    // 检查是否有登出参数
+    const loggedOut = searchParams?.get('logged_out') === 'true';
+    if (loggedOut) {
+      console.log('[UserNav] 检测到登出URL参数，强制重置状态');
+      resetLocalState();
+    }
+  }, [searchParams]);
+  
+  // 重置所有本地状态的函数
+  const resetLocalState = () => {
+    console.log('[UserNav] 重置所有本地状态');
+    setUserDetails(null);
+    setLocalUserLoaded(false);
+    setLocalLoading(false);
+  };
+  
+  // 监听全局认证状态变化
+  useEffect(() => {
+    if (!isAuthenticated) {
+      console.log('[UserNav] 全局认证状态为未登录，重置本地状态');
+      resetLocalState();
+    }
+  }, [isAuthenticated]);
+  
   // 组件挂载时立即获取当前会话
   useEffect(() => {
+    // 检查是否已登出状态
+    const isLoggedOut = localStorage.getItem('force_logged_out') === 'true' || 
+                        sessionStorage.getItem('isLoggedOut') === 'true';
+    
+    if (isLoggedOut) {
+      console.log('[UserNav] 检测到登出标记，跳过初始会话检查');
+      resetLocalState();
+      return;
+    }
+    
     const checkCurrentUser = async () => {
       try {
         console.log('[UserNav] 组件挂载时检查当前用户');
@@ -69,11 +107,22 @@ export default function UserNav() {
       fetchUserDetails();
     } else {
       setUserDetails(null);
+      setLocalUserLoaded(false);
     }
   }, [isAuthenticated, userInfoLoaded]);
   
   // 获取用户详细信息（可选）
   const fetchUserDetails = async () => {
+    // 检查是否已登出状态
+    const isLoggedOut = localStorage.getItem('force_logged_out') === 'true' || 
+                        sessionStorage.getItem('isLoggedOut') === 'true';
+    
+    if (isLoggedOut) {
+      console.log('[UserNav] 检测到登出标记，跳过获取用户详情');
+      resetLocalState();
+      return;
+    }
+    
     try {
       setLocalLoading(true);
       
@@ -96,9 +145,13 @@ export default function UserNav() {
         console.log('[UserNav] 通过认证服务获取用户详情成功');
         setUserDetails(userInfo);
         setLocalUserLoaded(true);
+      } else {
+        // 如果获取不到用户信息，确保本地状态被重置
+        resetLocalState();
       }
     } catch (error) {
       console.error('[UserNav] 获取用户详情失败:', error);
+      resetLocalState();
     } finally {
       setLocalLoading(false);
     }
@@ -114,7 +167,10 @@ export default function UserNav() {
       localStorage.setItem('force_logged_out', 'true');
       sessionStorage.setItem('isLoggedOut', 'true');
       
-      // 2. 调用API登出端点，确保服务器端也清除会话
+      // 2. 主动重置本地状态，确保UI立即响应
+      resetLocalState();
+      
+      // 3. 调用API登出端点，确保服务器端也清除会话
       try {
         const response = await fetch('/api/auth/signout', {
           method: 'POST',
@@ -132,10 +188,10 @@ export default function UserNav() {
         console.error('[UserNav] 调用登出API出错:', apiError);
       }
       
-      // 3. 清除认证服务状态
+      // 4. 清除认证服务状态
       authService.clearAuthState();
       
-      // 4. 手动清除所有可能的Cookie
+      // 5. 手动清除所有可能的Cookie
       const cookieNames = [
         'sb-access-token', 
         'sb-refresh-token', 
@@ -159,7 +215,7 @@ export default function UserNav() {
         }
       });
       
-      // 5. 清除localStorage中所有可能的认证数据
+      // 6. 清除localStorage中所有可能的认证数据
       const keysToRemove = [
         'supabase.auth.token',
         'supabase.auth.expires_at',
@@ -170,11 +226,11 @@ export default function UserNav() {
       ];
       keysToRemove.forEach(key => localStorage.removeItem(key));
       
-      // 6. 将登出状态保存到sessionStorage，增加时间戳防止缓存
+      // 7. 将登出状态保存到sessionStorage，增加时间戳防止缓存
       sessionStorage.setItem('isLoggedOut', 'true');
       sessionStorage.setItem('logoutTime', Date.now().toString());
       
-      // 7. 使用router保存状态并平滑跳转，而非硬刷新
+      // 8. 使用router保存状态并平滑跳转，而非硬刷新
       console.log('[UserNav] 登出操作完成, 页面将重定向');
       // 可以使用状态（如sessionStorage）来存储登出信息，而不是通过URL
       sessionStorage.setItem('force_logged_out', 'true');
@@ -193,8 +249,14 @@ export default function UserNav() {
     }
   };
   
-  // 判断是否应该显示用户界面 - 结合全局状态和本地状态
-  const shouldShowUserUI = isAuthenticated || userInfoLoaded || localUserLoaded;
+  // 判断是否应该显示用户界面 - 结合全局状态和本地状态，确保登出状态被考虑
+  const isLoggedOut = typeof window !== 'undefined' && (
+    localStorage.getItem('force_logged_out') === 'true' || 
+    sessionStorage.getItem('isLoggedOut') === 'true'
+  );
+  
+  // 只有在非登出状态时才考虑显示用户界面
+  const shouldShowUserUI = !isLoggedOut && (isAuthenticated || userInfoLoaded || localUserLoaded);
   
   // 根据认证状态显示不同内容
   return (

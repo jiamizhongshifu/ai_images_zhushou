@@ -5,6 +5,7 @@ import { createClient } from '@/utils/supabase/client';
 import { authService } from '@/utils/auth-service';
 import { creditService } from '@/utils/credit-service';
 import { limitRequest, REQUEST_KEYS } from '@/utils/request-limiter';
+import { useSearchParams } from 'next/navigation';
 
 // 定义上下文类型
 interface UserStateContextType {
@@ -40,6 +41,7 @@ export function UserStateProvider({ children }: UserStateProviderProps) {
   const [lastFetchTime, setLastFetchTime] = useState<number>(0);
   const [isInitializing, setIsInitializing] = useState<boolean>(true);
   const [userInfoLoaded, setUserInfoLoaded] = useState<boolean>(false);
+  const searchParams = useSearchParams(); // 获取URL参数
   
   // 防抖动引用和状态跟踪
   const authChangeDebounceRef = useRef<NodeJS.Timeout | null>(null);
@@ -50,6 +52,34 @@ export function UserStateProvider({ children }: UserStateProviderProps) {
   const loadingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   
   const supabase = createClient();
+  
+  // 检查登出状态的函数
+  const checkLogoutState = useCallback(() => {
+    if (typeof window === 'undefined') return false;
+    
+    const forceLoggedOut = localStorage.getItem('force_logged_out') === 'true';
+    const isLoggedOut = sessionStorage.getItem('isLoggedOut') === 'true';
+    const loggedOutParam = searchParams?.get('logged_out') === 'true';
+    
+    return forceLoggedOut || isLoggedOut || loggedOutParam;
+  }, [searchParams]);
+  
+  // 重置状态的函数
+  const resetState = useCallback(() => {
+    console.log('[UserStateProvider] 重置所有状态');
+    setCredits(null);
+    setIsAuthenticated(false);
+    setUserInfoLoaded(false);
+    setLastFetchTime(0);
+  }, []);
+  
+  // 监听URL参数变化
+  useEffect(() => {
+    if (checkLogoutState()) {
+      console.log('[UserStateProvider] 检测到登出状态，重置状态');
+      resetState();
+    }
+  }, [searchParams, checkLogoutState, resetState]);
 
   // 设置加载超时，确保加载状态不会卡住
   const setLoadingWithTimeout = (loading: boolean) => {
@@ -76,6 +106,13 @@ export function UserStateProvider({ children }: UserStateProviderProps) {
     const showLoading = options?.showLoading ?? true;
     const forceRefresh = options?.forceRefresh ?? false;
     
+    // 首先检查登出状态
+    if (checkLogoutState()) {
+      console.log('[UserStateProvider] 检测到登出状态，跳过刷新');
+      resetState();
+      return;
+    }
+    
     try {
       // 强制同步认证状态，确保使用最新状态
       try {
@@ -91,11 +128,10 @@ export function UserStateProvider({ children }: UserStateProviderProps) {
       
       if (currentAuthState) {
         setUserInfoLoaded(true);
-      }
-      
-      if (!currentAuthState) {
-        console.log('[UserStateProvider] 用户未认证，跳过获取积分');
+      } else {
+        setUserInfoLoaded(false);
         setCredits(null);
+        console.log('[UserStateProvider] 用户未认证，跳过获取积分');
         return;
       }
       
@@ -175,7 +211,7 @@ export function UserStateProvider({ children }: UserStateProviderProps) {
         setIsInitializing(false);
       }
     }
-  }, [lastFetchTime, credits, isInitializing]);
+  }, [lastFetchTime, credits, isInitializing, checkLogoutState, resetState]);
   
   // 新增：强制刷新积分的触发器函数
   const triggerCreditRefresh = useCallback(async () => {
@@ -204,6 +240,14 @@ export function UserStateProvider({ children }: UserStateProviderProps) {
     // 立即检查当前认证状态并更新
     const checkCurrentAuth = async () => {
       console.log('[UserStateProvider] 初始化时主动检查认证状态');
+      
+      // 首先检查登出状态
+      if (checkLogoutState()) {
+        console.log('[UserStateProvider] 初始化时检测到登出状态，强制设置未登录状态');
+        resetState();
+        return;
+      }
+      
       try {
         const { forceSyncAuthState } = await import('@/utils/auth-service');
         // 强制同步认证状态
@@ -218,6 +262,8 @@ export function UserStateProvider({ children }: UserStateProviderProps) {
         if (currentAuthState) {
           console.log('[UserStateProvider] 用户已登录，立即激活用户信息显示');
           setUserInfoLoaded(true);
+        } else {
+          setUserInfoLoaded(false);
         }
       } catch (e) {
         console.error('[UserStateProvider] 初始化检查认证状态出错:', e);
@@ -230,6 +276,13 @@ export function UserStateProvider({ children }: UserStateProviderProps) {
     // 监听认证状态变化
     const unsubscribe = authService.subscribe((authState) => {
       console.log('[UserStateProvider] 收到认证状态变化事件:', authState.isAuthenticated ? '已登录' : '未登录', '时间戳:', Date.now());
+      
+      // 检查登出状态
+      if (checkLogoutState()) {
+        console.log('[UserStateProvider] 检测到登出状态，忽略认证状态变化');
+        resetState();
+        return;
+      }
       
       // 清除之前的防抖定时器
       if (authChangeDebounceRef.current) {
@@ -245,6 +298,7 @@ export function UserStateProvider({ children }: UserStateProviderProps) {
         setUserInfoLoaded(true);
       } else {
         setUserInfoLoaded(false);
+        setCredits(null); // 未登录时清空积分
       }
       
       // 设置新的防抖定时器 - 用于点数刷新等耗时操作
@@ -310,7 +364,7 @@ export function UserStateProvider({ children }: UserStateProviderProps) {
       // ... 清理加载定时器 ...
     };
   // 依赖项更新，加入 isAuthenticated 以响应状态变化
-  }, [refreshUserState, credits, isInitializing, isAuthenticated]); 
+  }, [refreshUserState, credits, isInitializing, isAuthenticated, checkLogoutState, resetState]); 
   
   // 提供上下文值
   const contextValue: UserStateContextType = {
