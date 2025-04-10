@@ -10,6 +10,8 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useRef, useState } from "react";
 import { createClient } from "@/utils/supabase/client";
+import { useUserState } from '@/app/components/providers/user-state-provider';
+import { forceSyncAuthState } from '@/utils/auth-service';
 
 // 使用稳定的表单ID，避免服务端和客户端渲染不一致
 const LOGIN_FORM_ID = 'login-form-stable';
@@ -25,12 +27,14 @@ export default function LoginForm({ message }: LoginFormProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const redirectParam = searchParams?.get('redirect') || null;
+  // 引入用户状态提供者的状态更新函数
+  const { refreshUserState } = useUserState();
   
   // 表单引用，用于手动处理表单提交
   const formRef = useRef<HTMLFormElement>(null);
   
   // 处理登录成功后的重定向
-  const redirectToProtected = () => {
+  const redirectToProtected = async () => {
     const loginTime = Date.now();
     
     // 清除所有登出标记并设置认证标记
@@ -61,17 +65,45 @@ export default function LoginForm({ message }: LoginFormProps) {
       // 5. 在本地而不是通过API清除登出标记，避免异步请求和页面刷新竞争
       console.log('[登录表单] 本地清除登出标记，不再调用API');
       
-      // 6. 检查Supabase会话状态
+      // 新增：强制同步认证状态，确保立即更新
+      console.log('[登录表单] 强制同步认证状态');
+      try {
+        await forceSyncAuthState();
+        
+        // 强制触发用户状态更新，包括积分刷新
+        console.log('[登录表单] 通知全局状态提供者更新用户状态');
+        await refreshUserState({ forceRefresh: true, showLoading: false });
+      } catch (syncError) {
+        console.warn('[登录表单] 同步认证状态出错:', syncError);
+      }
+      
+      // 6. 检查Supabase会话状态 - 使用推荐的getUser方法
       const supabase = createClient();
-      supabase.auth.getSession().then(({ data }) => {
-        if (data.session) {
-          console.log('[登录表单] 验证Supabase会话有效');
+      try {
+        console.log('[登录表单] 使用getUser验证Supabase用户状态');
+        const { data: userData, error } = await supabase.auth.getUser();
+        
+        if (userData && userData.user) {
+          console.log('[登录表单] 验证Supabase用户有效:', userData.user.id);
         } else {
-          console.warn('[登录表单] 未检测到有效Supabase会话');
+          console.warn('[登录表单] 未检测到有效Supabase用户:', error);
         }
-      }).catch(e => {
-        console.error('[登录表单] 检查Supabase会话出错:', e);
-      });
+      } catch (e) {
+        console.error('[登录表单] 检查Supabase用户出错:', e);
+      }
+      
+      // 7. 添加显式延迟，确保状态更新和API调用有足够时间完成
+      console.log('[登录表单] 添加延迟以确保认证状态同步');
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      // 8. 再次确认状态 - 二次确认是否已正确获取用户信息
+      try {
+        await refreshUserState({ forceRefresh: true, showLoading: false });
+        console.log('[登录表单] 状态同步确认完成，准备重定向');
+      } catch (error) {
+        console.warn('[登录表单] 二次状态同步失败:', error);
+      }
+      
     } catch (error) {
       console.warn('[登录表单] 设置认证状态失败:', error);
     }

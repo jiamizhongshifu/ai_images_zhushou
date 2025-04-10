@@ -6,9 +6,10 @@ import { useRouter } from 'next/navigation';
 import { createClient } from '@/utils/supabase/client';
 import { Button } from '@/components/ui/button';
 import { User, LogOut, LogIn } from 'lucide-react';
-import UserCreditDisplay from '@/components/user-credit-display';
-import { authService } from '@/utils/auth-service';
+import { UserCreditDisplay } from '@/components/user-credit-display';
+import { authService, forceSyncAuthState } from '@/utils/auth-service';
 import { User as SupabaseUser } from '@supabase/supabase-js';
+import { useUserState } from '@/app/components/providers/user-state-provider';
 
 // 定义积分信息类型
 interface CreditsInfo {
@@ -19,184 +20,89 @@ interface CreditsInfo {
 
 export default function UserNav() {
   const router = useRouter();
-  const [user, setUser] = useState<any>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  // 使用全局状态作为主要状态源
+  const { isAuthenticated, userInfoLoaded, triggerCreditRefresh, refreshUserState } = useUserState();
+  
+  // 仅保留必要的本地状态
   const [isSigningOut, setIsSigningOut] = useState(false);
-  const [forceShowUser, setForceShowUser] = useState(false); // 强制显示用户状态的标志
-  const [open, setOpen] = useState(false);
-  const [userInfo, setUserInfo] = useState<SupabaseUser | null>(null);
-  const [creditsInfo, setCreditsInfo] = useState<CreditsInfo | null>(null);
+  const [userDetails, setUserDetails] = useState<any>(null);
+  const [localLoading, setLocalLoading] = useState(false);
+  // 添加本地认证状态，处理加载中状态
+  const [localUserLoaded, setLocalUserLoaded] = useState(false);
   const supabase = createClient();
   
+  // 组件挂载时立即获取当前会话
   useEffect(() => {
-    fetchUserInfo();
+    const checkCurrentUser = async () => {
+      try {
+        console.log('[UserNav] 组件挂载时检查当前用户');
+        setLocalLoading(true);
+        
+        // 直接使用推荐的getUser方法获取当前用户
+        const { data, error } = await supabase.auth.getUser();
+        
+        if (data && data.user) {
+          console.log('[UserNav] 直接获取到用户:', data.user.id);
+          setUserDetails(data.user);
+          setLocalUserLoaded(true);
+          
+          // 同步全局状态
+          await forceSyncAuthState();
+          await refreshUserState({ forceRefresh: false, showLoading: false });
+        } else {
+          console.log('[UserNav] 直接获取用户失败:', error);
+          setLocalUserLoaded(false);
+        }
+      } catch (error) {
+        console.error('[UserNav] 获取当前用户出错:', error);
+      } finally {
+        setLocalLoading(false);
+      }
+    };
+    
+    checkCurrentUser();
   }, []);
   
-  const fetchUserInfo = async () => {
+  // 当认证状态或用户信息加载状态变化时获取用户详情
+  useEffect(() => {
+    if (isAuthenticated || userInfoLoaded) {
+      fetchUserDetails();
+    } else {
+      setUserDetails(null);
+    }
+  }, [isAuthenticated, userInfoLoaded]);
+  
+  // 获取用户详细信息（可选）
+  const fetchUserDetails = async () => {
     try {
-      const { data } = await supabase.auth.getUser();
-      setUserInfo(data.user);
+      setLocalLoading(true);
       
-      if (data.user) {
-        const response = await fetch('/api/credits/get');
-        if (response.ok) {
-          const creditsData = await response.json();
-          setCreditsInfo(creditsData);
+      // 优先使用Supabase直接获取用户信息
+      try {
+        const { data, error } = await supabase.auth.getUser();
+        if (data && data.user) {
+          console.log('[UserNav] 通过Supabase直接获取用户详情成功');
+          setUserDetails(data.user);
+          setLocalUserLoaded(true);
+          return;
         }
+      } catch (e) {
+        console.warn('[UserNav] Supabase获取用户详情失败，尝试备用方法');
+      }
+      
+      // 备用：通过认证服务获取用户详情
+      const userInfo = await authService.getUserInfo();
+      if (userInfo) {
+        console.log('[UserNav] 通过认证服务获取用户详情成功');
+        setUserDetails(userInfo);
+        setLocalUserLoaded(true);
       }
     } catch (error) {
-      console.error('获取用户信息失败:', error);
+      console.error('[UserNav] 获取用户详情失败:', error);
+    } finally {
+      setLocalLoading(false);
     }
   };
-  
-  useEffect(() => {
-    async function getUser() {
-      try {
-        console.log('[UserNav] 开始获取用户信息');
-        
-        // 检查是否有登出标记，如果有则跳过获取用户信息
-        const forceLoggedOut = localStorage.getItem('force_logged_out') === 'true';
-        const isLoggedOut = sessionStorage.getItem('isLoggedOut') === 'true';
-        
-        if (forceLoggedOut || isLoggedOut) {
-          console.log('[UserNav] 检测到登出标记，强制设置未登录状态');
-          setUser(null);
-          setForceShowUser(false);
-          setIsLoading(false);
-          
-          // 为确保状态一致，也通知认证服务
-          authService.clearAuthState();
-          return;
-        }
-        
-        // 检查认证状态 - 优先通过API检查服务器会话
-        console.log('[UserNav] 检查服务器会话状态');
-        const isValidSession = await checkServerSession();
-        
-        if (!isValidSession) {
-          console.log('[UserNav] 服务器会话无效，设置为未登录状态');
-          setUser(null);
-          setForceShowUser(false);
-          setIsLoading(false);
-          return;
-        }
-        
-        // 服务器会话有效，继续获取用户信息
-        const userInfo = await authService.getUserInfo();
-        
-        if (userInfo) {
-          console.log(`[UserNav] 成功获取用户信息，ID: ${userInfo.id.substring(0, 8)}...`);
-          setUser(userInfo);
-        } else {
-          console.log('[UserNav] 未获取到用户信息，但服务器会话有效');
-          setForceShowUser(true);
-        }
-      } catch (err) {
-        console.error('[UserNav] 获取用户信息异常:', err);
-        
-        // 出错时设置为未登录状态
-        setUser(null);
-        setForceShowUser(false);
-      } finally {
-        setIsLoading(false);
-      }
-    }
-    
-    // 检查服务器会话
-    async function checkServerSession() {
-      try {
-        // 先使用 API 检查服务器端会话
-        const response = await fetch('/api/auth/status', {
-          headers: {
-            'Cache-Control': 'no-cache, no-store',
-            'Pragma': 'no-cache'
-          },
-          credentials: 'include'
-        });
-        
-        if (!response.ok) {
-          console.warn('[UserNav] 获取认证状态失败，状态码:', response.status);
-          return false;
-        }
-        
-        const data = await response.json();
-        return data.authenticated === true;
-      } catch (error) {
-        console.error('[UserNav] 检查服务器会话出错:', error);
-        return false;
-      }
-    }
-    
-    getUser();
-    
-    // 订阅认证状态变化
-    const unsubscribe = authService.subscribe((authState) => {
-      console.log(`[UserNav] 认证状态更新: isAuthenticated=${authState.isAuthenticated}`);
-      
-      // 检查是否有登出标记
-      const forceLoggedOut = localStorage.getItem('force_logged_out') === 'true';
-      const isLoggedOut = sessionStorage.getItem('isLoggedOut') === 'true';
-      
-      if (forceLoggedOut || isLoggedOut) {
-        console.log('[UserNav] 认证回调中检测到登出标记，强制设置为未登录状态');
-        setUser(null);
-        setForceShowUser(false);
-        return;
-      }
-      
-      if (authState.isAuthenticated) {
-        // 当认证状态更新为已认证，尝试获取用户信息
-        authService.getUserInfo().then(userInfo => {
-          if (userInfo) {
-            console.log('[UserNav] 认证状态更新后获取到用户信息');
-            setUser(userInfo);
-          } else {
-            console.log('[UserNav] 认证状态更新后未获取到用户信息，但认证有效');
-            setForceShowUser(true);
-          }
-        }).catch(error => {
-          console.error('[UserNav] 认证状态更新后获取用户信息失败:', error);
-          // 虽然认证有效但获取信息失败，也显示用户界面
-          setForceShowUser(true);
-        });
-      } else {
-        // 当认证状态更新为未认证，清除用户信息
-        console.log('[UserNav] 认证状态更新为未认证，清除用户信息');
-        setUser(null);
-        setForceShowUser(false);
-      }
-    });
-    
-    // 添加路由变化监听，确保在页面切换时重新检查
-    const handleRouteChange = () => {
-      console.log('[UserNav] 检测到路由变化，重新检查认证状态');
-      
-      // 检查登出标记
-      const forceLoggedOut = localStorage.getItem('force_logged_out') === 'true';
-      const isLoggedOut = sessionStorage.getItem('isLoggedOut') === 'true';
-      
-      if (forceLoggedOut || isLoggedOut) {
-        console.log('[UserNav] 路由变化时检测到登出标记，强制设置为未登录状态');
-        setUser(null);
-        setForceShowUser(false);
-      } else {
-        // 通过认证服务检查状态
-        if (!authService.isAuthenticated()) {
-          console.log('[UserNav] 路由变化时认证状态为未登录');
-          setUser(null);
-          setForceShowUser(false);
-        }
-      }
-    };
-    
-    // 监听popstate事件（浏览器后退/前进等导航操作）
-    window.addEventListener('popstate', handleRouteChange);
-    
-    return () => {
-      unsubscribe(); // 清理认证订阅
-      window.removeEventListener('popstate', handleRouteChange); // 清理路由监听
-    };
-  }, []);
   
   const handleLogout = async () => {
     try {
@@ -287,118 +193,62 @@ export default function UserNav() {
     }
   };
   
-  // 强制刷新会话
-  const refreshSession = async () => {
-    try {
-      console.log('[UserNav] 尝试刷新会话');
-      const result = await authService.refreshSession();
-      
-      if (result) {
-        console.log('[UserNav] 会话刷新成功');
-        // 重新获取用户信息
-        const userInfo = await authService.getUserInfo();
-        if (userInfo) {
-          setUser(userInfo);
-        }
-      } else {
-        console.log('[UserNav] 会话刷新失败');
-      }
-    } catch (error) {
-      console.error('[UserNav] 刷新会话异常:', error);
-    }
-  };
+  // 判断是否应该显示用户界面 - 结合全局状态和本地状态
+  const shouldShowUserUI = isAuthenticated || userInfoLoaded || localUserLoaded;
   
-  const handleManualAuth = () => {
-    console.log('[UserNav] 手动设置认证状态');
-    authService.manualAuthenticate();
-    setForceShowUser(true);
-  };
-  
-  // 清除登出标记，用于登录按钮点击时
-  const clearLogoutFlags = async () => {
-    console.log('[UserNav] 开始清除登出标记');
-    
-    // 本地存储清除
-    localStorage.removeItem('force_logged_out');
-    sessionStorage.removeItem('isLoggedOut');
-    sessionStorage.removeItem('logoutTime');
-    
-    // 调用服务器端API清除cookie
-    try {
-      const response = await fetch('/api/auth/clear-logout-flags', {
-        method: 'POST',
-        headers: {
-          'Cache-Control': 'no-cache, no-store',
-          'Pragma': 'no-cache'
-        },
-        credentials: 'include'
-      });
-      
-      if (response.ok) {
-        console.log('[UserNav] 服务器端成功清除登出标记');
-      } else {
-        console.warn('[UserNav] 服务器端清除登出标记失败:', response.status);
-      }
-    } catch (error) {
-      console.error('[UserNav] 调用清除登出标记API出错:', error);
-    }
-    
-    // 确保浏览器中的cookie也被清除
-    const cookiesToClear = ['logged_out', 'force_logged_out', 'isLoggedOut'];
-    const commonOptions = '; path=/; max-age=0; expires=Thu, 01 Jan 1970 00:00:00 GMT';
-    
-    cookiesToClear.forEach(cookieName => {
-      document.cookie = `${cookieName}=${commonOptions}`;
-      document.cookie = `${cookieName}=${commonOptions}; domain=${window.location.hostname}`;
-    });
-    
-    // 设置重定向URL并添加时间戳参数防止缓存
-    const timestamp = Date.now().toString();
-    
-    // 添加强制登录标记cookie
-    document.cookie = 'force_login=true; path=/; max-age=3600';
-    
-    console.log('[UserNav] 登出标记已清除，正在跳转到登录页面');
-    // 使用router跳转避免整页刷新
-    router.push(`/sign-in?clear_logout_flags=true&t=${timestamp}`);
-  };
-  
-  if (isLoading) {
-    return null; // 加载中不显示
-  }
-  
-  // 如果有用户或强制显示用户界面，则显示用户信息和登出按钮
-  const shouldShowUserUI = user || forceShowUser;
-  
+  // 根据认证状态显示不同内容
   return (
-    <div className="fixed top-6 right-6 z-[5000] flex items-center gap-4">
+    <div className="flex items-center gap-2">
       {shouldShowUserUI ? (
-        <div className="flex items-center gap-4 bg-white/80 dark:bg-black/80 backdrop-blur-md rounded-full px-4 py-2 shadow-lg border border-gray-200 dark:border-gray-800">
-          <UserCreditDisplay />
-          
-          <div className="h-4 w-px bg-gray-300 dark:bg-gray-700" />
+        <>
+          <div className="inline-flex items-center">
+            <UserCreditDisplay />
+          </div>
           
           <Button
+            title="个人中心"
             variant="ghost"
-            size="sm"
-            className="gap-2"
+            size="icon"
+            className="rounded-full"
+            asChild={!isSigningOut}
+            disabled={isSigningOut}
+          >
+            {isSigningOut ? (
+              <div className="flex h-full w-full items-center justify-center">
+                <div className="h-5 w-5 animate-spin rounded-full border-2 border-current border-t-transparent"></div>
+              </div>
+            ) : (
+              <Link href="/dashboard/profile">
+                <User className="h-5 w-5" />
+              </Link>
+            )}
+          </Button>
+          
+          <Button
+            title="退出登录"
+            variant="ghost"
+            size="icon"
+            className="rounded-full"
             onClick={handleLogout}
             disabled={isSigningOut}
           >
-            <LogOut className="h-4 w-4" />
-            <span className="hidden sm:inline">{isSigningOut ? "退出中..." : "退出"}</span>
+            {isSigningOut ? (
+              <div className="h-5 w-5 animate-spin rounded-full border-2 border-current border-t-transparent"></div>
+            ) : (
+              <LogOut className="h-5 w-5" />
+            )}
           </Button>
-        </div>
+        </>
       ) : (
-        <div className="flex items-center gap-2">
+        <div className="inline-flex gap-2">
           <Button
-            className="rounded-full bg-white/80 dark:bg-black/80 backdrop-blur-md shadow-lg border border-gray-200 dark:border-gray-800"
-            onClick={clearLogoutFlags}
+            title="登录"
+            variant="default"
+            className="h-9 px-4"
+            onClick={() => router.push('/login')}
           >
-            <div className="flex items-center gap-2">
-              <LogIn className="h-4 w-4" />
-              <span>登录</span>
-            </div>
+            <LogIn className="mr-1 h-4 w-4" />
+            <span>登录</span>
           </Button>
         </div>
       )}

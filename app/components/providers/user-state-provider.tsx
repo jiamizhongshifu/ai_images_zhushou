@@ -13,6 +13,7 @@ interface UserStateContextType {
   isAuthenticated: boolean;
   refreshUserState: (options?: { showLoading?: boolean; forceRefresh?: boolean }) => Promise<void>;
   triggerCreditRefresh: () => Promise<void>;
+  userInfoLoaded: boolean;
 }
 
 // 创建上下文
@@ -22,6 +23,7 @@ const UserStateContext = createContext<UserStateContextType>({
   isAuthenticated: false,
   refreshUserState: async () => {},
   triggerCreditRefresh: async () => {},
+  userInfoLoaded: false
 });
 
 // 导出使用上下文的钩子
@@ -37,6 +39,7 @@ export function UserStateProvider({ children }: UserStateProviderProps) {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
   const [lastFetchTime, setLastFetchTime] = useState<number>(0);
   const [isInitializing, setIsInitializing] = useState<boolean>(true);
+  const [userInfoLoaded, setUserInfoLoaded] = useState<boolean>(false);
   
   // 防抖动引用和状态跟踪
   const authChangeDebounceRef = useRef<NodeJS.Timeout | null>(null);
@@ -85,6 +88,10 @@ export function UserStateProvider({ children }: UserStateProviderProps) {
       // 重新检查认证状态
       const currentAuthState = authService.isAuthenticated();
       setIsAuthenticated(currentAuthState);
+      
+      if (currentAuthState) {
+        setUserInfoLoaded(true);
+      }
       
       if (!currentAuthState) {
         console.log('[UserStateProvider] 用户未认证，跳过获取积分');
@@ -194,31 +201,64 @@ export function UserStateProvider({ children }: UserStateProviderProps) {
   useEffect(() => {
     console.log('[UserStateProvider] 设置认证状态监听器');
     
+    // 立即检查当前认证状态并更新
+    const checkCurrentAuth = async () => {
+      console.log('[UserStateProvider] 初始化时主动检查认证状态');
+      try {
+        const { forceSyncAuthState } = await import('@/utils/auth-service');
+        // 强制同步认证状态
+        forceSyncAuthState();
+        
+        // 获取最新认证状态
+        const currentAuthState = authService.isAuthenticated();
+        console.log('[UserStateProvider] 初始认证状态:', currentAuthState ? '已登录' : '未登录');
+        
+        // 立即更新状态
+        setIsAuthenticated(currentAuthState);
+        if (currentAuthState) {
+          console.log('[UserStateProvider] 用户已登录，立即激活用户信息显示');
+          setUserInfoLoaded(true);
+        }
+      } catch (e) {
+        console.error('[UserStateProvider] 初始化检查认证状态出错:', e);
+      }
+    };
+    
+    // 立即执行初始检查
+    checkCurrentAuth();
+    
     // 监听认证状态变化
     const unsubscribe = authService.subscribe((authState) => {
-      console.log('[UserStateProvider] 收到认证状态变化事件:', authState.isAuthenticated ? '已登录' : '未登录');
+      console.log('[UserStateProvider] 收到认证状态变化事件:', authState.isAuthenticated ? '已登录' : '未登录', '时间戳:', Date.now());
       
       // 清除之前的防抖定时器
       if (authChangeDebounceRef.current) {
         clearTimeout(authChangeDebounceRef.current);
       }
       
-      // 设置新的防抖定时器
+      // 重要：立即设置基本状态，不需要等待防抖
+      const prevAuth = isAuthenticated;
+      setIsAuthenticated(authState.isAuthenticated);
+      
+      if (authState.isAuthenticated) {
+        console.log('[UserStateProvider] 认证状态为已登录，立即激活用户信息显示');
+        setUserInfoLoaded(true);
+      } else {
+        setUserInfoLoaded(false);
+      }
+      
+      // 设置新的防抖定时器 - 用于点数刷新等耗时操作
       authChangeDebounceRef.current = setTimeout(() => {
         console.log('[UserStateProvider] 处理认证状态变化（防抖后）:', authState.isAuthenticated ? '已登录' : '未登录');
         
-        // 先更新认证状态
-        const previousAuthState = isAuthenticated;
-        setIsAuthenticated(authState.isAuthenticated);
-        
-        if (authState.isAuthenticated && !previousAuthState) {
+        if (authState.isAuthenticated && !prevAuth) {
           // 从 未认证 -> 已认证 (登录)
-          console.log('[UserStateProvider] 用户已认证，强制获取积分');
+          console.log('[UserStateProvider] 用户刚完成登录，强制获取积分');
           // 强制刷新积分
           refreshUserState({ forceRefresh: true, showLoading: true });
-        } else if (!authState.isAuthenticated && previousAuthState) {
+        } else if (!authState.isAuthenticated && prevAuth) {
           // 从 已认证 -> 未认证 (登出)
-          console.log('[UserStateProvider] 用户未认证，清空积分');
+          console.log('[UserStateProvider] 用户刚完成登出，清空积分');
           setCredits(null);
         }
         // 其他情况（状态未变或应用加载初期）忽略
@@ -279,6 +319,7 @@ export function UserStateProvider({ children }: UserStateProviderProps) {
     isAuthenticated,
     refreshUserState,
     triggerCreditRefresh, // 提供新的触发器函数
+    userInfoLoaded
   };
   
   return (
