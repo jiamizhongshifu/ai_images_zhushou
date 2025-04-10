@@ -3,13 +3,17 @@ import { createClient } from '@/utils/supabase/server';
 
 export async function GET(
   request: NextRequest,
-  context: { params: { taskId: string } }
+  context: { params: Promise<{ taskId: string }> }
 ) {
   try {
-    // 获取任务ID
-    const { taskId } = context.params;
+    // 获取任务ID - 注意Next.js 15需要await params
+    const params = await context.params;
+    const { taskId } = params;
+    
+    console.log(`[TaskStatus API] 获取任务状态: ${taskId}`);
     
     if (!taskId) {
+      console.log('[TaskStatus API] 缺少任务ID');
       return NextResponse.json(
         { error: '缺少任务ID' },
         { status: 400 }
@@ -18,14 +22,17 @@ export async function GET(
     
     // 获取用户信息
     const supabase = await createClient();
-    const { data: { user } } = await supabase.auth.getUser();
+    const { data: { user }, error: authError } = await supabase.auth.getUser();
     
     if (!user) {
+      console.log('[TaskStatus API] 用户未认证');
       return NextResponse.json(
         { error: '未授权访问' },
         { status: 401 }
       );
     }
+    
+    console.log(`[TaskStatus API] 用户已认证: ${user.id}, 查询任务: ${taskId}`);
     
     // 查询任务状态
     const { data, error } = await supabase
@@ -36,7 +43,7 @@ export async function GET(
       .single();
     
     if (error) {
-      console.error(`查询任务状态失败: ${error.message}`);
+      console.error(`[TaskStatus API] 查询任务状态失败: ${error.message}`);
       return NextResponse.json(
         { error: '查询任务状态失败', details: error.message },
         { status: 500 }
@@ -44,6 +51,7 @@ export async function GET(
     }
     
     if (!data) {
+      console.log(`[TaskStatus API] 任务不存在或无权访问: ${taskId}`);
       return NextResponse.json(
         { error: '任务不存在或无权访问' },
         { status: 404 }
@@ -53,6 +61,7 @@ export async function GET(
     // 根据任务状态返回不同的响应
     switch (data.status) {
       case 'completed':
+        console.log(`[TaskStatus API] 任务已完成: ${taskId}`);
         return NextResponse.json({
           taskId: data.id,
           status: 'completed',
@@ -63,6 +72,7 @@ export async function GET(
         });
         
       case 'failed':
+        console.log(`[TaskStatus API] 任务失败: ${taskId}, 错误: ${data.error_message}`);
         return NextResponse.json({
           taskId: data.id,
           status: 'failed',
@@ -74,19 +84,20 @@ export async function GET(
       case 'pending':
       case 'processing':
       default:
+        const waitTime = Math.floor((Date.now() - new Date(data.created_at).getTime()) / 1000);
+        console.log(`[TaskStatus API] 任务处理中: ${taskId}, 状态: ${data.status}, 等待时间: ${waitTime}秒`);
         return NextResponse.json({
           taskId: data.id,
           status: data.status,
           prompt: data.prompt,
           style: data.style,
           createdAt: data.created_at,
-          // 如果有进度信息，也可以返回
-          waitTime: Math.floor((Date.now() - new Date(data.created_at).getTime()) / 1000)
+          waitTime: waitTime
         });
     }
     
   } catch (error) {
-    console.error(`处理任务状态查询失败: ${error instanceof Error ? error.message : String(error)}`);
+    console.error(`[TaskStatus API] 处理任务状态查询失败: ${error instanceof Error ? error.message : String(error)}`);
     return NextResponse.json(
       { error: '查询任务状态失败', details: error instanceof Error ? error.message : String(error) },
       { status: 500 }

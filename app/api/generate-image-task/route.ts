@@ -4,6 +4,7 @@ import { createAdminClient } from '@/utils/supabase/admin';
 import { getApiConfig } from '@/utils/env';
 import { v4 as uuid } from 'uuid';
 import { OpenAI } from 'openai';
+import { updateCredits } from '@/utils/credit-service';
 
 // 定义TuziConfig类型
 interface TuziConfig {
@@ -96,6 +97,41 @@ function extractImageUrl(content: string): string | null {
   
   return null;
 }
+
+// 进行点数更新，并发送事件
+const notifyCreditsUpdate = async (userId: string, newCredits: number) => {
+  try {
+    // 使用点数服务的updateCredits通知前端刷新
+    updateCredits(newCredits);
+    logger.info(`已触发点数更新事件, 用户: ${userId}, 新点数: ${newCredits}`);
+    
+    // 创建重试机制，确保事件能够正确发送
+    let retryCount = 0;
+    const maxRetries = 3;
+    const retryInterval = 1000; // 1秒
+    
+    const retryUpdateCredits = () => {
+      setTimeout(() => {
+        try {
+          updateCredits(newCredits);
+          logger.info(`重试触发点数更新事件 #${retryCount+1}, 用户: ${userId}, 新点数: ${newCredits}`);
+        } catch (retryError) {
+          logger.error(`重试触发点数更新事件失败 #${retryCount+1}: ${retryError instanceof Error ? retryError.message : String(retryError)}`);
+          retryCount++;
+          if (retryCount < maxRetries) {
+            retryUpdateCredits();
+          }
+        }
+      }, retryInterval * (retryCount + 1));
+    };
+    
+    // 添加一次延迟重试，确保前端有足够时间处理事件
+    retryUpdateCredits();
+    
+  } catch (eventError) {
+    logger.error(`触发点数更新事件失败: ${eventError instanceof Error ? eventError.message : String(eventError)}`);
+  }
+};
 
 export async function POST(request: NextRequest) {
   try {
@@ -335,6 +371,84 @@ export async function POST(request: NextRequest) {
             aspectRatio, 
             standardAspectRatio
           );
+
+          // 扣除用户点数
+          try {
+            // 创建管理员客户端以便更新点数
+            const adminClient = await createAdminClient();
+            logger.info(`准备从用户 ${user.id} 扣除1点积分`);
+            
+            // 查询用户当前点数
+            const { data: creditsData, error: fetchError } = await adminClient
+              .from('ai_images_creator_credits')
+              .select('credits')
+              .eq('user_id', user.id)
+              .maybeSingle();
+              
+            if (fetchError) {
+              logger.error(`查询用户点数失败: ${fetchError.message}`);
+              throw new Error(`查询点数失败: ${fetchError.message}`);
+            }
+            
+            if (!creditsData) {
+              logger.info(`用户 ${user.id} 点数记录不存在，创建初始记录`);
+              
+              // 创建新记录，初始5点并扣除1点
+              const { data: newRecord, error: insertError } = await adminClient
+                .from('ai_images_creator_credits')
+                .insert({
+                  user_id: user.id,
+                  credits: 4, // 默认5点，减去本次使用的1点
+                  created_at: new Date().toISOString(),
+                  updated_at: new Date().toISOString()
+                })
+                .select('credits')
+                .single();
+                
+              if (insertError) {
+                logger.error(`创建用户点数记录失败: ${insertError.message}`);
+                throw new Error(`创建点数记录失败: ${insertError.message}`);
+              }
+              
+              logger.info(`成功为用户 ${user.id} 创建点数记录并扣除1点，剩余: ${newRecord.credits}`);
+
+              // 通知前端更新点数
+              await notifyCreditsUpdate(user.id, newRecord.credits);
+              
+              return;
+            }
+            
+            // 验证点数是否足够
+            if (creditsData.credits < 1) {
+              logger.error(`用户 ${user.id} 点数不足，当前点数: ${creditsData.credits}`);
+              throw new Error(`点数不足，无法生成图像`);
+            }
+            
+            // 更新用户点数
+            const newCredits = creditsData.credits - 1;
+            const { data: updatedRecord, error: updateError } = await adminClient
+              .from('ai_images_creator_credits')
+              .update({
+                credits: newCredits,
+                updated_at: new Date().toISOString()
+              })
+              .eq('user_id', user.id)
+              .select('credits')
+              .single();
+              
+            if (updateError) {
+              logger.error(`更新用户点数失败: ${updateError.message}`);
+              throw new Error(`点数扣除失败: ${updateError.message}`);
+            }
+            
+            logger.info(`成功从用户 ${user.id} 扣除1点，剩余点数: ${updatedRecord.credits}`);
+
+            // 通知前端更新点数
+            await notifyCreditsUpdate(user.id, updatedRecord.credits);
+          } catch (creditsError) {
+            logger.error(`扣除点数过程中出错: ${creditsError instanceof Error ? creditsError.message : String(creditsError)}`);
+            // 即使扣除点数失败，仍然继续，因为图片已生成成功
+          }
         } else {
           throw new Error('API未返回有效的图像URL');
         }

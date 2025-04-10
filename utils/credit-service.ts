@@ -38,11 +38,84 @@ const subscribers: Array<(state: CreditState) => void> = [];
 let isRefreshing = false;
 let refreshPromise: Promise<number | null> | null = null;
 
+// 添加全局事件类型
+const CREDIT_EVENTS = {
+  CREDITS_CHANGED: 'credits_changed',
+  CREDITS_REFRESH_NEEDED: 'credits_refresh_needed',
+  PAGE_NAVIGATED: 'page_navigated'
+};
+
+// 全局事件总线
+const eventBus = {
+  listeners: {} as Record<string, Function[]>,
+  
+  on(event: string, callback: Function) {
+    if (!this.listeners[event]) {
+      this.listeners[event] = [];
+    }
+    this.listeners[event].push(callback);
+    return () => this.off(event, callback);
+  },
+  
+  off(event: string, callback: Function) {
+    if (!this.listeners[event]) return;
+    this.listeners[event] = this.listeners[event].filter(cb => cb !== callback);
+  },
+  
+  emit(event: string, data?: any) {
+    if (!this.listeners[event]) return;
+    console.log(`[EventBus] 触发事件: ${event}`, data ? '有数据' : '无数据');
+    this.listeners[event].forEach(callback => {
+      try {
+        callback(data);
+      } catch (error) {
+        console.error(`[EventBus] 执行事件回调出错:`, error);
+      }
+    });
+  }
+};
+
+// 添加路由监听，当路由变化时触发刷新
+if (typeof window !== 'undefined') {
+  try {
+    const originalPushState = window.history.pushState;
+    const originalReplaceState = window.history.replaceState;
+    
+    // 重写pushState以捕获导航
+    window.history.pushState = function() {
+      const result = originalPushState.apply(this, arguments as any);
+      console.log('[CreditService] 检测到页面导航 (pushState)');
+      eventBus.emit(CREDIT_EVENTS.PAGE_NAVIGATED);
+      return result;
+    };
+    
+    // 重写replaceState以捕获导航
+    window.history.replaceState = function() {
+      const result = originalReplaceState.apply(this, arguments as any);
+      console.log('[CreditService] 检测到页面导航 (replaceState)');
+      eventBus.emit(CREDIT_EVENTS.PAGE_NAVIGATED);
+      return result;
+    };
+    
+    // 监听popstate事件（后退/前进按钮）
+    window.addEventListener('popstate', () => {
+      console.log('[CreditService] 检测到页面导航 (popstate)');
+      eventBus.emit(CREDIT_EVENTS.PAGE_NAVIGATED);
+    });
+    
+    console.log('[CreditService] 已设置页面导航监听');
+  } catch (error) {
+    console.error('[CreditService] 设置页面导航监听失败:', error);
+  }
+}
+
 /**
  * 用户点数服务类
  */
 class CreditService {
   private static instance: CreditService;
+  private pendingAuthCheck: boolean = false;
+  private lastAuthCheck: number = 0;
 
   private constructor() {
     // 初始化时立即同步一次缓存中的点数
@@ -50,18 +123,52 @@ class CreditService {
     
     // 订阅认证状态变化
     authService.subscribe((authState) => {
-      if (authState.isAuthenticated) {
-        // 用户登录时获取点数
-        this.fetchCredits();
-      } else {
-        // 用户登出时清空点数
-        this.setCreditState({
-          credits: null,
-          lastUpdate: Date.now(),
-          isLoading: false
-        });
+      // 加入防抖动，避免短时间内多次触发
+      const now = Date.now();
+      if (this.pendingAuthCheck || (now - this.lastAuthCheck < 1000)) {
+        console.log('[CreditService] 跳过短时间内重复的认证状态检查');
+        return;
       }
+      
+      this.pendingAuthCheck = true;
+      this.lastAuthCheck = now;
+      
+      setTimeout(() => {
+        this.pendingAuthCheck = false;
+        
+        if (authState.isAuthenticated) {
+          // 用户登录时获取点数
+          console.log('[CreditService] 用户已登录，获取最新点数');
+          this.fetchCredits(true).then(credits => {
+            // 发送点数刷新完成事件
+            eventBus.emit(CREDIT_EVENTS.CREDITS_CHANGED, this.getCreditState());
+            console.log('[CreditService] 已发送点数变化事件:', credits);
+          }).catch(err => {
+            console.error('[CreditService] 获取点数失败:', err);
+          });
+        } else {
+          // 用户登出时清空点数
+          this.setCreditState({
+            credits: null,
+            lastUpdate: Date.now(),
+            isLoading: false
+          });
+          // 发送点数变化事件
+          eventBus.emit(CREDIT_EVENTS.CREDITS_CHANGED, this.getCreditState());
+        }
+      }, 100);
     });
+    
+    // 添加页面加载完成事件监听
+    if (typeof window !== 'undefined') {
+      window.addEventListener('load', () => {
+        console.log('[CreditService] 页面加载完成，检查认证状态');
+        if (authService.isAuthenticated()) {
+          console.log('[CreditService] 页面加载完成，用户已登录，获取点数');
+          this.fetchCredits(true);
+        }
+      });
+    }
   }
 
   /**
@@ -175,18 +282,32 @@ class CreditService {
       return refreshPromise;
     }
     
+    console.log('[CreditService] 开始获取点数，强制刷新:', forceRefresh);
     isRefreshing = true;
     this.setCreditState({ isLoading: true });
     
     refreshPromise = (async () => {
       try {
+        // 清除缓存，确保从服务器获取最新数据
+        if (forceRefresh) {
+          cacheService.delete(CREDITS_CACHE_KEY);
+          console.log('[CreditService] 强制刷新，已清除点数缓存');
+        }
+
         // 使用缓存服务获取数据
         const data = await cacheService.getOrFetch<CreditsResponse>(
           CREDITS_CACHE_KEY,
           async () => {
+            // 添加随机数参数和时间戳，防止缓存
+            const timestamp = Date.now();
+            const randomParam = Math.random().toString(36).substring(2, 15);
             console.log('[CreditService] 从API获取点数');
-            const response = await fetch('/api/credits/get', {
-              headers: { 'Cache-Control': 'no-cache' }
+            const response = await fetch(`/api/credits/get?_t=${timestamp}&_r=${randomParam}`, {
+              headers: { 
+                'Cache-Control': 'no-cache, no-store, must-revalidate',
+                'Pragma': 'no-cache',
+                'Expires': '0'
+              }
             });
             
             if (!response.ok) {
@@ -213,6 +334,9 @@ class CreditService {
             credits: data.credits,
             lastUpdate: Date.now()
           });
+          
+          // 明确触发点数变化事件
+          eventBus.emit(CREDIT_EVENTS.CREDITS_CHANGED, this.getCreditState());
           
           return data.credits;
         } else {
@@ -241,10 +365,16 @@ class CreditService {
    * @param newCredits 新的点数值
    */
   public updateCredits(newCredits: number): void {
+    console.log('[CreditService] 更新点数:', newCredits);
+    
     this.setCreditState({
       credits: newCredits,
       lastUpdate: Date.now()
     });
+    
+    // 发送点数变化事件
+    eventBus.emit(CREDIT_EVENTS.CREDITS_CHANGED, this.getCreditState());
+    console.log('[CreditService] 已发送点数变化事件');
     
     // 更新缓存
     try {
@@ -288,15 +418,34 @@ class CreditService {
     
     console.log('[CreditService] 已完全重置点数状态');
   }
+
+  /**
+   * 订阅点数相关事件
+   * @param event 事件名称
+   * @param callback 回调函数
+   */
+  public onEvent(event: string, callback: Function): () => void {
+    return eventBus.on(event, callback);
+  }
+
+  /**
+   * 触发需要刷新点数的事件
+   */
+  public triggerRefresh(): void {
+    console.log('[CreditService] 触发点数刷新事件');
+    eventBus.emit(CREDIT_EVENTS.CREDITS_REFRESH_NEEDED);
+  }
 }
 
 // 创建单例实例
 const creditService = CreditService.getInstance();
 
-// 导出方法
-export { creditService };
+// 导出事件和方法
+export { creditService, CREDIT_EVENTS };
 export const getCredits = () => creditService.getCredits();
 export const fetchCredits = (forceRefresh?: boolean) => creditService.fetchCredits(forceRefresh);
 export const updateCredits = (newCredits: number) => creditService.updateCredits(newCredits);
 export const clearCreditsCache = () => creditService.clearCache();
-export const resetCreditsState = () => creditService.resetState(); 
+export const resetCreditsState = () => creditService.resetState();
+export const onCreditEvent = (event: string, callback: Function) => creditService.onEvent(event, callback);
+export const triggerCreditRefresh = () => creditService.triggerRefresh(); 

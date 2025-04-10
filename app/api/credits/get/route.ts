@@ -1,6 +1,6 @@
 import { createClient } from '@/utils/supabase/server';
 import { createAdminClient } from '@/utils/supabase/admin';
-import { NextRequest } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 
 /**
  * 获取用户当前点数的API接口
@@ -13,6 +13,8 @@ import { NextRequest } from 'next/server';
  */
 export async function GET(request: NextRequest) {
   try {
+    console.log('[Credits API] 处理获取用户点数请求');
+    
     // 创建Supabase客户端
     const supabase = await createClient();
     
@@ -20,11 +22,14 @@ export async function GET(request: NextRequest) {
     const { data: { user }, error: authError } = await supabase.auth.getUser();
     
     if (authError || !user) {
-      return new Response(JSON.stringify({ success: false, error: "用户未认证" }), {
-        status: 401,
-        headers: { 'Content-Type': 'application/json' }
-      });
+      console.log('[Credits API] 用户未认证');
+      return NextResponse.json({ 
+        success: false, 
+        error: "用户未认证" 
+      }, { status: 401 });
     }
+    
+    console.log(`[Credits API] 用户已认证: ${user.id}`);
     
     // 查询用户点数
     const { data: creditsData, error: creditsError } = await supabase
@@ -35,7 +40,7 @@ export async function GET(request: NextRequest) {
     
     // 如果找不到记录或发生错误，尝试创建一个新记录
     if (!creditsData || creditsError) {
-      console.log("用户点数记录不存在或查询错误，尝试创建新记录");
+      console.log(`[Credits API] 用户 ${user.id} 点数记录不存在或查询错误，尝试创建新记录`);
       
       // 使用管理员客户端创建记录
       const adminClient = await createAdminClient();
@@ -51,57 +56,53 @@ export async function GET(request: NextRequest) {
         .single();
       
       if (insertError) {
-        console.error("创建用户点数记录失败:", insertError);
+        console.error(`[Credits API] 创建用户 ${user.id} 点数记录失败:`, insertError);
         // 即使创建失败，也返回默认点数，确保前端可以显示
-        return new Response(JSON.stringify({ success: true, credits: 5 }), {
-          status: 200,
-          headers: { 
-            'Content-Type': 'application/json',
-            // 添加缓存控制头，禁止缓存
-            'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
-            'Pragma': 'no-cache',
-            'Expires': '0',
-            'Surrogate-Control': 'no-store'
+        return NextResponse.json(
+          { success: true, credits: 5 },
+          { 
+            status: 200,
+            headers: { 
+              'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+              'Pragma': 'no-cache',
+              'Expires': '0'
+            }
           }
-        });
+        );
       }
       
-      return new Response(JSON.stringify({ 
-        success: true, 
-        credits: newCredits?.credits || 5
-      }), {
-        status: 200,
-        headers: { 
-          'Content-Type': 'application/json',
-          // 添加缓存控制头，禁止缓存
-          'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
-          'Pragma': 'no-cache',
-          'Expires': '0',
-          'Surrogate-Control': 'no-store'
+      console.log(`[Credits API] 成功创建用户 ${user.id} 点数记录: ${newCredits?.credits || 5}`);
+      return NextResponse.json(
+        { success: true, credits: newCredits?.credits || 5 },
+        { 
+          status: 200,
+          headers: { 
+            'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+            'Pragma': 'no-cache',
+            'Expires': '0'
+          }
         }
-      });
+      );
     }
     
-    return new Response(JSON.stringify({ 
-      success: true, 
-      credits: creditsData.credits 
-    }), {
-      status: 200,
-      headers: { 
-        'Content-Type': 'application/json',
-        // 添加缓存控制头，禁止缓存
-        'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
-        'Pragma': 'no-cache',
-        'Expires': '0',
-        'Surrogate-Control': 'no-store'
+    console.log(`[Credits API] 成功获取用户 ${user.id} 点数: ${creditsData.credits}`);
+    return NextResponse.json(
+      { success: true, credits: creditsData.credits },
+      { 
+        status: 200,
+        headers: { 
+          'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+          'Pragma': 'no-cache',
+          'Expires': '0'
+        }
       }
-    });
+    );
     
   } catch (error: any) {
-    console.error("处理获取用户点数请求时出错:", error);
-    return new Response(JSON.stringify({ success: false, error: error.message || "服务器内部错误" }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json' }
-    });
+    console.error("[Credits API] 处理获取用户点数请求时出错:", error);
+    return NextResponse.json(
+      { success: false, error: error.message || "服务器内部错误" },
+      { status: 500 }
+    );
   }
 } 
