@@ -259,10 +259,11 @@ export default function useImageGeneration(
           try {
             processedImage = await compressImage(
               image,
-              MAX_IMAGE_WIDTH,
-              MAX_IMAGE_HEIGHT,
-              DEFAULT_QUALITY,
-              MAX_IMAGE_SIZE_KB
+              {
+                maxWidth: MAX_IMAGE_WIDTH,
+                maxHeight: MAX_IMAGE_HEIGHT,
+                quality: DEFAULT_QUALITY
+              }
             );
             
             const newSize = estimateBase64Size(processedImage);
