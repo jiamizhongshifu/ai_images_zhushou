@@ -1,8 +1,9 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, Suspense } from 'react';
 
-export default function ApiSelectPage() {
+// 创建一个包装组件来处理实际内容
+function ApiSelectContent() {
   const [prompt, setPrompt] = useState('');
   const [apiType, setApiType] = useState('tuzi'); // 'tuzi' 或 'openai'
   const [size, setSize] = useState('1024x1024');
@@ -165,5 +166,18 @@ export default function ApiSelectPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+// 导出默认组件，使用Suspense包装内容
+export default function ApiSelectPage() {
+  return (
+    <Suspense fallback={
+      <div className="flex justify-center items-center py-12">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
+      </div>
+    }>
+      <ApiSelectContent />
+    </Suspense>
   );
 } 

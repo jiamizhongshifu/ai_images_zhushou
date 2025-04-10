@@ -1,6 +1,6 @@
 "use client";
 
-import React, { createContext, useState, useEffect, useContext, useCallback, useRef } from 'react';
+import React, { createContext, useState, useEffect, useContext, useCallback, useRef, Suspense } from 'react';
 import { createClient } from '@/utils/supabase/client';
 import { authService } from '@/utils/auth-service';
 import { creditService } from '@/utils/credit-service';
@@ -30,28 +30,9 @@ const UserStateContext = createContext<UserStateContextType>({
 // 导出使用上下文的钩子
 export const useUserState = () => useContext(UserStateContext);
 
-interface UserStateProviderProps {
-  children: React.ReactNode;
-}
-
-export function UserStateProvider({ children }: UserStateProviderProps) {
-  const [credits, setCredits] = useState<number | null>(null);
-  const [isLoading, setIsLoading] = useState<boolean>(false);
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
-  const [lastFetchTime, setLastFetchTime] = useState<number>(0);
-  const [isInitializing, setIsInitializing] = useState<boolean>(true);
-  const [userInfoLoaded, setUserInfoLoaded] = useState<boolean>(false);
+// 创建一个处理搜索参数的包装组件
+function SearchParamsHandler({ onLogoutState }: { onLogoutState: (isLoggedOut: boolean) => void }) {
   const searchParams = useSearchParams(); // 获取URL参数
-  
-  // 防抖动引用和状态跟踪
-  const authChangeDebounceRef = useRef<NodeJS.Timeout | null>(null);
-  const refreshingRef = useRef<boolean>(false);
-  const initialCheckDoneRef = useRef<boolean>(false);
-  const pageReloadCheckRef = useRef<boolean>(false);
-  const initialLoadTimeRef = useRef<number>(Date.now());
-  const loadingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  
-  const supabase = createClient();
   
   // 检查登出状态的函数
   const checkLogoutState = useCallback(() => {
@@ -64,6 +45,50 @@ export function UserStateProvider({ children }: UserStateProviderProps) {
     return forceLoggedOut || isLoggedOut || loggedOutParam;
   }, [searchParams]);
   
+  // 监听URL参数变化
+  useEffect(() => {
+    const isLoggedOut = checkLogoutState();
+    if (isLoggedOut) {
+      console.log('[SearchParamsHandler] 检测到登出状态');
+      onLogoutState(true);
+    }
+  }, [searchParams, checkLogoutState, onLogoutState]);
+  
+  return null; // 这个组件不渲染任何内容
+}
+
+interface UserStateProviderProps {
+  children: React.ReactNode;
+}
+
+function UserStateProviderContent({ children }: UserStateProviderProps) {
+  const [credits, setCredits] = useState<number | null>(null);
+  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
+  const [lastFetchTime, setLastFetchTime] = useState<number>(0);
+  const [isInitializing, setIsInitializing] = useState<boolean>(true);
+  const [userInfoLoaded, setUserInfoLoaded] = useState<boolean>(false);
+  const [isLoggedOut, setIsLoggedOut] = useState<boolean>(false);
+  
+  // 防抖动引用和状态跟踪
+  const authChangeDebounceRef = useRef<NodeJS.Timeout | null>(null);
+  const refreshingRef = useRef<boolean>(false);
+  const initialCheckDoneRef = useRef<boolean>(false);
+  const pageReloadCheckRef = useRef<boolean>(false);
+  const initialLoadTimeRef = useRef<number>(Date.now());
+  const loadingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  
+  const supabase = createClient();
+  
+  // 处理登出状态回调
+  const handleLogoutState = useCallback((loggedOut: boolean) => {
+    if (loggedOut) {
+      console.log('[UserStateProvider] 收到登出状态通知，重置状态');
+      setIsLoggedOut(true);
+      resetState();
+    }
+  }, []);
+  
   // 重置状态的函数
   const resetState = useCallback(() => {
     console.log('[UserStateProvider] 重置所有状态');
@@ -73,13 +98,15 @@ export function UserStateProvider({ children }: UserStateProviderProps) {
     setLastFetchTime(0);
   }, []);
   
-  // 监听URL参数变化
-  useEffect(() => {
-    if (checkLogoutState()) {
-      console.log('[UserStateProvider] 检测到登出状态，重置状态');
-      resetState();
-    }
-  }, [searchParams, checkLogoutState, resetState]);
+  // 检查登出状态的函数 - 不依赖于searchParams
+  const checkLogoutState = useCallback(() => {
+    if (typeof window === 'undefined') return false;
+    
+    const forceLoggedOut = localStorage.getItem('force_logged_out') === 'true';
+    const isLoggedOut = sessionStorage.getItem('isLoggedOut') === 'true';
+    
+    return forceLoggedOut || isLoggedOut || isLoggedOut;
+  }, []);
 
   // 设置加载超时，确保加载状态不会卡住
   const setLoadingWithTimeout = (loading: boolean) => {
@@ -107,7 +134,7 @@ export function UserStateProvider({ children }: UserStateProviderProps) {
     const forceRefresh = options?.forceRefresh ?? false;
     
     // 首先检查登出状态
-    if (checkLogoutState()) {
+    if (checkLogoutState() || isLoggedOut) {
       console.log('[UserStateProvider] 检测到登出状态，跳过刷新');
       resetState();
       return;
@@ -211,7 +238,7 @@ export function UserStateProvider({ children }: UserStateProviderProps) {
         setIsInitializing(false);
       }
     }
-  }, [lastFetchTime, credits, isInitializing, checkLogoutState, resetState]);
+  }, [lastFetchTime, credits, isInitializing, checkLogoutState, resetState, isLoggedOut]);
   
   // 新增：强制刷新积分的触发器函数
   const triggerCreditRefresh = useCallback(async () => {
@@ -366,19 +393,33 @@ export function UserStateProvider({ children }: UserStateProviderProps) {
   // 依赖项更新，加入 isAuthenticated 以响应状态变化
   }, [refreshUserState, credits, isInitializing, isAuthenticated, checkLogoutState, resetState]); 
   
-  // 提供上下文值
-  const contextValue: UserStateContextType = {
-    credits,
-    isLoading: isLoading || isInitializing,
-    isAuthenticated,
-    refreshUserState,
-    triggerCreditRefresh, // 提供新的触发器函数
-    userInfoLoaded
-  };
-  
+  // 返回提供者组件
   return (
-    <UserStateContext.Provider value={contextValue}>
+    <UserStateContext.Provider 
+      value={{ 
+        credits, 
+        isLoading, 
+        isAuthenticated, 
+        refreshUserState, 
+        triggerCreditRefresh,
+        userInfoLoaded 
+      }}
+    >
+      <Suspense fallback={null}>
+        <SearchParamsHandler onLogoutState={handleLogoutState} />
+      </Suspense>
       {children}
     </UserStateContext.Provider>
+  );
+}
+
+// 导出主提供者组件
+export function UserStateProvider({ children }: UserStateProviderProps) {
+  return (
+    <Suspense fallback={null}>
+      <UserStateProviderContent>
+        {children}
+      </UserStateProviderContent>
+    </Suspense>
   );
 } 
