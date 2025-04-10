@@ -90,10 +90,10 @@ importers:
         specifier: ^3.3.3
         version: 3.5.3
       react:
-        specifier: 19.0.0
+        specifier: ^19.0.0
         version: 19.0.0
       react-dom:
-        specifier: 19.0.0
+        specifier: ^19.0.0
         version: 19.0.0(react@19.0.0)
       socket.io:
         specifier: ^4.8.1
