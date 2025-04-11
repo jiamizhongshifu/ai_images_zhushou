@@ -118,7 +118,7 @@ export async function POST(request: NextRequest) {
     // 创建任务记录
     const supabaseAdmin = await createAdminClient();
     const { error: taskError } = await supabaseAdmin
-      .from('ai_images_creator_tasks')
+      .from('image_tasks')
       .insert({
         user_id: user.id,
         task_id: taskId,

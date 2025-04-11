@@ -31,8 +31,8 @@ function createTuziClient() {
   const apiConfig = getApiConfig('tuzi') as TuziConfig;
   
   // 优先使用环境变量中的配置
-  const apiKey = apiConfig.apiKey || process.env.TUZI_API_KEY;
-  const baseURL = apiConfig.apiUrl || process.env.TUZI_BASE_URL || "https://api.tu-zi.com/v1";
+  const apiKey = apiConfig.apiKey || process.env.OPENAI_API_KEY;
+  const baseURL = apiConfig.apiUrl || process.env.OPENAI_BASE_URL || "https://api.tu-zi.com/v1";
   
   // 返回配置的客户端 - 使用图资API
   return new OpenAI({
@@ -119,7 +119,7 @@ export async function GET(request: Request) {
           // 调用Tuzi API
           const response = await tuziClient.images.generate({
             prompt: task.prompt,
-            model: task.model || process.env.TUZI_MODEL || 'default-model',
+            model: task.model || process.env.OPENAI_MODEL || 'default-model',
             response_format: 'url',
             user: `task_${task.id}_retry_${(task.attempt_count || 0) + 1}`
           });

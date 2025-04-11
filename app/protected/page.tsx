@@ -21,6 +21,7 @@ import useImageHistory from "@/hooks/useImageHistory";
 import useImageGeneration from "@/hooks/useImageGeneration";
 import useImageHandling from "@/hooks/useImageHandling";
 import useNotification from "@/hooks/useNotification";
+import TaskStatusListener from "@/app/components/TaskStatusListener";
 
 // 动态导入CreditRechargeDialog组件
 const CreditRechargeDialog = dynamic(
@@ -41,6 +42,9 @@ export default function ProtectedPage() {
   // 添加图片比例状态
   const [imageAspectRatio, setImageAspectRatio] = useState<string | null>(null);
   const [standardAspectRatio, setStandardAspectRatio] = useState<string | null>(null);
+  
+  // 添加当前任务ID状态
+  const [currentTaskId, setCurrentTaskId] = useState<string | null>(null);
   
   // 使用自定义hooks
   const { credits, isLoading: isLoadingCredits, refetch: refreshCredits } = useUserCredits();
@@ -128,22 +132,57 @@ export default function ProtectedPage() {
           console.log(`标准化为: ${standardRatio}`);
   };
   
-  // 处理图片生成
+  // 修改处理图片生成函数，保存任务ID
   const handleGenerateImage = async () => {
     setError(""); // 清除之前的错误
     
     try {
-      await generateImage({
+      const taskResult = await generateImage({
         prompt,
         image: uploadedImage,
         style: activeStyle,
         aspectRatio: imageAspectRatio,
         standardAspectRatio: standardAspectRatio
       });
+      
+      // 保存当前任务ID，用于实时状态更新
+      if (taskResult && 'taskId' in taskResult) {
+        console.log(`设置当前任务ID: ${taskResult.taskId}`);
+        setCurrentTaskId(taskResult.taskId);
+      }
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
       setError(errorMessage);
     }
+  };
+  
+  // 处理任务完成回调
+  const handleTaskCompleted = (imageUrl: string) => {
+    console.log(`任务完成，收到图片URL: ${imageUrl}`);
+    
+    // 更新生成的图片列表
+    if (imageUrl) {
+      setGeneratedImages((prevImages: string[]) => {
+        // 确保不会添加重复图片
+        return [imageUrl, ...prevImages.filter((url: string) => url !== imageUrl)];
+      });
+    }
+    
+    // 刷新点数和历史记录
+    refreshCredits(false, true);
+    refreshHistory(true);
+    
+    // 清除当前任务ID
+    setCurrentTaskId(null);
+  };
+  
+  // 处理任务错误回调
+  const handleTaskError = (errorMessage: string) => {
+    console.error(`任务失败: ${errorMessage}`);
+    setError(errorMessage || "图片生成失败");
+    
+    // 清除当前任务ID
+    setCurrentTaskId(null);
   };
   
   // 重置对话
@@ -178,6 +217,15 @@ export default function ProtectedPage() {
 
   return (
     <div className="flex-1 w-full flex flex-col items-center">
+      {/* 添加任务状态监听器 */}
+      {currentTaskId && (
+        <TaskStatusListener
+          taskId={currentTaskId}
+          onCompleted={handleTaskCompleted}
+          onError={handleTaskError}
+        />
+      )}
+      
       <div className="max-w-7xl w-full px-4 py-8">
         {/* 页面标题 */}
         <div className="flex flex-col items-center mb-6 md:mb-8">

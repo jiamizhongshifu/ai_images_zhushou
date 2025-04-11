@@ -54,14 +54,14 @@ function checkApiKey() {
   console.log('\n--- 其他相关API配置 ---');
   
   // 检查TUZI API配置
-  const tuziKey = process.env.TUZI_API_KEY;
-  const tuziBaseUrl = process.env.TUZI_BASE_URL;
-  const tuziModel = process.env.TUZI_MODEL;
+  const tuziKey = process.env.OPENAI_API_KEY;
+  const tuziBaseUrl = process.env.OPENAI_BASE_URL;
+  const tuziModel = process.env.OPENAI_MODEL;
   const useTuziApi = process.env.USE_TUZI_API;
   
-  console.log(`TUZI_API_KEY: ${tuziKey ? '✅ 已设置' : '❌ 未设置'}`);
-  console.log(`TUZI_BASE_URL: ${tuziBaseUrl ? '✅ 已设置' : '❌ 未设置'}`);
-  console.log(`TUZI_MODEL: ${tuziModel ? '✅ 已设置' : '❌ 未设置'}`);
+  console.log(`OPENAI_API_KEY: ${tuziKey ? '✅ 已设置' : '❌ 未设置'}`);
+  console.log(`OPENAI_BASE_URL: ${tuziBaseUrl ? '✅ 已设置' : '❌ 未设置'}`);
+  console.log(`OPENAI_MODEL: ${tuziModel ? '✅ 已设置' : '❌ 未设置'}`);
   console.log(`USE_TUZI_API: ${useTuziApi !== undefined ? '✅ 已设置' : '❌ 未设置'} (值: ${useTuziApi})`);
   
   // 检查任务处理器配置

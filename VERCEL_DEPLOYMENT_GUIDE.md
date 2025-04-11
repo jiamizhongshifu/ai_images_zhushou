@@ -55,7 +55,7 @@
       const apiConfig = getApiConfig('tuzi') as TuziConfig;
       
       // 现在可以安全地访问TuziConfig的属性
-      const apiKey = apiConfig.apiKey || process.env.TUZI_API_KEY;
+      const apiKey = apiConfig.apiKey || process.env.OPENAI_API_KEY;
       // ...
     }
     ```
@@ -118,4 +118,4 @@ https://[your-vercel-domain]/toast-demo
 6. 确认`package.json`中包含了所有必要的依赖，特别是UI组件库的依赖 
 7. 确保`pnpm-lock.yaml`文件与`package.json`保持同步，避免"frozen-lockfile"错误 
 8. 查看props传递是否完整，特别是组件接口中定义为必需的属性
-9. 在使用泛型类型或联合类型时，通过类型断言（`as Type`）明确指定具体类型 
+9. 在使用泛型类型或联合类型时，通过类型断言（`as Type`）明确指定具体类型

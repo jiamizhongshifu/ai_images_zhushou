@@ -25,7 +25,7 @@ export async function GET(req: Request) {
         // 使用管理员客户端查询所有待处理任务
         const supabase = await createAdminClient();
         const { data: pendingTasks, error } = await supabase
-          .from('ai_images_creator_tasks')
+          .from('image_tasks')
           .select('*')
           .in('status', ['pending', 'processing'])
           .order('created_at', { ascending: true })
@@ -80,7 +80,7 @@ export async function GET(req: Request) {
     
     // 查询该用户的待处理任务
     const { data: pendingTasks, error } = await supabase
-      .from('ai_images_creator_tasks')
+      .from('image_tasks')
       .select('*')
       .eq('user_id', user.id)
       .in('status', ['pending', 'processing'])
@@ -121,7 +121,7 @@ export async function GET(req: Request) {
           // 如果RPC调用失败，尝试直接更新（降级方案）
           console.log(`尝试降级方案：直接更新任务状态...`);
           const { error: directUpdateError } = await supabase
-            .from('ai_images_creator_tasks')
+            .from('image_tasks')
             .update({ 
               status: 'cancelled',
               updated_at: new Date().toISOString(),
@@ -142,7 +142,7 @@ export async function GET(req: Request) {
       
       // 重新获取更新后的任务列表
       const { data: updatedTasks, error: refetchError } = await supabase
-        .from('ai_images_creator_tasks')
+        .from('image_tasks')
         .select('*')
         .eq('user_id', user.id)
         .in('status', ['pending', 'processing'])

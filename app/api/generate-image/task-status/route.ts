@@ -32,7 +32,7 @@ export async function GET(request: NextRequest) {
     
     // 首先尝试使用用户权限查询
     let { data, error } = await supabase
-      .from('ai_images_creator_tasks')
+      .from('image_tasks')
       .select('*')
       .eq('taskId', taskId)
       .eq('user_id', userData.user.id)
@@ -61,7 +61,7 @@ export async function GET(request: NextRequest) {
       const adminClient = await createAdminClient();
       
       const { data: adminData, error: adminError } = await adminClient
-        .from('ai_images_creator_tasks')
+        .from('image_tasks')
         .select('*')
         .eq('taskId', taskId)
         .single();

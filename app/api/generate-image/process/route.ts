@@ -69,8 +69,8 @@ function createTuziClient() {
   const apiConfig = getApiConfig('tuzi') as TuziConfig;
   
   // 优先使用环境变量中的配置
-  const apiKey = apiConfig.apiKey || process.env.TUZI_API_KEY;
-  const baseURL = apiConfig.apiUrl || process.env.TUZI_BASE_URL || "https://api.tu-zi.com/v1";
+  const apiKey = apiConfig.apiKey || process.env.OPENAI_API_KEY;
+  const baseURL = apiConfig.apiUrl || process.env.OPENAI_BASE_URL || "https://api.tu-zi.com/v1";
   
   logger.info(`创建图资API客户端，使用BASE URL: ${baseURL}`);
   

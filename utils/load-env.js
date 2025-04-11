@@ -34,7 +34,7 @@ function loadEnv() {
 
 // 验证关键环境变量
 function validateEnv() {
-  const requiredEnvVars = ['TUZI_API_KEY', 'TUZI_BASE_URL'];
+  const requiredEnvVars = ['OPENAI_API_KEY', 'OPENAI_BASE_URL'];
   const missing = requiredEnvVars.filter(key => !process.env[key]);
   
   if (missing.length > 0) {
@@ -44,14 +44,14 @@ function validateEnv() {
   }
   
   // 打印部分环境变量信息以确认（隐藏敏感信息）
-  if (process.env.TUZI_API_KEY) {
-    const apiKey = process.env.TUZI_API_KEY;
+  if (process.env.OPENAI_API_KEY) {
+    const apiKey = process.env.OPENAI_API_KEY;
     const maskedKey = `${apiKey.substring(0, 4)}...${apiKey.substring(apiKey.length - 4)}`;
-    console.log(`[环境变量] TUZI_API_KEY=${maskedKey}`);
+    console.log(`[环境变量] OPENAI_API_KEY=${maskedKey}`);
   }
   
-  console.log(`[环境变量] TUZI_BASE_URL=${process.env.TUZI_BASE_URL || '未设置'}`);
-  console.log(`[环境变量] TUZI_MODEL=${process.env.TUZI_MODEL || '未设置'}`);
+  console.log(`[环境变量] OPENAI_BASE_URL=${process.env.OPENAI_BASE_URL || '未设置'}`);
+  console.log(`[环境变量] OPENAI_MODEL=${process.env.OPENAI_MODEL || '未设置'}`);
 }
 
 // 立即执行环境变量加载

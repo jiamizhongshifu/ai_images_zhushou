@@ -54,7 +54,7 @@ export async function POST(request: NextRequest) {
     
     // 查询任务信息，确认任务存在且属于当前用户
     const { data: task, error: queryError } = await supabase
-      .from('ai_images_creator_tasks')
+      .from('image_tasks')
       .select('*')
       .eq('task_id', taskId)
       .eq('user_id', user.id)
@@ -134,7 +134,7 @@ export async function POST(request: NextRequest) {
         
         // 直接更新任务状态为已取消
         const { error } = await supabase
-          .from("ai_images_creator_tasks")
+          .from("image_tasks")
           .update({
             status: "cancelled",
             error_message: "用户主动取消任务",
@@ -164,7 +164,7 @@ export async function POST(request: NextRequest) {
         
         // 使用管理员客户端直接更新状态，绕过权限问题
         const { error } = await adminSupabase
-          .from("ai_images_creator_tasks")
+          .from("image_tasks")
           .update({
             status: "cancelled",
             error_message: "用户主动取消任务（管理员权限）",
@@ -200,7 +200,7 @@ export async function POST(request: NextRequest) {
         
         // 使用管理员客户端获取最新状态，避免权限问题
         const { data: verifyTask, error: verifyError } = await adminSupabase
-          .from('ai_images_creator_tasks')
+          .from('image_tasks')
           .select('status')
           .eq('task_id', taskId)
           .single();
@@ -225,7 +225,7 @@ export async function POST(request: NextRequest) {
             
             // 再次尝试强制更新状态
             await adminSupabase
-              .from("ai_images_creator_tasks")
+              .from("image_tasks")
               .update({
                 status: "cancelled",
                 error_message: `用户主动取消任务（强制更新尝试 ${verificationAttempts}）`,
@@ -300,7 +300,7 @@ export async function POST(request: NextRequest) {
       
       // 更新任务的退款状态
       const { error: refundError } = await supabase
-        .from('ai_images_creator_tasks')
+        .from('image_tasks')
         .update({ credits_refunded: true })
         .eq('task_id', taskId);
       

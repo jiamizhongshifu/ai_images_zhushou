@@ -61,7 +61,7 @@ export async function POST(request: NextRequest) {
     // 使用管理员客户端查询最新任务状态
     const supabase = await createAdminClient();
     const { data: task, error } = await supabase
-      .from('ai_images_creator_tasks')
+      .from('image_tasks')
       .select('status, updated_at')
       .eq('task_id', taskId)
       .single();
@@ -82,7 +82,7 @@ export async function POST(request: NextRequest) {
       
       // 使用管理员权限强制更新任务状态
       const { error: updateError } = await supabase
-        .from('ai_images_creator_tasks')
+        .from('image_tasks')
         .update({
           status: 'cancelled',
           error_message: '任务已被系统通知取消',
@@ -135,7 +135,7 @@ export async function GET(request: NextRequest) {
     // 使用管理员客户端查询数据库状态
     const supabase = await createAdminClient();
     const { data: task, error } = await supabase
-      .from('ai_images_creator_tasks')
+      .from('image_tasks')
       .select('status')
       .eq('task_id', taskId)
       .single();

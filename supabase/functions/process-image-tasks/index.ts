@@ -24,22 +24,22 @@ type MessageContent =
 
 // --- Configuration --- M
 const MAX_TASKS_PER_RUN = 5; // Process up to 5 tasks per invocation
-const TUZI_API_KEY = Deno.env.get('TUZI_API_KEY');
-const TUZI_BASE_URL = Deno.env.get('TUZI_BASE_URL');
-const TUZI_MODEL = Deno.env.get('TUZI_MODEL');
+const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY');
+const OPENAI_BASE_URL = Deno.env.get('OPENAI_BASE_URL');
+const OPENAI_MODEL = Deno.env.get('OPENAI_MODEL');
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL');
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SERVICE_ROLE_KEY'); // Use the new secret name
 const OPENAI_TIMEOUT = 180000; // 3 minutes timeout for the API call
 
 console.log("Edge function starting up...");
 console.log(`Supabase URL: ${SUPABASE_URL ? 'Set' : 'Not Set'}`);
-console.log(`Tuzi Base URL: ${TUZI_BASE_URL ? 'Set' : 'Not Set'}`);
-console.log(`Tuzi Model: ${TUZI_MODEL ? 'Set' : 'Not Set'}`);
+console.log(`Tuzi Base URL: ${OPENAI_BASE_URL ? 'Set' : 'Not Set'}`);
+console.log(`Tuzi Model: ${OPENAI_MODEL ? 'Set' : 'Not Set'}`);
 // Avoid logging keys directly in production
-// console.log(`Tuzi API Key: ${TUZI_API_KEY ? 'Set' : 'Not Set'}`);
+// console.log(`Tuzi API Key: ${OPENAI_API_KEY ? 'Set' : 'Not Set'}`);
 // console.log(`Supabase Service Key: ${SUPABASE_SERVICE_ROLE_KEY ? 'Set' : 'Not Set'}`);
 
-if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY || !TUZI_API_KEY || !TUZI_BASE_URL || !TUZI_MODEL) {
+if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY || !OPENAI_API_KEY || !OPENAI_BASE_URL || !OPENAI_MODEL) {
     console.error("FATAL: Missing required environment variables for the Edge Function.");
     // In a real scenario, you might want to prevent the function from running further
 }
@@ -52,7 +52,7 @@ serve(async (req) => {
 
   console.log("Received request to process image tasks...");
 
-  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY || !TUZI_API_KEY || !TUZI_BASE_URL || !TUZI_MODEL) {
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY || !OPENAI_API_KEY || !OPENAI_BASE_URL || !OPENAI_MODEL) {
       return new Response(JSON.stringify({ error: "Edge function configuration error: Missing environment variables." }), {
           status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
       });
@@ -65,8 +65,8 @@ serve(async (req) => {
 
   // Initialize OpenAI Client for Tuzi
   const openai = new OpenAI({
-      apiKey: TUZI_API_KEY,
-      baseURL: TUZI_BASE_URL,
+      apiKey: OPENAI_API_KEY,
+      baseURL: OPENAI_BASE_URL,
       timeout: OPENAI_TIMEOUT, // Set timeout
   });
 
@@ -78,7 +78,7 @@ serve(async (req) => {
     // 1. Fetch pending tasks
     console.log(`Fetching up to ${MAX_TASKS_PER_RUN} pending tasks...`);
     const { data: tasks, error: fetchError } = await supabaseAdmin
-      .from('ai_images_creator_tasks')
+      .from('image_tasks')
       .select('id, task_id, user_id, status, prompt, image_base64, style') // Select only needed fields
       .eq('status', 'pending')
       .order('created_at', { ascending: true })
@@ -109,7 +109,7 @@ serve(async (req) => {
       try {
         // 2a. Update status to 'processing'
         const { error: updateProcessingError } = await supabaseAdmin
-          .from('ai_images_creator_tasks')
+          .from('image_tasks')
           .update({ status: 'processing', updated_at: new Date().toISOString() })
           .eq('id', task.id) // Use primary key for update
           .eq('status', 'pending'); // Ensure we only update if still pending (atomic-like)
@@ -140,7 +140,7 @@ serve(async (req) => {
         // 2c. Call Tuzi API via OpenAI client
         console.log(`Task ${task.task_id}: Calling Tuzi API...`);
         const completion = await openai.chat.completions.create({
-            model: TUZI_MODEL,
+            model: OPENAI_MODEL,
             messages: messages as any, // Cast needed due to library specifics sometimes
             max_tokens: 4096, // Adjust if needed
             stream: false, // We need the full response
@@ -194,7 +194,7 @@ serve(async (req) => {
       }
 
       const { error: finalUpdateError } = await supabaseAdmin
-        .from('ai_images_creator_tasks')
+        .from('image_tasks')
         .update(updatePayload)
         .eq('id', task.id); // Use primary key
 

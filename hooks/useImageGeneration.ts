@@ -30,7 +30,7 @@ export interface UseImageGenerationResult {
   status: GenerationStatus;
   isGenerating: boolean;
   error: string | null;
-  generateImage: (options: GenerationOptions) => Promise<string | null>;
+  generateImage: (options: GenerationOptions) => Promise<{taskId: string} | null>;
   setGeneratedImages: (images: string[]) => void;
   addGeneratedImage: (imageUrl: string) => void;
   generationStage: GenerationStage;
@@ -218,7 +218,7 @@ export default function useImageGeneration(
   };
 
   // 生成图片 - 调用异步API
-  const generateImage = async (options: GenerationOptions): Promise<string | null> => {
+  const generateImage = async (options: GenerationOptions): Promise<{taskId: string} | null> => {
     const { prompt, image, style, aspectRatio, standardAspectRatio } = options;
     
     if (!prompt.trim() && !image && (!style || style === '自定义')) {
@@ -339,7 +339,7 @@ export default function useImageGeneration(
       updateGenerationStage('processing', 30);
       startPollingTaskStatus(data.taskId);
       
-      return null; // 异步API中初始返回为null
+      return { taskId: data.taskId }; // 返回任务ID以支持外部状态监听
     } catch (err) {
       // 处理错误
       const errorMessage = err instanceof Error ? err.message : String(err);
