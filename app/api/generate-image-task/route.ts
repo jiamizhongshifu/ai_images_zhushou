@@ -415,12 +415,15 @@ function logEnhancedError(context: string, error: any, taskId?: string) {
 // 添加任务通知函数
 async function notifyTaskUpdate(taskId: string, status: string, imageUrl?: string, error?: string) {
   try {
+    // 获取API密钥
+    const apiKey = process.env.INTERNAL_API_KEY || 'development-key';
+    
     // 尝试调用内部API触发通知
     const notifyResponse = await fetch(`${process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000'}/api/notify-task-update`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${process.env.INTERNAL_API_SECRET || ''}` // 使用内部API密钥
+        'x-api-key': apiKey
       },
       body: JSON.stringify({
         taskId,

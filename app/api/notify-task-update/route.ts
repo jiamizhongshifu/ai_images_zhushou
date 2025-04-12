@@ -2,8 +2,6 @@ import { NextRequest, NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { createSecureClient, getCurrentUser } from '@/app/api/auth-middleware';
 import { taskClients, TaskClient, registerClient, removeClient } from './taskClients';
-import { TaskManager } from './TaskManager';
-import logger from '@/lib/logger';
 
 // 记录日志
 const logger = {
@@ -24,10 +22,12 @@ export async function POST(request: NextRequest) {
     
     logger.info(`接收到任务更新通知: ${taskId}, 状态: ${status}`);
     
-    // 简化验证逻辑，使用API密钥验证替代用户验证
-    // 检查API密钥 - 从请求头或查询参数获取
-    const apiKey = request.headers.get('x-api-key') || request.nextUrl.searchParams.get('apiKey');
-    const validApiKey = process.env.INTERNAL_API_KEY || 'task_processor_key'; // 使用环境变量中的密钥
+    // 改进的API密钥验证
+    const apiKey = request.headers.get('x-api-key') || 
+                   request.headers.get('authorization')?.replace('Bearer ', '') || 
+                   request.nextUrl.searchParams.get('apiKey');
+                   
+    const validApiKey = process.env.INTERNAL_API_KEY || 'development-key';
     
     // 如果提供了API密钥且与有效密钥匹配，则跳过用户验证
     if (!apiKey || apiKey !== validApiKey) {
@@ -103,11 +103,25 @@ export async function POST(request: NextRequest) {
             const taskCompletedEvent = new CustomEvent('task_completed', { 
               detail: {
                 taskId: '${taskId}',
-                timestamp: ${Date.now()}
+                timestamp: ${Date.now()},
+                imageUrl: '${imageUrl || ""}'
               }
             });
             window.dispatchEvent(taskCompletedEvent);
             console.log('[任务通知] 已分发任务完成事件: ${taskId}');
+            
+            // 告知系统任务已完成，应该停止轮询
+            window.sessionStorage.setItem('task_${taskId}_completed', 'true');
+            
+            // 延迟添加刷新点数请求，避免与其他请求冲突
+            setTimeout(() => {
+              // 触发一次性点数刷新
+              const creditRefreshEvent = new CustomEvent('refresh_credits', {
+                detail: { source: 'task_completed', taskId: '${taskId}' }
+              });
+              window.dispatchEvent(creditRefreshEvent);
+              console.log('[任务通知] 已请求刷新点数');
+            }, 800);
           } catch (err) {
             console.error('[任务通知] 分发事件失败:', err);
           }
