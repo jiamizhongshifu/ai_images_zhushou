@@ -57,7 +57,17 @@ export default function useImageGeneration(
   // 任务ID和轮询间隔
   const [currentTaskId, setCurrentTaskId] = useState<string | null>(null);
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
-  const startTimeRef = useRef<number>(0);
+  const maxPollingAttemptsRef = useRef<number>(300); // 最多轮询5分钟 (300 * 2秒 = 600秒)
+  const pollingAttemptsRef = useRef<number>(0);
+  const initialPollingInterval = 1000; // 初始轮询间隔1秒
+  const maxPollingInterval = 10000; // 最大轮询间隔10秒
+  const pollingBackoffFactor = 1.5; // 指数退避因子
+  const currentPollingIntervalRef = useRef<number>(initialPollingInterval);
+  const startTimeRef = useRef<number>(0); // 添加回startTimeRef
+  
+  // 任务状态缓存
+  const taskStatusCache = useRef<Map<string, {data: any, timestamp: number}>>(new Map());
+  const CACHE_TTL = 5000; // 缓存有效期5秒
 
   const { triggerCreditRefresh } = useUserState();
 
@@ -95,6 +105,9 @@ export default function useImageGeneration(
       clearInterval(pollingIntervalRef.current);
       pollingIntervalRef.current = null;
     }
+    // 重置轮询相关参数
+    pollingAttemptsRef.current = 0;
+    currentPollingIntervalRef.current = initialPollingInterval;
   };
 
   // 清理函数 - 组件卸载时调用
@@ -114,9 +127,8 @@ export default function useImageGeneration(
     return ['extracting_image', Math.min(85, 60 + waitTime / 10)];
   };
 
-  // 开始轮询任务状态
+  // 启动任务状态轮询，使用指数退避策略
   const startPollingTaskStatus = (taskId: string) => {
-    // 清除任何现有的轮询
     clearAllTimers();
 
     // 记录开始时间
@@ -125,95 +137,156 @@ export default function useImageGeneration(
     // 立即检查一次
     checkTaskStatus(taskId);
     
-    // 设置轮询间隔
-    pollingIntervalRef.current = setInterval(() => {
-      checkTaskStatus(taskId);
-    }, 2000);
+    // 使用setTimeout替代setInterval，以便动态调整轮询间隔
+    const scheduleNextPoll = () => {
+      pollingIntervalRef.current = setTimeout(() => {
+        // 增加尝试次数
+        pollingAttemptsRef.current++;
+        
+        // 检查是否达到最大尝试次数
+        if (pollingAttemptsRef.current > maxPollingAttemptsRef.current) {
+          console.warn(`[useImageGeneration] 达到最大轮询次数(${maxPollingAttemptsRef.current})，停止轮询`);
+          clearAllTimers();
+          setError("生成图片耗时过长，请检查任务状态或重试");
+          setIsGenerating(false);
+          setStatus('error');
+          notify("图片生成耗时过长，可能已超时", 'info');
+          return;
+        }
+        
+        // 执行状态检查
+        checkTaskStatus(taskId)
+          .finally(() => {
+            // 如果仍在生成中，安排下一次轮询
+            if (isGenerating) {
+              // 仅在前10次尝试后开始增加间隔
+              if (pollingAttemptsRef.current > 10) {
+                // 使用指数退避增加轮询间隔
+                currentPollingIntervalRef.current = Math.min(
+                  currentPollingIntervalRef.current * pollingBackoffFactor,
+                  maxPollingInterval
+                );
+                console.log(`[useImageGeneration] 轮询间隔调整为: ${currentPollingIntervalRef.current}ms`);
+              }
+              
+              // 安排下一次检查
+              scheduleNextPoll();
+            }
+          });
+      }, currentPollingIntervalRef.current);
+    };
+    
+    // 开始轮询调度
+    scheduleNextPoll();
   };
 
-  // 检查任务状态
+  // 检查任务状态（添加缓存机制）
   const checkTaskStatus = async (taskId: string) => {
     try {
+      // 检查缓存中是否有有效数据
+      const cachedData = taskStatusCache.current.get(taskId);
+      const now = Date.now();
+      
+      // 如果存在有效缓存，则使用缓存数据
+      if (cachedData && (now - cachedData.timestamp < CACHE_TTL)) {
+        // 5秒内的数据使用缓存
+        console.log('[useImageGeneration] 使用缓存的任务状态');
+        handleTaskStatusUpdate(cachedData.data);
+        return;
+      }
+      
       const response = await fetch(`/api/image-task-status/${taskId}`);
       const data = await response.json();
       
-      // 计算已等待时间
-      const waitTime = data.waitTime || Math.floor((Date.now() - startTimeRef.current) / 1000);
+      // 更新缓存
+      taskStatusCache.current.set(taskId, {
+        data,
+        timestamp: now
+      });
       
-      // 基于状态更新UI
-      switch (data.status) {
-        case 'completed':
-          // 更新进度到85%
-          updateGenerationStage('extracting_image', 85);
-          
-          // 完成阶段
-          setTimeout(() => {
-            updateGenerationStage('finalizing', 95);
-            
-            // 延迟后显示完成
-            setTimeout(async () => {
-              updateGenerationStage('completed', 100);
-              
-              // 停止轮询
-              clearAllTimers();
-              
-              // 更新UI状态
-              setIsGenerating(false);
-              setStatus('success');
-              setCurrentTaskId(null);
-              
-              // 添加生成的图片
-              if (data.imageUrl) {
-                addGeneratedImage(data.imageUrl);
-                
-                // 刷新缓存
-                cacheService.delete(USER_CREDITS_CACHE_KEY);
-                cacheService.delete(HISTORY_CACHE_KEY);
-                
-                // 调用回调函数
-                await triggerCreditRefresh();
-                if (refreshHistory) {
-                  const result = refreshHistory();
-                  // 如果返回Promise则等待完成
-                  if (result instanceof Promise) {
-                    await result;
-                  }
-                }
-                if (onSuccess) onSuccess(data.imageUrl);
-                
-                // 显示成功通知
-                notify('图片生成成功！', 'success');
-              }
-            }, 300);
-          }, 300);
-          break;
-          
-        case 'failed':
-          // 更新为失败状态
-          updateGenerationStage('failed', 0);
-          setError(data.error || '图像生成失败');
-          setIsGenerating(false);
-          setStatus('error');
-          setCurrentTaskId(null);
-          
-          // 停止轮询
-          clearAllTimers();
-          
-          // 显示错误通知
-          notify(`生成失败: ${data.error || '未知错误'}`, 'error');
-          break;
-          
-        case 'pending':
-        case 'processing':
-        default:
-          // 根据等待时间动态更新阶段和进度
-          const [stage, percentage] = calculateStageFromWaitTime(waitTime);
-          updateGenerationStage(stage, percentage);
-          break;
-      }
+      // 处理任务状态更新
+      handleTaskStatusUpdate(data);
     } catch (err) {
       console.error('检查任务状态失败:', err);
       // 暂不设置错误，继续轮询
+    }
+  };
+  
+  // 分离状态处理逻辑，使代码更清晰
+  const handleTaskStatusUpdate = (data: any) => {
+    // 计算已等待时间
+    const waitTime = data.waitTime || Math.floor((Date.now() - startTimeRef.current) / 1000);
+    
+    // 基于状态更新UI
+    switch (data.status) {
+      case 'completed':
+        // 更新进度到85%
+        updateGenerationStage('extracting_image', 85);
+        
+        // 完成阶段
+        setTimeout(() => {
+          updateGenerationStage('finalizing', 95);
+          
+          // 延迟后显示完成
+          setTimeout(async () => {
+            updateGenerationStage('completed', 100);
+            
+            // 停止轮询
+            clearAllTimers();
+            
+            // 更新UI状态
+            setIsGenerating(false);
+            setStatus('success');
+            setCurrentTaskId(null);
+            
+            // 添加生成的图片
+            if (data.imageUrl) {
+              addGeneratedImage(data.imageUrl);
+              
+              // 刷新缓存
+              cacheService.delete(USER_CREDITS_CACHE_KEY);
+              cacheService.delete(HISTORY_CACHE_KEY);
+              
+              // 调用回调函数
+              await triggerCreditRefresh();
+              if (refreshHistory) {
+                const result = refreshHistory();
+                // 如果返回Promise则等待完成
+                if (result instanceof Promise) {
+                  await result;
+                }
+              }
+              if (onSuccess) onSuccess(data.imageUrl);
+              
+              // 显示成功通知
+              notify('图片生成成功！', 'success');
+            }
+          }, 300);
+        }, 300);
+        break;
+        
+      case 'failed':
+        // 更新为失败状态
+        updateGenerationStage('failed', 0);
+        setError(data.error || '图像生成失败');
+        setIsGenerating(false);
+        setStatus('error');
+        setCurrentTaskId(null);
+        
+        // 停止轮询
+        clearAllTimers();
+        
+        // 显示错误通知
+        notify(`生成失败: ${data.error || '未知错误'}`, 'error');
+        break;
+        
+      case 'pending':
+      case 'processing':
+      default:
+        // 根据等待时间动态更新阶段和进度
+        const [stage, percentage] = calculateStageFromWaitTime(waitTime);
+        updateGenerationStage(stage, percentage);
+        break;
     }
   };
 
