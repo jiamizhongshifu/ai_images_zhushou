@@ -1,0 +1,12 @@
+// 完全替换最后的错误行
+    return NextResponse.json(
+      {
+        status: 'failed',
+        error: errorMessage,
+        suggestion,
+        details: error instanceof Error ? error.message : String(error)
+      },
+      { status }
+    );
+  }
+}

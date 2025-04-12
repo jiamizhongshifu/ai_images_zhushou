@@ -788,19 +788,8 @@ export async function POST(request: NextRequest) {
         // 创建用户消息内容数组
         const userMessageContent: Array<ChatCompletionContentPart> = [];
         
-        // 初始化提示词变量
-        let promptText = "";
-        let finalPrompt = "";
-        
-        // 添加更明确的生成图片指令，解释预期的双阶段响应
-        if (prompt) {
-          promptText += prompt;
-        } else {
-          promptText += "生成图像";
-        }
-        
-        // 添加更明确的生成图片指令，解释预期的双阶段响应
-        finalPrompt = promptText + "。我需要你生成这张图片并返回可访问的图片URL。先分析后生成，确保返回最终的图片URL。";
+        // 保存最终提示词，用于记录
+        let finalPrompt = prompt || "生成图像";
         
         if (image) {
           logger.info(`处理用户上传的图片，任务ID: ${taskId}`);
@@ -855,12 +844,6 @@ export async function POST(request: NextRequest) {
           content: userMessageContent
         });
         
-        // 添加系统指令，虽然与tuzi-openai.md有些偏差，但为了解决当前问题是必要的
-        messages.unshift({
-          role: 'system',
-          content: "你是一个图像生成系统。你需要处理用户上传的图片和指令，基于这些生成新的图片并返回图片URL。不要只返回分析，必须返回图片URL。即使你发现内容有问题，也请先告知用户，并提供其他可能的创作方向。"
-        });
-        
         logger.debug(`构建消息完成，消息数组长度: ${messages.length}`);
         logger.debug(`消息内容项目数: ${userMessageContent.length}`);
 
@@ -868,7 +851,7 @@ export async function POST(request: NextRequest) {
         const quality = "hd"; // 使用高清质量，提高输出图像质量
         
         // 使用gpt-4o-all通过聊天API生成图像
-        logger.info(`使用聊天API (${process.env.OPENAI_MODEL || 'gpt-4o-all'})生成图片，提示词: "${finalPrompt.substring(0, 50)}${finalPrompt.length > 50 ? '...' : ''}"`);
+        logger.info(`使用聊天API (gpt-4o-all)生成图片，提示词长度: ${finalPrompt.length}字符`);
         
         // 添加API请求开始时间记录
         const apiRequestStartTime = Date.now();
@@ -992,15 +975,11 @@ export async function POST(request: NextRequest) {
                 return null;
               };
               
-              // 执行API调用 - 严格按照tuzi-openai.md的方式，但添加必要的参数
+              // 执行API调用 - 严格按照tuzi-openai.md的方式
               const apiPromise = openaiClient.chat.completions.create({
-                model: process.env.OPENAI_MODEL || 'gpt-4o-all', // 使用环境变量中配置的模型
+                model: 'gpt-4o-all',
                 messages: messages,
                 stream: true,
-                max_tokens: 4096,  // 确保有足够的token来生成图片URL
-                temperature: 0.8,  // 增加创造性
-                tools: [], // 空工具数组表示支持vision
-                tool_choice: "auto" // 自动选择工具
               });
                   
               // 记录发送的消息结构和内容
@@ -1029,8 +1008,6 @@ export async function POST(request: NextRequest) {
               // 收集响应内容
               let responseContent = '';
               let imageUrl = null;
-              let jsonPhaseComplete = false;
-              let streamEndTime = 0;
               
               // 处理流式响应 - 按照tuzi-openai.md处理方式
               for await (const chunk of stream) {
@@ -1039,19 +1016,8 @@ export async function POST(request: NextRequest) {
                   responseContent += content;
                   process.stdout.write(content); // 输出流式内容到控制台
                   
-                  // 记录每次接收到内容的时间
-                  streamEndTime = Date.now();
-                  
-                  // 检测是否已完成JSON阶段 (收到完整的JSON对象后)
-                  if (!jsonPhaseComplete && responseContent.includes('}') && 
-                      (responseContent.includes('"prompt"') || responseContent.includes('"referenced_image_ids"'))) {
-                    jsonPhaseComplete = true;
-                    logger.info(`检测到JSON阶段完成，继续等待图片URL`);
-                    continue; // 继续等待下一部分内容
-                  }
-                  
                   // 尝试从内容中提取图片URL
-                  if (content.includes('http')) {
+                  if (!imageUrl && content.includes('http')) {
                     const extractedUrl = extractUrlWithFullPatterns(content);
                     if (extractedUrl) {
                       imageUrl = extractedUrl;
@@ -1061,33 +1027,12 @@ export async function POST(request: NextRequest) {
                 }
               }
               
-              // 在流结束后，增加短暂等待，确保收到所有内容
-              if (jsonPhaseComplete && !imageUrl) {
-                logger.info(`流式响应结束，但仅收到JSON内容，等待额外2秒确认...`);
-                await new Promise(resolve => setTimeout(resolve, 2000));
-              }
-              
               // 如果没有从流中提取到图片URL，从整个响应内容中尝试提取
               if (!imageUrl && responseContent) {
                 logger.debug('尝试从完整的响应内容中提取URL');
                 imageUrl = extractUrlWithFullPatterns(responseContent);
                 if (imageUrl) {
                   logger.info(`从完整响应中提取到图片URL: ${imageUrl}`);
-                } else if (jsonPhaseComplete) {
-                  // 如果已完成JSON阶段但未找到URL，可能需要重试或提供更明确的提示
-                  logger.warn(`已完成JSON阶段但未找到图片URL，API可能未能完成图片生成`);
-                  
-                  // 检查是否有错误信息，如内容政策违规
-                  if (responseContent.includes("违反") || responseContent.includes("内容政策") || 
-                      responseContent.includes("policy") || responseContent.includes("不允许")) {
-                    throw new Error(`API内容审核未通过: ${responseContent.substring(0, 200)}`);
-                  }
-                  
-                  // 如果进入了重试的最后一次尝试，尝试调整提示词再试一次
-                  if (currentAttempt >= MAX_RETRY_ATTEMPTS - 1) {
-                    const shouldRetry = true; // 最后一次尝试总是重试
-                    if (shouldRetry) continue; // 继续外层循环进行重试
-                  }
                 }
               }
               
@@ -1157,29 +1102,11 @@ export async function POST(request: NextRequest) {
                     imageUrl: imageUrl,
                     prompt: finalPrompt,
                     style: style || null,
-                    model: process.env.OPENAI_MODEL || 'gpt-4o-all',
+                    model: 'gpt-4o-all',
                     provider: 'tuzi'
                   }, { status: 200 });
                 }
               } else {
-                // 如果没有找到有效URL，但检测到是JSON格式的响应，可能是API只返回了分析而没有生成图片
-                if (jsonPhaseComplete && responseContent.includes('"prompt"')) {
-                  let errorMessage = `API只返回了JSON分析，未能生成图片。当前尝试次数: ${currentAttempt+1}/${MAX_RETRY_ATTEMPTS+1}`;
-                  
-                  // 如果还有重试机会，尝试调整提示词再试一次
-                  if (currentAttempt < MAX_RETRY_ATTEMPTS) {
-                    logger.warn(errorMessage + "，将尝试调整提示词重试");
-                    currentAttempt++;
-                    // 继续外层循环进行重试
-                    continue;
-                  }
-                  
-                  // 记录详细日志
-                  logger.error(`${errorMessage}，已达到最大重试次数，任务ID: ${taskId}`);
-                  logger.error(`接收到的响应内容: ${responseContent.substring(0, 400)}...`);
-                  throw new Error(errorMessage);
-                }
-                
                 // 如果没有找到有效URL，记录详细日志并抛出错误
                 logger.error(`所有方法都无法提取有效的图片URL，响应内容: ${responseContent?.substring(0, 200)}...`);
                 throw new Error('API返回的响应中没有包含有效的图像生成结果');
@@ -1318,15 +1245,4 @@ export async function POST(request: NextRequest) {
       { status }
     );
   }
-} catch (finalError) {
-  console.error(`图像生成全局错误:`, finalError);
-  return NextResponse.json(
-    { 
-      status: 'failed',
-      error: '系统错误',
-      details: '图像生成服务临时不可用，请稍后重试'
-    },
-    { status: 500 }
-  );
-}
 }

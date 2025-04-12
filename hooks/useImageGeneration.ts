@@ -247,8 +247,7 @@ export default function useImageGeneration(
               cacheService.delete(USER_CREDITS_CACHE_KEY);
               cacheService.delete(HISTORY_CACHE_KEY);
               
-              // 调用回调函数
-              await triggerCreditRefresh();
+              // 调用回调函数 - 移除triggerCreditRefresh调用，统一由外部页面处理
               if (refreshHistory) {
                 const result = refreshHistory();
                 // 如果返回Promise则等待完成

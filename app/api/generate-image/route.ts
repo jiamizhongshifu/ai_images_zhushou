@@ -455,10 +455,16 @@ export async function POST(request: NextRequest) {
       const enhancedPrompt = `${prompt}。请直接生成一张与描述相符的图片，不要包含任何文字说明，只返回一个图片链接。`;
       
       // 准备消息内容
-      const messages: { role: string; content: MessageContent[] }[] = [{
-        role: "user",
-        content: [{ type: "text", text: enhancedPrompt }]
-      }];
+      const messages: { role: string; content: MessageContent[] }[] = [
+        {
+          role: "system",
+          content: [{ type: "text", text: "你是一个先进的图像生成系统，能够处理图片和文字提示。当收到请求时，你必须生成图像并返回图像URL，不要回复任何文字说明或解释。你可以生成多样化的高质量图像，请务必返回图像URL。" }]
+        },
+        {
+          role: "user",
+          content: [{ type: "text", text: enhancedPrompt }]
+        }
+      ];
 
       // 如果有图片，添加到请求中
       if (image) {
@@ -493,7 +499,7 @@ export async function POST(request: NextRequest) {
         }
         
         // 将图片添加到消息中
-        messages[0].content.unshift({
+        messages[1].content.unshift({
           type: "image_url",
           image_url: { url: imageUrl }
         });
@@ -538,12 +544,21 @@ export async function POST(request: NextRequest) {
           model: model,
           messages: [
             {
+              role: "system",
+              content: [{ 
+                type: "text", 
+                text: "你是一个先进的图像生成系统，能够处理图片和文字提示。当收到请求时，你必须生成图像并返回图像URL，不要回复任何文字说明或解释。你可以生成多样化的高质量图像，请务必返回图像URL。" 
+              }]
+            },
+            {
               role: "user",
-              content: messages[0].content
+              content: messages[1].content
             }
           ],
           max_tokens: 4096,
-          stream: false
+          stream: false,
+          tools: [],
+          tool_choice: "auto"
         });
         
         // 计算请求耗时

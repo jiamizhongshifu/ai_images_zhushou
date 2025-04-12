@@ -113,6 +113,8 @@ export async function POST(request: NextRequest) {
             // 告知系统任务已完成，应该停止轮询
             window.sessionStorage.setItem('task_${taskId}_completed', 'true');
             
+            // 移除点数刷新事件，避免重复刷新
+            /* 
             // 延迟添加刷新点数请求，避免与其他请求冲突
             setTimeout(() => {
               // 触发一次性点数刷新
@@ -122,6 +124,7 @@ export async function POST(request: NextRequest) {
               window.dispatchEvent(creditRefreshEvent);
               console.log('[任务通知] 已请求刷新点数');
             }, 800);
+            */
           } catch (err) {
             console.error('[任务通知] 分发事件失败:', err);
           }

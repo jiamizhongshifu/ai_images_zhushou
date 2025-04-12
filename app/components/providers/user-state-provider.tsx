@@ -166,8 +166,9 @@ function UserStateProviderContent({ children }: UserStateProviderProps) {
       
       // 防止短时间内多次重复调用 - 放在认证检查之后
       const now = Date.now();
-      if (!forceRefresh && (refreshingRef.current || now - lastFetchTime < 30000)) { // 使用30秒冷却时间
-        console.log('[UserStateProvider] 跳过短时间内的重复请求 (冷却中)');
+      const COOLDOWN_TIME = 60000; // 增加到60秒冷却时间
+      if (!forceRefresh && (refreshingRef.current || now - lastFetchTime < COOLDOWN_TIME)) {
+        console.log(`[UserStateProvider] 跳过短时间内的重复请求 (冷却中, 剩余 ${Math.round((COOLDOWN_TIME - (now - lastFetchTime))/1000)}秒)`);
         return;
       }
       
@@ -179,53 +180,53 @@ function UserStateProviderContent({ children }: UserStateProviderProps) {
       
       // 直接调用API获取积分 - 使用 limitRequest 包装
       console.log('[UserStateProvider] 调用 limitRequest 获取用户积分，强制刷新:', forceRefresh);
-      const fetchedCredits = await limitRequest(
-        REQUEST_KEYS.CREDITS,
-        async () => {
-          const response = await fetch(`/api/credits/get?_t=${Date.now()}`, { // 强制无缓存
-            method: 'GET',
-            headers: {
-              'Cache-Control': 'no-cache',
-              'Pragma': 'no-cache'
-            },
-            credentials: 'include'
-          });
-          
-          if (!response.ok) {
-            throw new Error(`API 请求失败: ${response.status}`);
-          }
-          
-          const data = await response.json();
-          if (data.success && typeof data.credits === 'number') {
-            return data.credits;
-          } else {
-            throw new Error('API 返回无效数据');
-          }
-        },
-        30000, // 与 limitRequest 默认值一致
-        forceRefresh
-      );
-
-      // 更新状态
-      setCredits(fetchedCredits);
-      setLastFetchTime(Date.now());
-      console.log(`[UserStateProvider] 成功获取用户积分: ${fetchedCredits}`);
       
-      // --- 移除缓存和后备逻辑 ---
-      // try {
-      //   // 检查缓存...
-      // } catch (apiError) {
-      //   // 备用逻辑...
-      // }
-    } catch (error) {
-      // 处理 limitRequest 抛出的冷却错误
-      if ((error as Error).message.includes('冷却时间内')) {
-        console.log('[UserStateProvider] 获取积分请求在冷却中，使用当前值');
-      } else {
-        console.error('[UserStateProvider] 获取用户状态失败:', error);
-        // 出错时不改变现有积分，除非是第一次加载且失败
-        if (credits === null && isInitializing) {
-          setCredits(0); // 首次加载失败给个默认值
+      try {
+        // 使用固定的URL参数格式，避免产生过多不同的URL
+        const timestamp = Math.floor(Date.now() / 60000) * 60000; // 每分钟只生成一个时间戳
+        const endpoint = forceRefresh ? '/api/credits/get?force=1' : `/api/credits/get?_t=${timestamp}`;
+        
+        const fetchedCredits = await limitRequest(
+          REQUEST_KEYS.CREDITS,
+          async () => {
+            const response = await fetch(endpoint, {
+              method: 'GET',
+              headers: {
+                'Cache-Control': 'no-cache',
+                'Pragma': 'no-cache'
+              },
+              credentials: 'include'
+            });
+            
+            if (!response.ok) {
+              throw new Error(`API 请求失败: ${response.status}`);
+            }
+            
+            const data = await response.json();
+            if (data.success && typeof data.credits === 'number') {
+              return data.credits;
+            } else {
+              throw new Error('API 返回无效数据');
+            }
+          },
+          COOLDOWN_TIME, // 与上面的冷却时间保持一致
+          forceRefresh
+        );
+
+        // 更新状态
+        setCredits(fetchedCredits);
+        setLastFetchTime(Date.now());
+        console.log(`[UserStateProvider] 成功获取用户积分: ${fetchedCredits}`);
+      } catch (error) {
+        // 处理 limitRequest 抛出的冷却错误
+        if ((error as Error).message.includes('冷却时间内')) {
+          console.log('[UserStateProvider] 获取积分请求在冷却中，使用当前值');
+        } else {
+          console.error('[UserStateProvider] 获取用户积分失败:', error);
+          // 出错时不改变现有积分，除非是第一次加载且失败
+          if (credits === null && isInitializing) {
+            setCredits(0); // 首次加载失败给个默认值
+          }
         }
       }
     } finally {
@@ -242,11 +243,11 @@ function UserStateProviderContent({ children }: UserStateProviderProps) {
     }
   }, [lastFetchTime, credits, isInitializing, checkLogoutState, resetState, isLoggedOut]);
   
-  // 新增：强制刷新积分的触发器函数
+  // 触发刷新积分的函数 - 增加更严格的防抖
   const triggerCreditRefresh = useCallback(async () => {
     // 防止短时间内重复触发 - 使用更长的冷却时间
     const now = Date.now();
-    const MIN_REFRESH_INTERVAL = 10000; // 增加到10秒，减少频繁刷新
+    const MIN_REFRESH_INTERVAL = 60000; // 增加到60秒，减少频繁刷新
     
     if (refreshingRef.current) {
       console.log('[UserStateProvider] 点数刷新操作正在进行中，跳过重复请求');
@@ -260,12 +261,15 @@ function UserStateProviderContent({ children }: UserStateProviderProps) {
     
     // 防止在一个生命周期内过多刷新
     refreshCountRef.current += 1;
-    const MAX_REFRESH_COUNT = 3; // 减少最大刷新次数，提前终止可能的循环刷新
+    const MAX_REFRESH_COUNT = 2; // 减少为2次，每次重新加载页面最多允许手动刷新2次
     
     if (refreshCountRef.current > MAX_REFRESH_COUNT) {
       console.log(`[UserStateProvider] 已达到最大刷新次数限制(${MAX_REFRESH_COUNT}次)，跳过后续刷新，等待页面刷新或用户手动操作`);
       return;
     }
+    
+    // 设置正在刷新标志
+    refreshingRef.current = true;
     
     // 清除任何现有的刷新计时器
     if (refreshThrottleTimerRef.current) {
@@ -273,30 +277,19 @@ function UserStateProviderContent({ children }: UserStateProviderProps) {
       refreshThrottleTimerRef.current = null;
     }
     
-    // 设置节流计时器，将多个连续请求合并为一个
-    refreshThrottleTimerRef.current = setTimeout(async () => {
-      console.log('[UserStateProvider] 开始执行用户点数刷新 (节流后)');
-      refreshingRef.current = true;
-      setLoadingWithTimeout(true);
-      
-      try {
-        // 使用强制刷新模式获取最新点数
-        await refreshUserState({ showLoading: false, forceRefresh: true });
-        console.log('[UserStateProvider] 积分刷新成功');
-        setLastFetchTime(Date.now());
-      } catch (error) {
-        console.error('[UserStateProvider] 积分刷新失败:', error);
-      } finally {
-        // 延迟重置刷新状态，防止连续请求
-        setTimeout(() => {
-          refreshingRef.current = false;
-          setLoadingWithTimeout(false);
-        }, 800); // 增加冷却时间
-      }
-    }, 300); // 300ms节流延迟，合并多个快速连续请求
-
-    console.log(`[UserStateProvider] 已安排点数刷新，这是第${refreshCountRef.current}次刷新请求`);
-  }, [refreshUserState, lastFetchTime, setLoadingWithTimeout]);
+    try {
+      // 使用防抖方式触发刷新
+      console.log('[UserStateProvider] 触发强制刷新积分');
+      await refreshUserState({ showLoading: true, forceRefresh: true });
+    } catch (error) {
+      console.error('[UserStateProvider] 强制刷新积分失败:', error);
+    } finally {
+      // 确保刷新标志被重置，但设置延迟，避免连续多次调用
+      setTimeout(() => {
+        refreshingRef.current = false;
+      }, 3000);
+    }
+  }, [lastFetchTime, refreshUserState]);
   
   // 重置任务完成后的刷新计数
   const resetRefreshCount = useCallback(() => {

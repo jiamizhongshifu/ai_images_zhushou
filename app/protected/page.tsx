@@ -72,16 +72,16 @@ export default function ProtectedPage() {
   // 监听生成完成状态
   useEffect(() => {
     if (generationStage === 'completed') {
-      // 刷新点数和历史记录，添加防抖和防重复请求机制
+      // 使用单次延迟刷新，避免多次请求
       const refreshTimeoutId = setTimeout(() => {
         console.log('[ProtectedPage] 生成完成后触发点数和历史刷新，延迟执行以减少请求');
-        refreshCredits(false, true); // 静默刷新
         
-        // 在刷新历史时使用非强制刷新，减少不必要请求
-        setTimeout(() => {
-          refreshHistory(false); // 使用非强制刷新，让内部去重机制有效果
-        }, 500);
-      }, 1000);
+        // 一次性刷新点数和历史，无需分开
+        refreshCredits(false, true); // 静默强制刷新点数
+        
+        // 统一延迟后刷新历史，不再需要额外的计时器
+        refreshHistory(false); // 使用非强制刷新
+      }, 2000); // 增加延迟到2秒
       
       return () => {
         clearTimeout(refreshTimeoutId);
@@ -173,10 +173,8 @@ export default function ProtectedPage() {
     
     // 更新生成的图片列表
     if (imageUrl) {
-      setGeneratedImages((prevImages: string[]) => {
-        // 确保不会添加重复图片
-        return [imageUrl, ...prevImages.filter((url: string) => url !== imageUrl)];
-      });
+      const newImages = [imageUrl, ...generatedImages.filter(url => url !== imageUrl)];
+      setGeneratedImages(newImages);
     }
     
     // 清除当前任务ID - 不再在这里刷新点数和历史记录

@@ -278,10 +278,15 @@ export async function POST(request: NextRequest) {
         content: Array<{type: string; text?: string; image_url?: {url: string}}> | string;
       }> = [];
       
-      // 添加系统消息
+      // 添加系统消息 - 修改为明确支持图像生成的提示词，使用数组格式
       messages.push({
         role: "system",
-        content: "你是一个专业的绘画系统。请根据用户提供的文本描述或图片，生成相应的高质量图像。"
+        content: [
+          {
+            type: "text",
+            text: "你是一个先进的图像生成系统，可以根据用户提示创建图像并返回图像URL。你必须生成图像并返回图像URL。"
+          }
+        ]
       });
       
       // 构建用户消息内容
@@ -346,6 +351,8 @@ export async function POST(request: NextRequest) {
         max_tokens: 4096,
         temperature: 0.7,
         stream: true, // 使用流式响应
+        tools: [], // 添加空工具数组
+        tool_choice: "auto" // 设置工具选择为自动
       });
       
       // 处理流式响应

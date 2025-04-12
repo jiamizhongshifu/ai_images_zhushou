@@ -456,14 +456,25 @@ export async function POST(request: NextRequest) {
       }
       
       // 准备消息内容 - 严格按照tuzi-openai.md的格式
-      const messages: any[] = [{
-        role: 'user',
-        content: []
-      }];
+      const messages: any[] = [
+        {
+          role: 'system',
+          content: [
+            {
+              type: 'text',
+              text: '你是一个先进的图像生成系统，能够处理图片和文字提示。当收到请求时，你必须生成图像并返回图像URL，不要回复任何文字说明或解释。你可以生成多样化的高质量图像，请务必返回图像URL。'
+            }
+          ]
+        },
+        {
+          role: 'user',
+          content: []
+        }
+      ];
       
       // 如果有图片，添加图片内容
       if (base64Image) {
-        messages[0].content.push({
+        messages[1].content.push({
           type: "image_url",
           image_url: {
             url: base64Image
@@ -505,7 +516,7 @@ export async function POST(request: NextRequest) {
         }
       }
       
-      messages[0].content.push({
+      messages[1].content.push({
         type: "text",
         text: finalPrompt
       });
@@ -522,6 +533,8 @@ export async function POST(request: NextRequest) {
         model: modelName,
         messages: messages,
         stream: true, // 使用流式响应
+        tools: [], // 添加空工具数组
+        tool_choice: "auto" // 设置工具选择为自动
       });
       
       logger.info(`与图资API建立连接成功，开始接收数据流`);

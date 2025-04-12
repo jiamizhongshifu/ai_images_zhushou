@@ -22,7 +22,7 @@ export const STYLE_CONFIGS: StyleConfig[] = [
     name: "吉卜力",
     description: "细腻精致、充满幻想的日式动画风格",
     imageUrl: "/examples/ghibli.webp",
-    promptTemplate: "{prompt}，风格：吉普力"
+    promptTemplate: "{prompt}，吉普力风格"
   },
   {
     id: "乐高",
