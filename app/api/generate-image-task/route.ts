@@ -79,7 +79,7 @@ const logger = {
   info: (message: string) => {
     console.log(`[图片任务] ${message}`);
   },
-  warning: (message: string) => {
+  warn: (message: string) => {
     console.warn(`[图片任务警告] ${message}`);
   },
   error: (message: string) => {
@@ -155,7 +155,7 @@ async function saveGenerationHistory(
       .limit(1);
     
     if (tableError) {
-      logger.warning(`检查表结构失败: ${tableError.message}`);
+      logger.warn(`检查表结构失败: ${tableError.message}`);
     }
     
     // 始终使用gpt-4o-all作为模型名称
@@ -241,7 +241,7 @@ function extractImageUrl(content: string): string | null {
     // 带图片参数的URL
     /(https?:\/\/[^\s"'<>]+\?.*image.*=.*)/i,
     // Markdown图片链接
-    /!\[.*?\]\((https?:\/\/[^\s)"'<>]+)\)/i,
+    /!\[.*?\]\((https?:\/\/[^\s)]+)\)/i,
     // HTML图片标签
     /<img.*?src=["'](https?:\/\/[^\s"'<>]+)["']/i,
     // 任何URL (最后尝试)
@@ -294,14 +294,14 @@ function validateImageData(imageData: string): boolean {
     
     // 检查前缀 - 更宽松的验证
     if (!imageData.startsWith('data:image/')) {
-      logger.warning('图片数据缺少有效的data:image前缀，尝试自动修复');
+      logger.warn('图片数据缺少有效的data:image前缀，尝试自动修复');
       return true; // 返回true以允许代码尝试添加前缀
     }
 
     // 验证base64部分 - 更简单的验证
     const parts = imageData.split(',');
     if (parts.length < 2) {
-      logger.warning('图片数据格式可能有问题，未找到标准base64分隔符');
+      logger.warn('图片数据格式可能有问题，未找到标准base64分隔符');
       // 尝试提取可能的base64部分
       const possibleBase64 = imageData.replace(/^data:image\/[^;]+;base64,/, '');
       try {
@@ -358,7 +358,7 @@ async function retryDatabaseOperation<T>(
       // 只有在不是最后一次尝试时才延迟和重试
       if (attempt < maxRetries - 1) {
         const delay = initialDelay * Math.pow(2, attempt);
-        logger.warning(`数据库操作失败，等待${delay}ms后重试(${attempt + 1}/${maxRetries}): ${error instanceof Error ? error.message : String(error)}`);
+        logger.warn(`数据库操作失败，等待${delay}ms后重试(${attempt + 1}/${maxRetries}): ${error instanceof Error ? error.message : String(error)}`);
         await new Promise(resolve => setTimeout(resolve, delay));
       }
     }
@@ -675,149 +675,10 @@ export async function POST(request: NextRequest) {
           // 继续执行，不中断流程
         }
         
-        // 记录比例信息
-        if (aspectRatio) {
-          logger.info(`图片比例参数: aspectRatio=${aspectRatio}, standardAspectRatio=${standardAspectRatio || '未指定'}`);
-        }
-        
         // 用于记录提示词的变量
         let finalPrompt = "";
         // 定义单一消息结构
         const messages: ChatCompletionMessageParam[] = [];
-
-        // 只添加一条消息，包含所有内容
-        if (image) {
-          logger.info(`处理用户上传的图片，任务ID: ${taskId}`);
-          
-          try {
-            // 增强日志记录，确认图片传递情况
-            logger.debug(`图片数据长度: ${image.length}`);
-            logger.debug(`图片数据前100字符: ${image.substring(0, 100)}...`);
-            logger.debug(`图片数据是否以data:开头: ${image.startsWith('data:')}`);
-            
-            // 改进图片数据处理
-            let imageData;
-            if (image.startsWith('data:')) {
-              imageData = image;
-              logger.debug(`图片已包含data:URL前缀，无需添加`);
-            } else {
-              // 检查base64格式并决定合适的MIME类型
-              try {
-                const buffer = Buffer.from(image, 'base64');
-                // 简单的图片格式检测
-                let mimeType = 'image/jpeg'; // 默认JPEG
-                
-                // 检查常见图片格式的文件头
-                if (buffer.length > 4) {
-                  if (buffer[0] === 0xFF && buffer[1] === 0xD8 && buffer[2] === 0xFF) {
-                    mimeType = 'image/jpeg';
-                  } else if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4E && buffer[3] === 0x47) {
-                    mimeType = 'image/png';
-                  } else if (buffer[0] === 0x47 && buffer[1] === 0x49 && buffer[2] === 0x46) {
-                    mimeType = 'image/gif';
-                  } else if (buffer[0] === 0x52 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x46) {
-                    mimeType = 'image/webp';
-                  }
-                }
-                
-                imageData = `data:${mimeType};base64,${image}`;
-                logger.debug(`为图片添加data:URL前缀: ${mimeType}`);
-                logger.debug(`图片大小: ${(buffer.length / 1024).toFixed(2)}KB`);
-              } catch (error) {
-                logger.warning(`处理base64图片数据时出错，使用默认JPEG类型: ${error instanceof Error ? error.message : String(error)}`);
-                imageData = `data:image/jpeg;base64,${image}`;
-              }
-            }
-            
-            // 验证图片数据
-            if (!validateImageData(imageData)) {
-              logger.warning('图片数据格式验证失败，将使用纯文本提示');
-              // 如果图片数据无效，使用纯文本提示
-              let textPrompt = prompt || "";
-              if (style) {
-                textPrompt += textPrompt ? `，${style}风格` : `${style}风格`;
-              }
-              
-              finalPrompt = textPrompt || "请生成一张图片";
-              
-              messages.push({
-                role: 'user',
-                content: finalPrompt
-              });
-            } else {
-              // 组合提示词：用户输入的提示词 + 风格
-              let promptText = "";
-              if (prompt) {
-                promptText = prompt;
-              }
-              
-              if (style) {
-                promptText += promptText ? `，${style}风格` : `${style}风格`;
-              }
-              
-              // 如果两者都没有，使用一个基本提示
-              if (!promptText) {
-                promptText = "请基于这张图片生成新图片";
-              }
-              
-              // 保存最终提示词，用于记录
-              finalPrompt = promptText;
-              
-              // 创建单一消息，包含文本和图片
-              const userPromptWithImage: ChatCompletionContentPart[] = [
-                { 
-                  type: 'text', 
-                  text: promptText
-                },
-                {
-                  type: 'image_url',
-                  image_url: {
-                    url: imageData,
-                    detail: 'high'
-                  }
-                }
-              ];
-              
-              messages.push({
-                role: 'user',
-                content: userPromptWithImage
-              } as ChatCompletionUserMessageParam);
-              
-              logger.debug(`添加单一消息，包含用户图片和提示词: ${promptText}`);
-            }
-            
-            // 在创建messages后也添加日志
-            logger.debug(`消息数组: ${JSON.stringify(messages).substring(0, 300)}...`);
-            logger.debug(`消息数组长度: ${messages.length}，首条消息类型: ${messages[0].role}`);
-            if (messages[0].content && Array.isArray(messages[0].content)) {
-              logger.debug(`首条消息内容项数: ${messages[0].content.length}`);
-              logger.debug(`首条消息是否包含图片: ${messages[0].content.some(item => item.type === 'image_url')}`);
-            }
-            
-            // 跳过图片分析步骤，直接准备图像生成
-            logger.info(`使用${imageModel}生成新图像，任务ID: ${taskId}`);
-            
-          } catch (analyzeError) {
-            logger.error(`处理图片数据失败: ${analyzeError instanceof Error ? analyzeError.message : String(analyzeError)}`);
-            throw new Error(`处理图片数据失败: ${analyzeError instanceof Error ? analyzeError.message : String(analyzeError)}`);
-          }
-        } else {
-          // 没有参考图片，使用纯文本提示
-          let textPrompt = prompt || "";
-          if (style) {
-            textPrompt += textPrompt ? `，${style}风格` : `${style}风格`;
-          }
-          
-          // 保存最终提示词，用于记录
-          finalPrompt = textPrompt || "请生成一张图片";
-          
-          messages.push({
-            role: 'user',
-            content: finalPrompt
-          });
-          
-          logger.debug(`添加单一消息，纯文本提示: ${textPrompt}`);
-        }
         
         // 获取图片尺寸比例参数
         let size: "1024x1024" | "1792x1024" | "1024x1792" = "1024x1024"; // 默认尺寸
@@ -876,6 +737,151 @@ export async function POST(request: NextRequest) {
           logger.info(`使用标准尺寸: ${size}`);
         }
         
+        // 记录比例信息
+        if (aspectRatio) {
+          logger.info(`图片比例参数: aspectRatio=${aspectRatio}, standardAspectRatio=${standardAspectRatio || '未指定'}`);
+        }
+
+        // 只添加一条消息，包含所有内容
+        if (image) {
+          logger.info(`处理用户上传的图片，任务ID: ${taskId}`);
+          
+          try {
+            // 增强日志记录，确认图片传递情况
+            logger.debug(`图片数据长度: ${image.length}`);
+            logger.debug(`图片数据前100字符: ${image.substring(0, 100)}...`);
+            logger.debug(`图片数据是否以data:开头: ${image.startsWith('data:')}`);
+            
+            // 改进图片数据处理
+            let imageData;
+            if (image.startsWith('data:')) {
+              imageData = image;
+              logger.debug(`图片已包含data:URL前缀，无需添加`);
+            } else {
+              // 检查base64格式并决定合适的MIME类型
+              try {
+                const buffer = Buffer.from(image, 'base64');
+                // 简单的图片格式检测
+                let mimeType = 'image/jpeg'; // 默认JPEG
+                
+                // 检查常见图片格式的文件头
+                if (buffer.length > 4) {
+                  if (buffer[0] === 0xFF && buffer[1] === 0xD8 && buffer[2] === 0xFF) {
+                    mimeType = 'image/jpeg';
+                  } else if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4E && buffer[3] === 0x47) {
+                    mimeType = 'image/png';
+                  } else if (buffer[0] === 0x47 && buffer[1] === 0x49 && buffer[2] === 0x46) {
+                    mimeType = 'image/gif';
+                  } else if (buffer[0] === 0x52 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x46) {
+                    mimeType = 'image/webp';
+                  }
+                }
+                
+                imageData = `data:${mimeType};base64,${image}`;
+                logger.debug(`为图片添加data:URL前缀: ${mimeType}`);
+                logger.debug(`图片大小: ${(buffer.length / 1024).toFixed(2)}KB`);
+              } catch (error) {
+                logger.warn(`处理base64图片数据时出错，使用默认JPEG类型: ${error instanceof Error ? error.message : String(error)}`);
+                imageData = `data:image/jpeg;base64,${image}`;
+              }
+            }
+            
+            // 验证图片数据
+            if (!validateImageData(imageData)) {
+              logger.warn('图片数据格式验证失败，将使用纯文本提示');
+              // 如果图片数据无效，使用纯文本提示
+              let textPrompt = prompt || "";
+              if (style) {
+                textPrompt += textPrompt ? `，${style}风格` : `${style}风格`;
+              }
+              
+              finalPrompt = textPrompt || "请生成一张图片";
+              
+              messages.push({
+                role: 'user',
+                content: finalPrompt
+              });
+            } else {
+              // 组合提示词：用户输入的提示词 + 风格
+              let promptText = "";
+              if (prompt) {
+                promptText = prompt;
+              }
+              
+              if (style) {
+                promptText += promptText ? `，${style}风格` : `${style}风格`;
+              }
+              
+              // 如果两者都没有，使用一个基本提示
+              if (!promptText) {
+                promptText = "请基于这张图片生成新图片";
+              }
+              
+              // 添加图片比例要求
+              if (aspectRatio) {
+                promptText += `，请严格保持${aspectRatio}的宽高比例，按照${size}尺寸生成`;
+              }
+              
+              // 保存最终提示词，用于记录
+              finalPrompt = promptText;
+              
+              // 创建单一消息，包含文本和图片
+              const userPromptWithImage: ChatCompletionContentPart[] = [
+                { 
+                  type: 'text', 
+                  text: promptText
+                },
+                {
+                  type: 'image_url',
+                  image_url: {
+                    url: imageData,
+                    detail: 'high'
+                  }
+                }
+              ];
+  
+              // 直接添加用户消息，不再添加额外的系统消息
+              messages.push({
+                role: 'user',
+                content: userPromptWithImage
+              } as ChatCompletionUserMessageParam);
+              
+              logger.debug(`添加单一消息，包含用户图片和提示词: ${promptText}`);
+            }
+            
+            // 在创建messages后也添加日志
+            logger.debug(`消息数组: ${JSON.stringify(messages).substring(0, 300)}...`);
+            logger.debug(`消息数组长度: ${messages.length}，首条消息类型: ${messages[0].role}`);
+            if (messages[0].content && Array.isArray(messages[0].content)) {
+              logger.debug(`首条消息内容项数: ${messages[0].content.length}`);
+              logger.debug(`首条消息是否包含图片: ${messages[0].content.some(item => item.type === 'image_url')}`);
+            }
+            
+            // 跳过图片分析步骤，直接准备图像生成
+            logger.info(`使用${imageModel}生成新图像，任务ID: ${taskId}`);
+            
+          } catch (analyzeError) {
+            logger.error(`处理图片数据失败: ${analyzeError instanceof Error ? analyzeError.message : String(analyzeError)}`);
+            throw new Error(`处理图片数据失败: ${analyzeError instanceof Error ? analyzeError.message : String(analyzeError)}`);
+          }
+        } else {
+          // 没有参考图片，使用纯文本提示
+          let textPrompt = prompt || "";
+          if (style) {
+            textPrompt += textPrompt ? `，${style}风格` : `${style}风格`;
+          }
+          
+          // 保存最终提示词，用于记录
+          finalPrompt = textPrompt || "请生成一张图片";
+          
+          messages.push({
+            role: 'user',
+            content: finalPrompt
+          });
+          
+          logger.debug(`添加单一消息，纯文本提示: ${textPrompt}`);
+        }
+        
         // 图像生成参数
         const quality = "hd"; // 使用高清质量，提高输出图像质量
         const styleOption: "natural" | "vivid" = "vivid"; // 更生动的风格
@@ -884,46 +890,73 @@ export async function POST(request: NextRequest) {
         logger.info(`使用聊天API (gpt-4o-all)生成图片，提示词长度: ${finalPrompt.length}字符`);
         
         try {
-          // 定义图像生成工具
-          const tools = [
-            {
-              type: "function" as const,
-              function: {
-                name: "dalle_generate_image",
-                description: "为用户生成图像并返回图像信息",
-                parameters: {
-                  type: "object",
-                  properties: {
-                    prompt: {
-                      type: "string",
-                      description: "用于生成图片的详细提示词"
-                    },
-                    size: {
-                      type: "string",
-                      description: "图片的尺寸，可选值: 1024x1024, 1792x1024, 1024x1792",
-                      enum: ["1024x1024", "1792x1024", "1024x1792"]
-                    },
-                    quality: {
-                      type: "string",
-                      description: "图片的质量，可选值: standard, hd",
-                      enum: ["standard", "hd"]
-                    },
-                    style: {
-                      type: "string",
-                      description: "图片的风格，可选值: vivid, natural",
-                      enum: ["vivid", "natural"]
-                    }
-                  },
-                  required: ["prompt"]
-                }
-              }
-            }
-          ];
-          
           // 执行API调用
           logger.info(`开始调用gpt-4o-all聊天API进行图像生成`);
-          logger.debug(`请求参数: 模型=gpt-4o-all, 消息数=${messages.length}, 温度=0.7, 工具=${JSON.stringify(tools)}`);
-          logger.debug(`消息内容: ${JSON.stringify(messages).substring(0, 200)}...`);
+          logger.debug(`请求参数: 模型=gpt-4o-all, 消息数=${messages.length}, 温度=0.7`);
+          
+          // 确保消息内容正确传递图片数据
+          if (messages.length > 0 && messages[0].content) {
+            if (Array.isArray(messages[0].content)) {
+              // 检查并记录图片内容
+              const imageContent = messages[0].content.find(item => item.type === 'image_url');
+              if (imageContent && imageContent.type === 'image_url') {
+                const imgUrl = (imageContent.image_url as any).url;
+                logger.debug(`消息中包含图片URL: ${imgUrl ? imgUrl.substring(0, 50) + '...' : '未找到URL'}`);
+                
+                // 增强图片内容验证
+                const imageUrl = (imageContent.image_url as any).url;
+                if (!imageUrl || !imageUrl.startsWith('data:image/')) {
+                  logger.error(`图片URL格式不正确，缺少data:image/前缀: ${imageUrl?.substring(0, 30)}...`);
+                  throw new Error('图片数据格式错误，请确保图片格式正确且完整');
+                }
+                
+                // 补充图片质量信息
+                if (!(imageContent.image_url as any).detail) {
+                  (imageContent.image_url as any).detail = 'high';
+                  logger.debug(`已添加图片质量设置: detail=high`);
+                }
+                
+                // 验证图片数据大小
+                if (imageUrl.length < 1000) {
+                  logger.error(`图片数据大小异常: ${imageUrl.length} 字节`);
+                  throw new Error('上传的图片数据异常，请重新上传');
+                }
+                
+                logger.info(`图片验证成功，数据大小: ${Math.round(imageUrl.length / 1024)}KB`);
+                
+              } else {
+                logger.warn('消息中未找到图片内容，这可能导致工具调用失败');
+                logger.debug(`消息内容类型: ${messages[0].content.map(item => item.type).join(', ')}`);
+              }
+            }
+            
+            // 记录工具选择配置，确保正确设置
+            logger.debug(`工具选择配置: tool_choice=auto`);
+            
+            // 确保第一条消息包含清晰的指令，提示模型使用图像生成功能
+            if (!Array.isArray(messages[0].content) || !messages[0].content.some(item => item.type === 'text')) {
+              logger.warn('消息中缺少明确的文本指令，添加默认指令');
+              // 如果消息中只有图片没有文本，添加明确的文本指令
+              const textContent = {
+                type: 'text' as const,
+                text: '请根据这张图片生成一个新的图像。' + (prompt ? `图像应当是: ${prompt}` : '')
+              };
+              
+              if (Array.isArray(messages[0].content)) {
+                // 创建新的数组，确保类型兼容
+                const newContent: ChatCompletionContentPart[] = [
+                  textContent, 
+                  ...messages[0].content as ChatCompletionContentPart[]
+                ];
+                messages[0].content = newContent;
+              } else {
+                // 如果不是数组，设置为包含文本内容的数组
+                messages[0].content = [textContent];
+              }
+            }
+            
+            logger.debug(`最终消息内容: ${JSON.stringify(messages).substring(0, 200)}...`);
+          }
           
           // 添加重试逻辑，不使用降级方案
           let retryCount = 0;
@@ -944,13 +977,13 @@ export async function POST(request: NextRequest) {
               // 更新任务的尝试次数
               try {
                 const { error: updateAttemptError } = await supabaseAdmin
-          .from('image_tasks')
-          .update({
+                  .from('image_tasks')
+                  .update({
                     attempt_count: retryCount + 1,
-            updated_at: new Date().toISOString()
-          })
-          .eq('task_id', taskId);
-        
+                    updated_at: new Date().toISOString()
+                  })
+                  .eq('task_id', taskId);
+                
                 if (updateAttemptError) {
                   logger.error(`更新任务尝试次数失败: ${updateAttemptError.message}`);
                 } else {
@@ -967,8 +1000,6 @@ export async function POST(request: NextRequest) {
                 messages: messages,
                 max_tokens: 1000,
                 temperature: 0.7,
-                tools: tools, // 添加工具定义
-                tool_choice: "auto" // 自动选择合适的工具
               });
               
               // 创建一个超时后的并发请求Promise
@@ -978,7 +1009,7 @@ export async function POST(request: NextRequest) {
               
               const timeoutPromise = new Promise<void>((resolve) => {
                 timeoutId = setTimeout(() => {
-                  logger.warning(`请求已运行${MAX_WAIT_TIME/1000}秒，启动并发请求`);
+                  logger.warn(`请求已运行${MAX_WAIT_TIME/1000}秒，启动并发请求`);
                   parallelRequestStarted = true;
                   
                   // 为并发请求设置更短的超时时间
@@ -993,7 +1024,7 @@ export async function POST(request: NextRequest) {
                     presence_penalty: 0.1, // 添加存在惩罚，促使模型生成更多样的内容
                     frequency_penalty: 0.1, // 添加频率惩罚，减少重复
                     response_format: { type: "text" }, // 明确指定响应格式
-                    tools: tools,
+                    tools: [],
                     tool_choice: "auto"
                   });
                   
@@ -1060,73 +1091,77 @@ export async function POST(request: NextRequest) {
                 try {
                   logger.debug(`尝试解析API返回内容: ${JSON.stringify(chatCompletion).substring(0, 500)}...`);
                   
-                  // 提取工具调用中的结果
-                  const toolCall = chatCompletion.choices?.[0]?.message?.tool_calls?.[0];
                   let imageUrl = null;
                   
-                  // 方法1: 尝试从工具调用结果中提取
-                  if (toolCall?.function?.name === 'dalle_generate_image') {
-                    try {
-                      // 解析工具调用返回的参数
-                      const toolArgs = JSON.parse(toolCall.function.arguments);
-                      logger.debug(`成功解析工具调用参数: ${JSON.stringify(toolArgs).substring(0, 300)}...`);
-                      imageUrl = toolArgs.image_url || toolArgs.imageUrl || null;
-                      
-                      if (imageUrl && isValidImageUrl(imageUrl)) {
-                        logger.info(`方法1成功: 从工具调用中提取到图片URL: ${imageUrl}`);
-                      } else {
-                        logger.warning(`方法1失败: 未找到有效图片URL: ${JSON.stringify(toolArgs)}`);
+                  // 尝试从响应内容中提取图片URL
+                  const content = chatCompletion.choices?.[0]?.message?.content;
+                  if (content && typeof content === 'string') {
+                    logger.debug(`提取图片URL的内容: ${content.substring(0, 100)}...`);
+                    
+                    // 尝试多种方式提取URL
+                    // 1. 提取markdown格式的图片链接 ![...](url)
+                    const markdownPattern = /!\[.*?\]\((https?:\/\/[^\s)]+)\)/g;
+                    const markdownMatches = Array.from(content.matchAll(markdownPattern));
+                    if (markdownMatches.length > 0) {
+                      imageUrl = markdownMatches[0][1];
+                      logger.debug(`通过Markdown模式找到图片URL: ${imageUrl}`);
+                    }
+                    
+                    // 如果上面失败，尝试其他格式
+                    if (!imageUrl) {
+                      // 直接URL链接
+                      const urlPattern = /(https?:\/\/[^\s]+\.(?:png|jpg|jpeg|gif|webp)(?:\?[^\s]*)?)/g;
+                      const urlMatches = Array.from(content.matchAll(urlPattern));
+                      if (urlMatches.length > 0) {
+                        imageUrl = urlMatches[0][1];
+                        logger.debug(`通过直接URL模式找到图片URL: ${imageUrl}`);
                       }
-                    } catch (parseError) {
-                      logger.error(`方法1失败: 解析工具调用结果出错: ${parseError instanceof Error ? parseError.message : String(parseError)}`);
+                    }
+                    
+                    // 尝试HTML img标签
+                    if (!imageUrl) {
+                      const imgPattern = /<img.*?src=["'](https?:\/\/[^\s"']+)["']/g;
+                      const imgMatches = Array.from(content.matchAll(imgPattern));
+                      if (imgMatches.length > 0) {
+                        imageUrl = imgMatches[0][1];
+                        logger.debug(`通过HTML img标签找到图片URL: ${imageUrl}`);
+                      }
+                    }
+                    
+                    // 尝试常见的CDN链接模式
+                    if (!imageUrl) {
+                      const cdnPattern = /(https?:\/\/\w+\.(?:cloudfront|akamaized|staticflickr|googleusercontent)\.(?:net|com)\/[^\s]+)/g;
+                      const cdnMatches = Array.from(content.matchAll(cdnPattern));
+                      if (cdnMatches.length > 0) {
+                        imageUrl = cdnMatches[0][1];
+                        logger.debug(`通过CDN链接模式找到图片URL: ${imageUrl}`);
+                      }
                     }
                   } else {
-                    logger.warning(`未找到预期的dalle_generate_image工具调用`);
+                    logger.warn(`content不存在或不是字符串`);
                   }
                   
-                  // 方法2: 尝试从content中提取图片URL
-                  if (!imageUrl) {
-                    const content = chatCompletion.choices?.[0]?.message?.content;
-                    if (content && typeof content === 'string') {
-                      logger.debug(`尝试从content中提取图片URL: ${content.substring(0, 300)}...`);
-                      
-                      // 使用多种正则表达式尝试匹配不同格式的URL
-                      const patterns = [
-                        /!\[.*?\]\((https?:\/\/[^\s)"'<>]+)\)/i, // Markdown格式
-                        /(https?:\/\/[^\s"'<>]+\.(jpe?g|png|gif|webp))/i, // 直接图片URL
-                        /(https?:\/\/[^\s"'<>]+\/[^\s"'<>]+\.(jpe?g|png|gif|webp))/i, // 包含路径的图片URL
-                        /(https:\/\/filesystem\.site\/cdn\/[^\s"'<>]+)/i, // 特定域名
-                        /(https?:\/\/[^\s"'<>]{10,})/i  // 任何看起来像URL的字符串
-                      ];
-                      
-                      // 尝试所有模式
-                      for (const pattern of patterns) {
-                        const match = content.match(pattern);
-                        if (match && match[1]) {
-                          imageUrl = match[1];
-                          logger.info(`方法2成功: 使用模式 ${pattern} 从content中提取到URL: ${imageUrl}`);
-                          break;
-                        }
-                      }
-                      
-                      if (!imageUrl) {
-                        logger.warning(`方法2失败: 所有正则模式都未能提取到URL`);
-                      }
-                    } else {
-                      logger.warning(`方法2失败: content不存在或不是字符串`);
-                    }
-                  }
-                  
-                  // 方法3: 最后尝试任何可能的URL
+                  // 如果从内容中提取失败，尝试从完整响应中提取
                   if (!imageUrl) {
                     // 将整个响应转为字符串并搜索URL
                     const responseStr = JSON.stringify(chatCompletion);
-                    const urlMatch = responseStr.match(/(https?:\/\/[^\s"'<>]{10,})/i);
-                    if (urlMatch && urlMatch[1]) {
-                      imageUrl = urlMatch[1];
-                      logger.info(`方法3成功: 从完整响应中提取到可能的URL: ${imageUrl}`);
+                    const urlRegex = /(https?:\/\/[^\s"'<>]+)/gi;
+                    const allUrls = responseStr.match(urlRegex);
+                    
+                    if (allUrls && allUrls.length > 0) {
+                      // 优先选择看起来像图片URL的链接
+                      const possibleImageUrl = allUrls.find(url => 
+                        url.includes('/image') || 
+                        url.includes('.jpg') || 
+                        url.includes('.png') || 
+                        url.includes('.jpeg') || 
+                        url.includes('.webp')
+                      );
+                      
+                      imageUrl = possibleImageUrl || allUrls[0];
+                      logger.info(`从完整响应中提取到可能的URL: ${imageUrl}`);
                     } else {
-                      logger.error(`方法3失败: 在完整响应中未找到任何URL`);
+                      logger.error(`在完整响应中未找到任何URL`);
                     }
                   }
                   
@@ -1145,7 +1180,7 @@ export async function POST(request: NextRequest) {
                           updated_at: new Date().toISOString()
                         })
                         .eq('task_id', taskId);
-                        
+                    
                       if (updateError) {
                         logger.error(`更新任务状态失败: ${updateError.message}`);
                       } else {
@@ -1159,9 +1194,9 @@ export async function POST(request: NextRequest) {
                     // 记录到历史
                     try {
                       await saveGenerationHistory(
-                        supabaseAdmin,
-                        currentUser.id,
-                        imageUrl,
+                        supabaseAdmin, 
+                        currentUser.id, 
+                        imageUrl, 
                         finalPrompt,
                         style,
                         aspectRatio,
@@ -1181,8 +1216,8 @@ export async function POST(request: NextRequest) {
                     logger.timing(startTime, `整个图像生成任务完成，任务ID: ${taskId}`);
                     
                     // 返回成功响应
-                    return NextResponse.json({
-                      taskId,
+                    return NextResponse.json({ 
+                      taskId, 
                       status: 'success',
                       imageUrl: imageUrl,
                       prompt: finalPrompt,
@@ -1250,7 +1285,7 @@ export async function POST(request: NextRequest) {
               throw new Error(`图像生成失败，经过${maxRetries}次重试后依然失败: ${errorMsg}。请稍后再试或联系客服。`);
             }
           }
-      } catch (generateError) {
+        } catch (generateError) {
           const detailedError = logEnhancedError('图像生成过程失败', generateError, taskId);
           logger.error(`图像生成失败: ${detailedError}`);
           
@@ -1291,7 +1326,7 @@ export async function POST(request: NextRequest) {
             if (updateError) {
               // 如果遇到error_details字段不存在的错误，尝试不使用该字段
               if (updateError.message.includes('error_details')) {
-                logger.warning(`error_details字段可能不存在，尝试不使用该字段更新`);
+                logger.warn(`error_details字段可能不存在，尝试不使用该字段更新`);
         await supabaseAdmin
           .from('image_tasks')
           .update({

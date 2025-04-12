@@ -72,9 +72,20 @@ export default function ProtectedPage() {
   // 监听生成完成状态
   useEffect(() => {
     if (generationStage === 'completed') {
-      // 刷新点数和历史记录
-      refreshCredits(false, true);
-      refreshHistory(true);
+      // 刷新点数和历史记录，添加防抖和防重复请求机制
+      const refreshTimeoutId = setTimeout(() => {
+        console.log('[ProtectedPage] 生成完成后触发点数和历史刷新，延迟执行以减少请求');
+        refreshCredits(false, true); // 静默刷新
+        
+        // 在刷新历史时使用非强制刷新，减少不必要请求
+        setTimeout(() => {
+          refreshHistory(false); // 使用非强制刷新，让内部去重机制有效果
+        }, 500);
+      }, 1000);
+      
+      return () => {
+        clearTimeout(refreshTimeoutId);
+      };
     }
   }, [generationStage, refreshCredits, refreshHistory]);
   
@@ -168,11 +179,8 @@ export default function ProtectedPage() {
       });
     }
     
-    // 刷新点数和历史记录
-    refreshCredits(false, true);
-    refreshHistory(true);
-    
-    // 清除当前任务ID
+    // 清除当前任务ID - 不再在这里刷新点数和历史记录
+    // 生成完成刷新逻辑已经移至generationStage监听的useEffect中
     setCurrentTaskId(null);
   };
   

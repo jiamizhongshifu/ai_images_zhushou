@@ -77,6 +77,8 @@ function UserStateProviderContent({ children }: UserStateProviderProps) {
   const pageReloadCheckRef = useRef<boolean>(false);
   const initialLoadTimeRef = useRef<number>(Date.now());
   const loadingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const refreshThrottleTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const refreshCountRef = useRef<number>(0);
   
   const supabase = createClient();
   
@@ -242,9 +244,151 @@ function UserStateProviderContent({ children }: UserStateProviderProps) {
   
   // 新增：强制刷新积分的触发器函数
   const triggerCreditRefresh = useCallback(async () => {
-    console.log('[UserStateProvider] 触发强制积分刷新');
-    await refreshUserState({ forceRefresh: true, showLoading: true });
-  }, [refreshUserState]);
+    // 防止短时间内重复触发 - 使用更长的冷却时间
+    const now = Date.now();
+    const MIN_REFRESH_INTERVAL = 15000; // 增加到15秒，减少频繁刷新
+    
+    if (refreshingRef.current) {
+      console.log('[UserStateProvider] 点数刷新操作正在进行中，跳过重复请求');
+      return;
+    }
+    
+    // 记录上次刷新的时间间隔
+    const timeSinceLastFetch = now - lastFetchTime;
+    if (timeSinceLastFetch < MIN_REFRESH_INTERVAL) {
+      console.log(`[UserStateProvider] 点数刷新请求在冷却期内，跳过 (剩余 ${Math.round((MIN_REFRESH_INTERVAL - timeSinceLastFetch)/1000)}秒)`);
+      return;
+    }
+    
+    // 防止在一个生命周期内过多刷新
+    refreshCountRef.current += 1;
+    const MAX_REFRESH_COUNT = 2; // 减少最大刷新次数，提前终止可能的循环刷新
+    
+    if (refreshCountRef.current > MAX_REFRESH_COUNT) {
+      console.log(`[UserStateProvider] 已达到最大刷新次数限制(${MAX_REFRESH_COUNT}次)，跳过后续刷新，等待页面刷新或用户手动操作`);
+      return;
+    }
+    
+    // 清除任何现有的刷新计时器
+    if (refreshThrottleTimerRef.current) {
+      clearTimeout(refreshThrottleTimerRef.current);
+      refreshThrottleTimerRef.current = null;
+    }
+    
+    // 设置节流计时器，将多个连续请求合并为一个
+    refreshThrottleTimerRef.current = setTimeout(async () => {
+      console.log('[UserStateProvider] 开始执行用户点数刷新 (节流后)');
+      
+      // 设置请求标志以防止并发请求
+      if (refreshingRef.current) {
+        console.log('[UserStateProvider] 检测到并发请求，跳过本次刷新');
+        return;
+      }
+      
+      refreshingRef.current = true;
+      setLoadingWithTimeout(true);
+      
+      // 添加执行标记，用于调试
+      const executionId = Math.random().toString(36).substring(2, 8);
+      console.log(`[UserStateProvider] 刷新执行ID: ${executionId}, 这是第${refreshCountRef.current}次刷新请求`);
+      
+      try {
+        // 使用强制刷新模式获取最新点数
+        await refreshUserState({ showLoading: false, forceRefresh: true });
+        console.log(`[UserStateProvider] 积分刷新成功 (执行ID: ${executionId})`);
+        setLastFetchTime(Date.now());
+      } catch (error) {
+        console.error(`[UserStateProvider] 积分刷新失败 (执行ID: ${executionId}):`, error);
+      } finally {
+        // 延迟重置刷新状态，防止连续请求
+        setTimeout(() => {
+          refreshingRef.current = false;
+          setLoadingWithTimeout(false);
+          console.log(`[UserStateProvider] 刷新状态已重置 (执行ID: ${executionId})`);
+        }, 1000); // 增加冷却时间
+      }
+    }, 500); // 增加节流延迟，合并多个快速连续请求
+
+    console.log(`[UserStateProvider] 已安排点数刷新，这是第${refreshCountRef.current}次刷新请求`);
+  }, [refreshUserState, lastFetchTime, setLoadingWithTimeout]);
+  
+  // 重置任务完成后的刷新计数
+  const resetRefreshCount = useCallback(() => {
+    refreshCountRef.current = 0;
+  }, []);
+
+  // 监听页面路由变化，重置刷新计数
+  useEffect(() => {
+    // 页面刷新或导航时重置刷新计数
+    window.addEventListener('beforeunload', resetRefreshCount);
+    
+    return () => {
+      window.removeEventListener('beforeunload', resetRefreshCount);
+      
+      // 清理任何悬挂的计时器
+      if (refreshThrottleTimerRef.current) {
+        clearTimeout(refreshThrottleTimerRef.current);
+      }
+    };
+  }, [resetRefreshCount]);
+
+  // 监听任务完成事件，只刷新一次点数，使用事件细节
+  useEffect(() => {
+    // 创建已处理任务ID集合，防止重复处理
+    const processedTaskIds = new Set<string>();
+    
+    const handleTaskComplete = (event: Event) => {
+      // 尝试获取事件详情
+      const detail = (event as CustomEvent)?.detail;
+      const taskId = detail?.taskId;
+      
+      if (!taskId) {
+        console.log('[UserStateProvider] 接收到任务完成事件，但没有任务ID，跳过处理');
+        return;
+      }
+      
+      // 检查此任务是否已经处理过
+      if (processedTaskIds.has(taskId)) {
+        console.log(`[UserStateProvider] 任务 ${taskId} 的点数刷新已处理过，跳过重复处理`);
+        return;
+      }
+      
+      console.log(`[UserStateProvider] 接收到任务完成事件，任务ID: ${taskId}`);
+      
+      // 记录此任务已处理
+      processedTaskIds.add(taskId);
+      
+      // 任务完成时，如果已经刷新过多次，则不再刷新
+      if (refreshCountRef.current > 2) {
+        console.log('[UserStateProvider] 任务完成，但已经多次刷新过点数，跳过此次刷新');
+        return;
+      }
+      
+      console.log('[UserStateProvider] 开始处理任务完成后的点数刷新');
+      
+      // 使用延迟，确保其他系统处理（如状态更新）已完成
+      // 增加延迟时间，确保任务完成处理已完成
+      setTimeout(() => {
+        triggerCreditRefresh();
+        
+        // 控制集合大小，防止内存泄漏
+        if (processedTaskIds.size > 100) {
+          // 如果累积了太多任务ID，清理旧的
+          const idsToKeep = Array.from(processedTaskIds).slice(-50);
+          processedTaskIds.clear();
+          idsToKeep.forEach(id => processedTaskIds.add(id));
+          console.log(`[UserStateProvider] 已清理处理过的任务ID缓存，当前保留${processedTaskIds.size}个`);
+        }
+      }, 1500);
+    };
+    
+    // 注册任务完成事件监听
+    window.addEventListener('task_completed', handleTaskComplete);
+    
+    return () => {
+      window.removeEventListener('task_completed', handleTaskComplete);
+    };
+  }, [triggerCreditRefresh]);
   
   // 确保加载状态不会卡住
   useEffect(() => {

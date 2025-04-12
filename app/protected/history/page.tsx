@@ -1,249 +1,312 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { Loader2, AlertCircle, ChevronRight, ChevronLeft, ArrowDown, ImageIcon } from "lucide-react";
-import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import React from "react";
-
-// 导入自定义hooks
-import useImageHistory, { ImageHistoryItem } from "@/hooks/useImageHistory";
-import useImageHandling from "@/hooks/useImageHandling";
-import useNotification from "@/hooks/useNotification";
-// 直接导入创作页使用的图片展示组件
+import { toast } from "sonner";
+import { Loader2, ImageIcon, ChevronLeft, ChevronRight } from "lucide-react";
 import GeneratedImageGallery from "@/components/creation/generated-image-gallery";
-import { ResponsiveContainer, ResponsiveSection, ResponsiveGrid } from "@/components/ui/responsive-container";
+import useImageHistory, { ImageHistoryItem } from "@/hooks/useImageHistory";
+import { cn } from "@/lib/utils";
+import useNotification from "@/hooks/useNotification";
 
-// 分页参数 - 每页显示图片数量
+// 每页显示图片数量
 const ITEMS_PER_PAGE = 12;
+
+// 防抖函数 - 避免短时间内重复调用
+function debounce<T extends (...args: any[]) => any>(
+  func: T, 
+  delay: number
+): (...args: Parameters<T>) => void {
+  let timeoutId: NodeJS.Timeout | null = null;
+  
+  return function(...args: Parameters<T>) {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+    
+    timeoutId = setTimeout(() => {
+      func(...args);
+    }, delay);
+  };
+}
 
 export default function HistoryPage() {
   const router = useRouter();
-  
-  // 状态管理
-  const [error, setError] = useState("");
-  const [dataChecked, setDataChecked] = useState(false);
-  const [currentPage, setCurrentPage] = useState(1);
-  const [totalImages, setTotalImages] = useState(0);
-  const [pageLoading, setPageLoading] = useState(false);
-  
-  // 使用自定义hooks - 使用分页加载数量
-  const { 
-    images, 
-    isLoading, 
-    refetch: refreshHistory, 
+  const { showNotification } = useNotification();
+  const {
+    images,
+    historyItems,
+    isLoading,
+    error,
+    refetch,
     deleteImage,
     loadMore,
     hasMore
-  } = useImageHistory(ITEMS_PER_PAGE);
+  } = useImageHistory();
   
-  const { 
-    handleImageLoad, 
-    handleImageError, 
-    downloadImage,
-  } = useImageHandling();
+  // 页面状态
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalImages, setTotalImages] = useState(0);
+  const [pageLoading, setPageLoading] = useState(false);
+  const [initialLoadComplete, setInitialLoadComplete] = useState(false);
   
-  const { showNotification } = useNotification();
-  
-  // 刷新历史记录
-  const handleRefresh = async () => {
-    try {
-      setError("");
-      setCurrentPage(1);
-      await refreshHistory(true);
-      
-      // 获取总图片数量
-      await fetchTotalCount();
-    } catch (err) {
-      console.error("刷新历史记录失败:", err);
-      setError("获取历史记录失败，请稍后再试");
-    }
-  };
-  
-  // 获取总图片数量
-  const fetchTotalCount = async () => {
-    try {
-      const response = await fetch('/api/history/count');
-      if (response.ok) {
-        const data = await response.json();
-        if (data.success) {
-          console.log("获取到总图片数:", data.count);
-          setTotalImages(data.count);
-        }
-      }
-    } catch (err) {
-      console.error("获取图片总数失败:", err);
-    }
-  };
-  
-  // 处理分页切换
-  const handlePageChange = async (pageNumber: number) => {
-    if (isLoading || pageLoading) return;
-    if (pageNumber < 1) return;
-    
-    const maxPage = Math.ceil(totalImages / ITEMS_PER_PAGE);
-    if (pageNumber > maxPage) return;
-    
-    try {
-      setPageLoading(true);
-      
-      // 先更新页码，让UI立即响应用户操作
-      setCurrentPage(pageNumber);
-      
-      // 计算需要的数据偏移量 - 修复偏移量计算逻辑
-      const neededOffset = (pageNumber - 1) * ITEMS_PER_PAGE;
-      
-      // 检查是否需要加载更多数据
-      if (neededOffset >= images.length && hasMore) {
-        console.log(`需要加载更多数据 - 当前页${pageNumber}，需要的偏移量${neededOffset}，当前数据长度${images.length}`);
-        
-        // 使用优化后的loadMore函数，直接传入需要的偏移量
-        const hasMoreData = await loadMore(neededOffset);
-        console.log(`加载偏移量${neededOffset}的数据结果:`, hasMoreData ? '成功' : '无更多数据');
-        
-        if (!hasMoreData && pageNumber > 1) {
-          showNotification("第" + pageNumber + "页暂无数据");
-        }
-      }
-      
-      // 重新获取当前页的图片
-      const updatedCurrentPageImages = images.slice(
-        (pageNumber - 1) * ITEMS_PER_PAGE, 
-        pageNumber * ITEMS_PER_PAGE
-      );
-      
-      console.log(`页码${pageNumber}的图片数量:`, updatedCurrentPageImages.length);
-      
-      // 如果当前页没有图片但还有更多数据可加载，则尝试再次加载
-      if (updatedCurrentPageImages.length === 0 && hasMore) {
-        console.log("当前页没有图片，尝试再次加载");
-        await loadMore(neededOffset);
-      }
-    } catch (err) {
-      console.error("加载分页数据失败:", err);
-      setError("加载分页数据失败，请稍后再试");
-    } finally {
-      setPageLoading(false);
-    }
-  };
-  
-  // 计算当前页面应该显示的图片
-  const currentPageImages = images.slice(
-    (currentPage - 1) * ITEMS_PER_PAGE,
-    currentPage * ITEMS_PER_PAGE
-  );
-  
-  // 当前页是否有内容可以显示
-  const hasCurrentPageContent = currentPageImages.length > 0;
+  // 请求状态跟踪
+  const isInitialLoading = useRef(false);
+  const isCountLoading = useRef(false);
+  const totalCountTimer = useRef<NodeJS.Timeout | null>(null);
+  const initialLoadTimer = useRef<NodeJS.Timeout | null>(null);
 
-  // 检查当前页是否需要加载更多数据
-  const needsMoreDataForCurrentPage = (currentPage - 1) * ITEMS_PER_PAGE >= images.length && hasMore;
-  
-  // 计算总页数 - 使用totalImages而不是images.length
+  // 处理页面变更
+  const handlePageChange = useCallback((page: number) => {
+    if (page === currentPage) return;
+      setPageLoading(true);
+    setCurrentPage(page);
+  }, [currentPage]);
+
+  // 获取当前页图片
+  const currentPageImages = (() => {
+    const startIdx = (currentPage - 1) * ITEMS_PER_PAGE;
+    const endIdx = startIdx + ITEMS_PER_PAGE;
+    return historyItems.slice(startIdx, endIdx);
+  })();
+
+  // 计算总页数
   const totalPages = Math.max(1, Math.ceil(totalImages / ITEMS_PER_PAGE));
-  
-  // 初始加载和数据处理
+
+  // 初始加载防抖保护 - 避免重复加载
+  const initialLoad = useCallback(
+    debounce(() => {
+      if (!isInitialLoading.current) {
+        isInitialLoading.current = true;
+        console.log("[历史页面] 开始加载历史记录");
+        
+        // 设置超时，避免长时间加载
+        initialLoadTimer.current = setTimeout(() => {
+          if (!initialLoadComplete) {
+            console.log("[历史页面] 加载超时，设置为已完成");
+            setInitialLoadComplete(true);
+            isInitialLoading.current = false;
+          }
+        }, 8000);
+        
+        refetch(true).then(() => {
+          setInitialLoadComplete(true);
+          isInitialLoading.current = false;
+        });
+      }
+    }, 300),
+    [refetch, initialLoadComplete]
+  );
+
+  // 初始加载历史数据
   useEffect(() => {
-    // 初始加载 - 添加防抖保护，避免页面多次加载
-    let initialLoadTimeout: NodeJS.Timeout | null = null;
-    
-    if (!dataChecked) {
-      // 设置一个短延时，避免组件挂载阶段的多次调用
-      initialLoadTimeout = setTimeout(() => {
-        console.log("执行初始数据加载");
-        handleRefresh();
-        setDataChecked(true);
-      }, 100);
-    }
+    initialLoad();
     
     // 清理函数
     return () => {
-      if (initialLoadTimeout) {
-        clearTimeout(initialLoadTimeout);
+      if (initialLoadTimer.current) {
+        clearTimeout(initialLoadTimer.current);
+      }
+      if (totalCountTimer.current) {
+        clearTimeout(totalCountTimer.current);
       }
     };
-  }, [dataChecked]);
-  
-  // 当图片加载完成后检查总数量 - 添加防抖处理
+  }, [initialLoad]);
+
+  // 处理图片总数获取
+  const fetchTotalCount = useCallback(
+    debounce(() => {
+      if (isCountLoading.current) return;
+      
+      isCountLoading.current = true;
+      console.log("[历史页面] 获取图片总数");
+      
+      fetch(`/api/history/count`)
+        .then(res => res.json())
+        .then(data => {
+          if (data.success) {
+            setTotalImages(data.count || 0);
+          } else {
+            console.error("获取历史图片总数失败", data.error);
+          }
+        })
+        .catch(err => {
+          console.error("获取图片总数出错", err);
+        })
+        .finally(() => {
+          isCountLoading.current = false;
+        });
+    }, 2000),
+    []
+  );
+
+  // 监听图片列表变化，更新总数
   useEffect(() => {
-    let totalCountTimeout: NodeJS.Timeout | null = null;
-    
-    if (images.length > 0 && totalImages === 0) {
-      totalCountTimeout = setTimeout(() => {
-        console.log("执行总数量获取");
-        fetchTotalCount();
+    if (initialLoadComplete) {
+      fetchTotalCount();
+    }
+  }, [historyItems.length, fetchTotalCount, initialLoadComplete]);
+
+  // 更新页面加载状态
+  useEffect(() => {
+    if (pageLoading && !isLoading) {
+      const timer = setTimeout(() => {
+        setPageLoading(false);
       }, 300);
+      
+      return () => clearTimeout(timer);
+    }
+  }, [pageLoading, isLoading]);
+
+  // 处理加载新一页
+  useEffect(() => {
+    if (currentPage > 1 && (currentPage - 1) * ITEMS_PER_PAGE >= historyItems.length && hasMore) {
+      loadMore((currentPage - 1) * ITEMS_PER_PAGE);
+    }
+  }, [currentPage, hasMore, historyItems.length, loadMore]);
+
+  // 处理图片加载
+  const handleImageLoad = useCallback(() => {
+    // 图片加载完成后的处理（可以添加动画等）
+  }, []);
+
+  // 处理图片加载错误
+  const handleImageError = useCallback(() => {
+    toast.error("图片加载失败");
+  }, []);
+
+  // 下载图片
+  const downloadImage = useCallback((imageUrl: string) => {
+    if (!imageUrl) return;
+    
+    toast.promise(
+      fetch(`/api/download-image?url=${encodeURIComponent(imageUrl)}`)
+        .then(res => res.blob())
+        .then(blob => {
+          const url = window.URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = `image-${Date.now()}.png`;
+          document.body.appendChild(a);
+          a.click();
+          window.URL.revokeObjectURL(url);
+          document.body.removeChild(a);
+        }),
+      {
+        loading: "正在下载图片...",
+        success: "图片下载成功",
+        error: "下载失败，请重试"
+      }
+    );
+  }, []);
+
+  // 删除图片
+  const deleteHistoryImage = useCallback(async (imageUrl: string): Promise<void> => {
+    if (!imageUrl) return Promise.resolve();
+    
+    // 查找要删除的条目
+    const targetItem = currentPageImages.find(item => item.image_url === imageUrl);
+    if (!targetItem) {
+      toast.error("找不到要删除的图片记录");
+      return Promise.resolve();
     }
     
-    return () => {
-      if (totalCountTimeout) {
-        clearTimeout(totalCountTimeout);
+    // 显示加载状态
+    const toastId = toast.loading("正在删除图片...");
+    
+    try {
+      await deleteImage(targetItem);
+      
+      // 如果当前页面只有一张图片且不是第一页，则返回上一页
+      if (currentPageImages.length === 1 && currentPage > 1) {
+        setCurrentPage(prev => Math.max(1, prev - 1));
       }
-    };
-  }, [images, totalImages]);
-  
-  // 当图片总数变化时检查页码是否有效
-  useEffect(() => {
-    if (currentPage > totalPages && totalPages > 0) {
-      setCurrentPage(totalPages);
+      
+      // 只在确实需要时才获取最新总数
+      if (currentPageImages.length <= 1) {
+        fetchTotalCount();
+      } else {
+        // 否则直接在本地计算新的总数，避免额外请求
+        setTotalImages(prev => Math.max(0, prev - 1));
+      }
+      
+      // 更新toast状态
+      toast.success("图片已删除", { id: toastId });
+    } catch (error) {
+      console.error("删除图片失败:", error);
+      // 更新toast状态为错误
+      toast.error("删除失败，请重试", { id: toastId });
+      throw error; // 重新抛出错误以便promise链处理
     }
-  }, [currentPage, totalPages]);
+  }, [deleteImage, currentPageImages, currentPage, fetchTotalCount]);
+
+  // 处理刷新
+  const refreshHistory = useCallback(() => {
+    // 防止重复刷新
+    if (isLoading) return;
+    
+    // 记录刷新开始状态，防止用户快速多次点击
+    setPageLoading(true);
+    
+    toast.promise(
+      refetch(true).then(() => {
+        setCurrentPage(1);
+        fetchTotalCount();
+      })
+      .finally(() => {
+        setPageLoading(false);
+      }),
+      {
+        loading: "正在刷新历史记录...",
+        success: "历史记录已更新",
+        error: "刷新失败，请重试"
+      }
+    );
+  }, [refetch, fetchTotalCount, isLoading]);
 
   return (
     <div className="flex-1 w-full flex flex-col items-center">
       <div className="max-w-7xl w-full px-4 py-8">
-        {/* 页面标题与说明 */}
-        <div className="flex flex-col items-center mb-6 md:mb-8">
-          <h1 className="text-3xl md:text-4xl font-bold text-foreground mb-2 md:mb-3 font-quicksand bg-gradient-to-r from-primary to-primary-700 bg-clip-text text-transparent">生成历史</h1>
-          <p className="text-base md:text-lg text-muted-foreground text-center max-w-2xl font-nunito">
-            查看您的历史生成内容，下载或删除不需要的图片
-            <span className="block mt-1 text-xs text-muted-foreground">系统最多保存最近生成的100张图片</span>
-          </p>
-        </div>
-        
-        {/* 错误提示 */}
-        {error && (
-          <div className="bg-destructive/10 text-destructive p-4 rounded-xl mb-6 text-sm font-nunito border border-destructive/20 shadow-ghibli-sm">
-            <div className="flex items-center">
-              <AlertCircle className="h-4 w-4 mr-2" />
-              {error}
-            </div>
-          </div>
-        )}
-
-        {/* 图片展示区域 */}
-        <div className="rounded-xl border bg-card text-card-foreground shadow-ghibli-sm transition-all duration-300 hover:shadow-ghibli mb-6">
-          <div className="flex flex-col space-y-1.5 p-6 font-quicksand">
-            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center">
-              <h2 className="text-xl font-bold leading-none tracking-tight font-quicksand text-foreground mb-1 sm:mb-0">我的历史图片</h2>
-              <div className="flex items-center">
-                <p className="text-sm text-muted-foreground">
-                  总共 <span className="font-semibold text-foreground">{totalImages}</span> 张图片 
-                  {totalImages > 0 && (
-                    <span className="ml-1">
-                      (第 {currentPage}/{totalPages} 页)
-                    </span>
-                  )}
-                </p>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="ml-2 text-primary hover:text-primary/80 hover:bg-primary/10"
-                  onClick={handleRefresh}
-                  disabled={isLoading || pageLoading}
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                  </svg>
-                </Button>
-              </div>
-            </div>
+        <div className="flex flex-col gap-8">
+          {/* 标题和刷新按钮 */}
+          <div className="w-full flex justify-between items-center">
+            <h1 className="text-3xl font-bold font-quicksand">
+              历史记录
+            </h1>
+            <Button
+              variant="outline"
+              disabled={isLoading || pageLoading}
+              onClick={refreshHistory}
+              className="bg-muted/50 hover:bg-muted border-none shadow-ghibli-sm hover:shadow-ghibli transition-all duration-300"
+            >
+              {isLoading ? (
+                <Loader2 className="h-4 w-4 animate-spin mr-2" />
+              ) : null}
+              刷新历史记录
+            </Button>
           </div>
           
-          <div className="p-6 pt-0 font-nunito">
-            {/* 使用现有的GeneratedImageGallery组件，确保功能一致性 */}
-            {(isLoading && images.length === 0) ? (
+          {/* 图片网格 */}
+          <div className="w-full">
+            {error ? (
+              <div className="w-full flex flex-col items-center justify-center py-16">
+                <div className="bg-destructive/10 rounded-full p-4 mb-3">
+                  <ImageIcon className="h-8 w-8 text-destructive/60" />
+                </div>
+                <p className="text-foreground/80 mb-2 font-quicksand text-lg">加载失败</p>
+                <p className="text-sm text-muted-foreground mb-4">
+                  {error === "未授权，请登录" ? "请登录后查看历史记录" : error}
+                </p>
+                <Button
+                  variant="default"
+                  onClick={() => router.push("/protected")}
+                  className="bg-primary/90 hover:bg-primary shadow-ghibli-sm hover:shadow-ghibli transition-all duration-300"
+                >
+                  返回创作页面
+                </Button>
+              </div>
+            ) : isLoading && !initialLoadComplete ? (
               <div className="w-full flex flex-col items-center justify-center py-16">
                 <div className="bg-card/60 p-6 rounded-xl border border-border shadow-ghibli-sm">
                   <div className="flex flex-col items-center">
@@ -265,12 +328,12 @@ export default function HistoryPage() {
               </div>
             ) : currentPageImages.length > 0 ? (
               <GeneratedImageGallery
-                images={currentPageImages}
+                images={currentPageImages.map(item => item.image_url)}
                 isLoading={false}
                 onImageLoad={handleImageLoad}
                 onImageError={handleImageError}
                 onDownloadImage={downloadImage}
-                onDeleteImage={deleteImage}
+                onDeleteImage={deleteHistoryImage}
                 hideViewMoreButton={true}
                 isLargerSize={false}
               />
@@ -343,7 +406,10 @@ export default function HistoryPage() {
                           size="sm"
                           onClick={() => handlePageChange(pageNum)}
                           disabled={isLoading || pageLoading}
-                          className={`h-8 w-8 p-0 ${currentPage === pageNum ? 'bg-primary text-primary-foreground' : ''}`}
+                          className={cn(
+                            "h-8 w-8 p-0",
+                            currentPage === pageNum ? 'bg-primary text-primary-foreground' : ''
+                          )}
                         >
                           {pageNum}
                         </Button>
@@ -368,7 +434,7 @@ export default function HistoryPage() {
         </div>
         
         {/* 返回创作页按钮 */}
-        <div className="flex justify-center">
+        <div className="flex justify-center mt-8">
           <Button
             variant="outline"
             onClick={() => router.push("/protected")}

@@ -1,6 +1,10 @@
+"use client";
+
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { cacheService, CACHE_PREFIXES } from '@/utils/cache-service';
+import { toast } from 'sonner';
+import { throttle } from '@/lib/utils';
 
 // 缓存键和过期时间
 const HISTORY_CACHE_KEY = CACHE_PREFIXES.HISTORY + ':recent';
@@ -11,38 +15,29 @@ const MAX_HISTORY_RECORDS = 100;
 const DEFAULT_BATCH_SIZE = 20;
 // 请求节流时间(毫秒)
 const THROTTLE_TIME = 2000; // 限制请求频率为每2秒最多一次
+// 最小请求间隔(毫秒)
+const MIN_REQUEST_INTERVAL = 1000; // 两次请求之间的最小间隔
+// 请求锁定超时时间(毫秒)
+const REQUEST_LOCK_TIMEOUT = 5000; // 请求锁定自动释放时间
+// 请求去重缓存过期时间(毫秒)
+const REQUEST_DEDUPE_TTL = 5000; // 去重请求缓存5秒
 
-// 节流函数 - 修复为返回Promise
-function throttle<T extends (...args: any[]) => Promise<any>>(func: T, delay: number): (...args: Parameters<T>) => Promise<any> {
-  let lastCall = 0;
-  let timeout: NodeJS.Timeout | null = null;
-  
-  return async (...args: Parameters<T>): Promise<any> => {
-    const now = Date.now();
-    const timeSinceLastCall = now - lastCall;
-    
-    if (timeSinceLastCall >= delay) {
-      if (timeout) {
-        clearTimeout(timeout);
-        timeout = null;
-      }
-      lastCall = now;
-      return await func(...args);
-    } else if (!timeout) {
-      // 如果在冷却期间并且没有待处理的调用，则安排一个
-      return new Promise((resolve) => {
-        timeout = setTimeout(async () => {
-          lastCall = Date.now();
-          timeout = null;
-          const result = await func(...args);
-          resolve(result);
-        }, delay - timeSinceLastCall);
-      });
+// 使用一个全局Map存储最近的请求，用于去重
+const recentRequests = new Map<string, {timestamp: number, promise: Promise<any>}>();
+
+// 清理过期的请求记录
+function cleanupRecentRequests() {
+  const now = Date.now();
+  recentRequests.forEach((data, key) => {
+    if (now - data.timestamp > REQUEST_DEDUPE_TTL) {
+      recentRequests.delete(key);
     }
-    
-    // 如果已经有一个延迟的调用，返回一个已解决的Promise
-    return Promise.resolve();
-  };
+  });
+}
+
+// 定期清理过期请求记录，防止内存泄漏
+if (typeof window !== 'undefined') {
+  setInterval(cleanupRecentRequests, 30000); // 每30秒清理一次
 }
 
 export interface ImageHistoryItem {
@@ -61,7 +56,7 @@ export interface UseImageHistoryResult {
   error: string | null;
   isCached: boolean;
   refetch: (forceRefresh?: boolean, showLoading?: boolean) => Promise<void>;
-  deleteImage: (imageUrl: string) => Promise<void>;
+  deleteImage: (imageUrlOrItem: string | ImageHistoryItem) => Promise<void>;
   loadMore: (specificOffset?: number) => Promise<boolean>; // 更新为支持特定偏移量
   hasMore: boolean; // 新增是否有更多数据
   batchSize: number; // 新增批次大小
@@ -77,6 +72,8 @@ export default function useImageHistory(initialBatchSize = DEFAULT_BATCH_SIZE): 
   const [images, setImages] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+  const [isDeleting, setIsDeleting] = useState<boolean>(false);
+  const [currentDeleteUrl, setCurrentDeleteUrl] = useState<string>('');
   const isCached = useRef<boolean>(false);
   
   // 分页相关状态
@@ -152,19 +149,243 @@ export default function useImageHistory(initialBatchSize = DEFAULT_BATCH_SIZE): 
     }
   }, []);
 
-  // 获取历史记录的方法 - 内部实现，不直接暴露给外部
-  const _fetchImageHistory = useCallback(async (forceRefresh = false, showLoading = true): Promise<void> => {
-    // 防止重复请求 - 请求锁定机制
-    if (isRequestPending.current) {
-      console.log('[useImageHistory] 上一个请求仍在进行中，跳过');
-      return;
+  // 使用节流封装的获取历史数据方法
+  const throttledFetchHistory = useCallback(
+    throttle(async (forceRefresh = false, showLoading = true): Promise<void> => {
+      // 防止重复请求 - 请求锁定机制
+      if (isRequestPending.current) {
+        console.log('[useImageHistory] 上一个请求仍在进行中，跳过');
+        return Promise.resolve(); // 确保返回一个 Promise
+      }
+      
+      // 检查请求时间间隔 - 防止频繁请求
+      const now = Date.now();
+      if (now - lastRequestTime.current < MIN_REQUEST_INTERVAL && !forceRefresh) {
+        console.log(`[useImageHistory] 请求过于频繁，距上次请求仅${now - lastRequestTime.current}ms，跳过`);
+        return Promise.resolve(); // 确保返回一个 Promise
+      }
+      
+      // 去重处理：检查是否是相同参数的请求
+      const requestKey = `${forceRefresh}-${showLoading}-${batchSize}`;
+      
+      // 如果有相同的最近请求，且未超过去重缓存时间，直接复用结果
+      if (!forceRefresh && recentRequests.has(requestKey)) {
+        const cachedRequest = recentRequests.get(requestKey)!;
+        if (now - cachedRequest.timestamp < REQUEST_DEDUPE_TTL) {
+          console.log('[useImageHistory] 使用最近相同请求的结果，避免重复请求');
+          return cachedRequest.promise;
+        }
+      }
+      
+      // 更新请求状态
+      isRequestPending.current = true;
+      lastRequestTime.current = now;
+      
+      // 设置请求锁自动释放定时器，防止请求卡死
+      const lockTimeoutId = setTimeout(() => {
+        if (isRequestPending.current) {
+          console.log('[useImageHistory] 请求锁定超时，自动释放');
+          isRequestPending.current = false;
+        }
+      }, REQUEST_LOCK_TIMEOUT);
+      
+      // 创建promise并存储到去重缓存
+      const fetchPromise = (async () => {
+        try {
+          console.log('[useImageHistory] 开始获取历史记录', forceRefresh ? '(强制刷新)' : '');
+          
+          // 设置加载状态
+          if (showLoading && isMounted.current) {
+            setIsLoading(true);
+          }
+          
+          // 确保不是服务端渲染
+          if (typeof window === 'undefined') {
+            console.log('[useImageHistory] 服务端渲染，跳过获取历史记录');
+            if (isMounted.current) setIsLoading(false);
+            isRequestPending.current = false;
+            clearTimeout(lockTimeoutId);
+            return Promise.resolve();
+          }
+          
+          // 重置分页状态
+          if (forceRefresh && isMounted.current) {
+            setOffset(0);
+            setHasMore(true);
+          }
+          
+          // 创建一个全局请求ID，用于追踪或取消请求
+          const requestId = Math.random().toString(36).substring(2, 15);
+          
+          // 使用缓存服务获取数据，添加去重参数
+          const historyData = await cacheService.getOrFetch(
+            HISTORY_CACHE_KEY,
+            async () => {
+              // 添加随机参数防止浏览器缓存
+              
+              // 首次加载只获取一批数据
+              const response = await fetch(`/api/history/get?limit=${batchSize}&offset=0&_=${requestId}`, {
+                headers: { 
+                  'Cache-Control': 'no-cache',
+                  'X-Requested-With': 'XMLHttpRequest', // 防止重复请求
+                  'X-Request-ID': requestId // 请求ID用于服务端去重
+                }
+              });
+              
+              if (!response.ok) {
+                if (response.status === 401) {
+                  console.log('[useImageHistory] 未授权，跳转到登录页');
+                  router.push('/sign-in');
+                  throw new Error('未授权，请登录');
+                }
+                
+                // 处理429错误 - 请求过于频繁
+                if (response.status === 429) {
+                  try {
+                    const errorData = await response.json();
+                    const retryAfter = errorData.retry_after || 3; // 默认3秒后重试
+                    
+                    console.log(`[useImageHistory] 请求过于频繁，${retryAfter}秒后重试`);
+                    toast.error(`请求过于频繁，请${retryAfter}秒后重试`);
+                    
+                    // 延迟稍长一点再重试
+                    setTimeout(() => {
+                      if (isMounted.current) {
+                        console.log('[useImageHistory] 尝试重新获取历史数据');
+                        isRequestPending.current = false; // 解锁请求
+                      }
+                    }, (retryAfter * 1000) + 500); // 增加500ms缓冲
+                    
+                    throw new Error(`请求频率限制，${retryAfter}秒后重试`);
+                  } catch (parseError) {
+                    console.error('[useImageHistory] 无法解析429响应:', parseError);
+                    throw new Error('请求过于频繁，请稍后重试');
+                  }
+                }
+                
+                throw new Error(`获取历史记录失败: HTTP ${response.status}`);
+              }
+              
+              try {
+                return await response.json();
+              } catch (err) {
+                console.error('[useImageHistory] 解析历史记录响应失败:', err);
+                throw new Error('解析响应数据失败');
+              }
+            },
+            {
+              expiresIn: HISTORY_CACHE_TTL,
+              forceRefresh
+            }
+          );
+          
+          // 记录数据来源
+          isCached.current = !forceRefresh && cacheService.checkStatus(HISTORY_CACHE_KEY) !== 'none';
+          
+          if (!isMounted.current) {
+            isRequestPending.current = false;
+            clearTimeout(lockTimeoutId);
+            return Promise.resolve(); // 如果组件已卸载，不再更新状态，但确保返回Promise
+          }
+          
+          if (historyData.success) {
+            console.log(`[useImageHistory] 获取到历史记录数据: ${historyData.history.length} 条 ${isCached.current ? '(来自缓存)' : '(来自API)'}`);
+            
+            if (!Array.isArray(historyData.history)) {
+              console.error('[useImageHistory] 历史记录不是数组格式:', historyData.history);
+              setError('历史记录格式错误');
+              setIsLoading(false);
+              isRequestPending.current = false;
+              clearTimeout(lockTimeoutId);
+              return Promise.resolve();
+            }
+            
+            // 数据验证和处理
+            const validHistoryItems = historyData.history.map((item: ImageHistoryItem) => {
+              // 确保每个项都有必要的属性
+              if (!item.id) item.id = Math.random().toString(36).substring(2, 15);
+              if (!item.created_at) item.created_at = new Date().toISOString();
+              
+              return {
+                ...item,
+                // 确保image_url是安全的
+                image_url: validateImageUrl(item.image_url) || '',
+              };
+            }).filter((item: ImageHistoryItem) => !!item.image_url);
+            
+            // 更新全局引用的历史数据
+            allHistoryItems.current = validHistoryItems;
+            
+            // 更新状态
+            if (isMounted.current) {
+              setHistoryItems(validHistoryItems);
+              setImages(validHistoryItems.map((item: ImageHistoryItem) => item.image_url));
+              setOffset(validHistoryItems.length);
+              setHasMore(validHistoryItems.length < (historyData.totalCount || MAX_HISTORY_RECORDS));
+              setError(null);
+            }
+          } else {
+            if (isMounted.current) {
+              console.error('[useImageHistory] 获取历史记录失败:', historyData.message || '未知错误');
+              setError(historyData.message || '获取历史记录失败');
+            }
+          }
+          
+          return Promise.resolve();
+        } catch (error) {
+          if (isMounted.current) {
+            const errorMessage = error instanceof Error ? error.message : '获取历史记录失败';
+            console.error('[useImageHistory] 获取历史记录出错:', errorMessage);
+            setError(errorMessage);
+            
+            if (errorMessage.includes('未授权') || errorMessage.includes('登录')) {
+              toast.error('请登录后查看历史记录');
+            } else if (!errorMessage.includes('频率限制')) {
+              toast.error('获取历史记录失败，请重试');
+            }
+          }
+          return Promise.resolve(); // 即使发生错误也返回已解决的Promise
+        } finally {
+          if (isMounted.current) setIsLoading(false);
+          
+          // 清除锁定超时定时器
+          clearTimeout(lockTimeoutId);
+          
+          // 延迟释放请求锁，避免短时间内重复请求
+          setTimeout(() => {
+            if (isMounted.current) {
+              isRequestPending.current = false;
+            }
+          }, 500);
+        }
+      })();
+      
+      // 存储当前请求到去重缓存
+      recentRequests.set(requestKey, {
+        timestamp: now,
+        promise: fetchPromise
+      });
+      
+      return fetchPromise;
+    }, THROTTLE_TIME), 
+    [batchSize, router, validateImageUrl]
+  );
+
+  // 加载更多历史记录
+  const loadMore = useCallback(async (specificOffset?: number): Promise<boolean> => {
+    // 如果已经加载完或正在加载中，直接返回
+    if (!hasMore || isLoading || isRequestPending.current) {
+      return false;
     }
     
-    // 检查请求时间间隔 - 防止频繁请求
+    const currentOffset = specificOffset !== undefined ? specificOffset : offset;
+    console.log(`[useImageHistory] 加载更多历史记录，偏移量: ${currentOffset}, 批次大小: ${batchSize}`);
+    
+    // 检查请求时间间隔
     const now = Date.now();
-    if (now - lastRequestTime.current < THROTTLE_TIME && !forceRefresh) {
-      console.log(`[useImageHistory] 请求过于频繁，距上次请求仅${now - lastRequestTime.current}ms，跳过`);
-      return;
+    if (now - lastRequestTime.current < 500) {
+      console.log(`[useImageHistory] 加载更多请求过于频繁，距上次请求仅${now - lastRequestTime.current}ms，跳过`);
+      return false;
     }
     
     // 更新请求状态
@@ -172,402 +393,211 @@ export default function useImageHistory(initialBatchSize = DEFAULT_BATCH_SIZE): 
     lastRequestTime.current = now;
     
     try {
-      console.log('[useImageHistory] 开始获取历史记录', forceRefresh ? '(强制刷新)' : '');
+      // 添加随机参数防止浏览器缓存
+      const requestId = Math.random().toString(36).substring(2, 15);
       
-      // 设置加载状态
-      if (showLoading && isMounted.current) {
+      if (isMounted.current) {
         setIsLoading(true);
       }
       
-      // 确保不是服务端渲染
-      if (typeof window === 'undefined') {
-        console.log('[useImageHistory] 服务端渲染，跳过获取历史记录');
-        if (isMounted.current) setIsLoading(false);
-        isRequestPending.current = false;
-        return;
-      }
-      
-      // 重置分页状态
-      if (isMounted.current) {
-        setOffset(0);
-        setHasMore(true);
-      }
-      
-      // 使用缓存服务获取数据，添加去重参数
-      const historyData = await cacheService.getOrFetch(
-        HISTORY_CACHE_KEY,
-        async () => {
-          // 添加随机参数防止浏览器缓存
-          const requestId = Math.random().toString(36).substring(2, 15);
-          
-          // 首次加载只获取一批数据
-          const response = await fetch(`/api/history/get?limit=${batchSize}&offset=0&_=${requestId}`, {
-            headers: { 
-              'Cache-Control': 'no-cache',
-              'X-Requested-With': 'XMLHttpRequest', // 防止重复请求
-              'X-Request-ID': requestId // 请求ID用于服务端去重
-            }
-          });
-          
-          if (!response.ok) {
-            if (response.status === 401) {
-              console.log('[useImageHistory] 未授权，跳转到登录页');
-              router.push('/sign-in');
-              throw new Error('未授权，请登录');
-            }
-            throw new Error(`获取历史记录失败: HTTP ${response.status}`);
-          }
-          
-          try {
-            return await response.json();
-          } catch (err) {
-            console.error('[useImageHistory] 解析历史记录响应失败:', err);
-            throw new Error('解析响应数据失败');
-          }
-        },
-        {
-          expiresIn: HISTORY_CACHE_TTL,
-          forceRefresh
+      const response = await fetch(`/api/history/get?limit=${batchSize}&offset=${currentOffset}&_=${requestId}`, {
+        headers: {
+          'Cache-Control': 'no-cache',
+          'X-Requested-With': 'XMLHttpRequest',
+          'X-Request-ID': requestId
         }
-      );
+      });
       
-      // 记录数据来源
-      isCached.current = !forceRefresh && cacheService.checkStatus(HISTORY_CACHE_KEY) !== 'none';
+      if (!response.ok) {
+        throw new Error(`加载更多历史记录失败: ${response.statusText}`);
+      }
+      
+      const data = await response.json();
       
       if (!isMounted.current) {
-        isRequestPending.current = false;
-        return; // 如果组件已卸载，不再更新状态
+        return false;
       }
       
-      if (historyData.success) {
-        console.log(`[useImageHistory] 获取到历史记录数据: ${historyData.history.length} 条 ${isCached.current ? '(来自缓存)' : '(来自API)'}`);
-        
-        if (!Array.isArray(historyData.history)) {
-          console.error('[useImageHistory] 历史记录不是数组格式:', historyData.history);
-          setError('历史记录格式错误');
-          setIsLoading(false);
-          isRequestPending.current = false;
-          return;
-        }
-        
-        // 检查是否还有更多数据
-        setHasMore(historyData.history.length >= batchSize);
-        
-        // 更新offset
-        setOffset(prev => prev + historyData.history.length);
-        
-        if (historyData.history.length === 0) {
-          console.log('[useImageHistory] 历史记录为空');
-          setHistoryItems([]);
-          setImages([]);
-          setError(null);
-          allHistoryItems.current = [];
-          setIsLoading(false);
-          isRequestPending.current = false;
-          return;
-        }
-        
-        // 验证并处理图片URL
-        const validImages = historyData.history
-          .filter((item: any) => item && item.image_url)
-          .map((item: any) => ({
-            ...item,
-            image_url: validateImageUrl(item.image_url)
-          }))
-          .filter((item: any) => item.image_url); // 过滤掉无效的URL
-        
-        console.log('[useImageHistory] 处理后的有效图片数据:', validImages.length, '条');
-        
-        // 保存完整数据
-        allHistoryItems.current = validImages;
-        
-        // 更新历史记录状态
-        setHistoryItems(validImages);
-        
-        // 确保有历史记录时更新生成图片状态
-        if (validImages.length > 0) {
-          // 按创建时间排序图片，最新的在前面
-          const sortedImages = [...validImages].sort((a, b) => {
-            // 如果没有创建时间，默认放在末尾
-            if (!a.created_at) return 1;
-            if (!b.created_at) return -1;
-            
-            // 按时间降序排序
-            return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
-          });
-          
-          // 提取排序后的URL数组
-          const imageUrls = sortedImages.map((item: any) => item.image_url);
-          
-          // 防止出现重复URL
-          const uniqueUrls = Array.from(new Set(imageUrls)) as string[];
-          
-          // 设置生成图片状态
-          setImages(uniqueUrls);
-          console.log('[历史钩子] 成功设置历史图片到展示区');
-          
-          // 预加载第一批图片（最多5张）
-          uniqueUrls.slice(0, 5).forEach(url => {
-            const img = new Image();
-            img.src = url;
-          });
-        } else {
-          console.warn('[历史钩子] 处理后没有有效的图片URL');
-        }
-      } else {
-        console.error('[useImageHistory] 获取历史记录失败:', historyData.error || '未知错误');
-        setError(historyData.error || '获取历史记录失败');
-      }
-    } catch (error) {
-      if (!isMounted.current) {
-        isRequestPending.current = false;
-        return; // 如果组件已卸载，不再更新状态
-      }
-      
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      console.error('[useImageHistory] 获取历史记录出错:', errorMessage);
-      setError(errorMessage);
-      
-      // 尝试从缓存获取旧数据作为降级
-      if (!isCached.current) {
-        const cachedData = cacheService.get<{success: boolean, history: any[]}>(HISTORY_CACHE_KEY);
-        if (cachedData) {
-          console.log('[useImageHistory] 使用过期缓存数据作为降级');
-          try {
-            // 处理缓存数据
-            const validImages = cachedData.history
-              .filter((item: any) => item && item.image_url)
-              .map((item: any) => ({
-                ...item,
-                image_url: validateImageUrl(item.image_url)
-              }))
-              .filter((item: any) => item.image_url);
-            
-            allHistoryItems.current = validImages;
-            setHistoryItems(validImages);
-            
-            if (validImages.length > 0) {
-              const imageUrls = validImages.map((item: any) => item.image_url);
-              setImages(Array.from(new Set(imageUrls)));
-            }
-          } catch (cacheError) {
-            console.error('[useImageHistory] 处理缓存数据出错:', cacheError);
+      if (data.success) {
+        if (!Array.isArray(data.history)) {
+          console.error('[useImageHistory] 加载更多：历史记录不是数组格式', data.history);
+          if (isMounted.current) {
+            setError('历史记录格式错误');
+            setIsLoading(false);
           }
-        }
-      }
-    } finally {
-      if (isMounted.current) {
-        setIsLoading(false);
-      }
-      // 延迟重置请求锁，确保有足够的间隔
-      setTimeout(() => {
-        isRequestPending.current = false;
-      }, 500);
-    }
-  }, [router, batchSize, validateImageUrl]);
-  
-  // 应用节流，创建供外部使用的节流版本
-  const fetchImageHistory = useCallback(
-    throttle(_fetchImageHistory, THROTTLE_TIME),
-    [_fetchImageHistory]
-  );
-
-  // 加载更多历史记录
-  const loadMore = useCallback(async (specificOffset?: number): Promise<boolean> => {
-    if (!hasMore && !specificOffset) return false;
-    
-    try {
-      console.log(`[useImageHistory] 加载更多历史记录，当前偏移量: ${specificOffset !== undefined ? specificOffset : offset}`);
-      setIsLoading(true);
-      
-      // 使用指定的偏移量或当前存储的偏移量
-      const currentOffset = specificOffset !== undefined ? specificOffset : offset;
-      
-      // 使用IndexedDB缓存检查是否有后续批次的缓存
-      const cacheKey = `${HISTORY_CACHE_KEY}:offset_${currentOffset}`;
-      const historyData = await cacheService.getOrFetch(
-        cacheKey,
-        async () => {
-          console.log(`[useImageHistory] 发起API请求获取更多历史, limit=${batchSize}, offset=${currentOffset}`);
-          const response = await fetch(`/api/history/get?limit=${batchSize}&offset=${currentOffset}`, {
-            headers: { 
-              'Cache-Control': 'no-cache',
-              'X-Requested-With': 'XMLHttpRequest',
-              'X-Request-Time': new Date().getTime().toString() // 添加时间戳防止缓存
-            }
-          });
-          
-          if (!response.ok) {
-            throw new Error(`获取更多历史记录失败: HTTP ${response.status}`);
-          }
-          
-          return await response.json();
-        },
-        {
-          expiresIn: HISTORY_CACHE_TTL,
-          forceRefresh: true // 强制刷新，确保获取最新数据
-        }
-      );
-      
-      if (historyData.success && Array.isArray(historyData.history)) {
-        console.log(`[useImageHistory] 加载更多历史记录成功，获取${historyData.history.length}条`,
-          historyData.history.map((i: any) => i.id).join(','));
-        
-        // 检查是否还有更多数据
-        const newHasMore = historyData.history.length >= batchSize;
-        console.log(`[useImageHistory] 是否还有更多数据: ${newHasMore}`);
-        setHasMore(newHasMore);
-        
-        // 更新偏移量 - 仅当未指定特定偏移量时才更新
-        if (specificOffset === undefined) {
-          const newOffset = offset + historyData.history.length;
-          console.log(`[useImageHistory] 更新偏移量: ${offset} -> ${newOffset}`);
-          setOffset(newOffset);
-        }
-        
-        if (historyData.history.length === 0) {
-          console.log(`[useImageHistory] 没有更多历史记录`);
-          setIsLoading(false);
           return false;
         }
         
-        // 处理新加载的数据
-        const validImages = historyData.history
-          .filter((item: any) => item && item.image_url)
-          .map((item: any) => ({
+        // 数据验证和处理
+        const validHistoryItems = data.history.map((item: ImageHistoryItem) => {
+          if (!item.id) item.id = Math.random().toString(36).substring(2, 15);
+          if (!item.created_at) item.created_at = new Date().toISOString();
+          
+          return {
             ...item,
-            image_url: validateImageUrl(item.image_url)
-          }))
-          .filter((item: any) => item.image_url);
+            image_url: validateImageUrl(item.image_url) || '',
+          };
+        }).filter((item: ImageHistoryItem) => !!item.image_url);
         
-        console.log(`[useImageHistory] 处理后的有效图片: ${validImages.length}条`);
-        
-        // 根据是否指定了特定偏移量决定如何合并数据
-        if (specificOffset !== undefined && specificOffset !== offset) {
-          // 对于特定页面加载，我们需要在正确的位置插入数据
-          const existingIds = new Set(allHistoryItems.current.map((item: ImageHistoryItem) => item.id));
-          const newItems = validImages.filter((item: ImageHistoryItem) => !existingIds.has(item.id));
-          
-          if (newItems.length > 0) {
-            // 创建一个新数组，确保长度足够
-            const newAllHistoryItems = [...allHistoryItems.current];
-            // 确保数组长度足够
-            while (newAllHistoryItems.length <= specificOffset + newItems.length) {
-              newAllHistoryItems.push(null as any);
-            }
+        // 更新状态
+        if (isMounted.current) {
+          setHistoryItems(prevItems => {
+            // 确保不重复添加
+            const existingIds = new Set(prevItems.map((item: ImageHistoryItem) => item.id));
+            const uniqueNewItems = validHistoryItems.filter(
+              (item: ImageHistoryItem) => !existingIds.has(item.id)
+            );
             
-            // 在指定位置插入新项
-            for (let i = 0; i < newItems.length; i++) {
-              newAllHistoryItems[specificOffset + i] = newItems[i];
-            }
+            const mergedItems = [...prevItems, ...uniqueNewItems];
             
-            // 过滤掉null并更新存储
-            const filteredItems = newAllHistoryItems.filter(item => item !== null) as ImageHistoryItem[];
-            allHistoryItems.current = filteredItems;
-            setHistoryItems(filteredItems);
+            // 更新全局引用
+            allHistoryItems.current = mergedItems;
             
-            // 更新图片URL数组
-            const imageUrls = filteredItems.map((item: ImageHistoryItem) => item.image_url);
-            const uniqueUrls = Array.from(new Set(imageUrls));
-            setImages(uniqueUrls);
-          }
-        } else {
-          // 标准的合并新旧数据
-          const combinedHistoryItems = [...allHistoryItems.current, ...validImages];
+            return mergedItems;
+          });
           
-          // 检查去重，避免重复项
-          const uniqueHistoryItems = Array.from(
-            new Map(combinedHistoryItems.map(item => [item.id, item])).values()
-          );
-          console.log(`[useImageHistory] 合并后的历史记录: ${uniqueHistoryItems.length}条`);
-          
-          // 更新引用数据
-          allHistoryItems.current = uniqueHistoryItems;
-          
-          // 更新状态
-          setHistoryItems(uniqueHistoryItems);
-          
-          // 更新图片URL数组
-          if (validImages.length > 0) {
-            const newImageUrls = validImages.map((item: any) => item.image_url);
-            console.log(`[useImageHistory] 新增图片URL: ${newImageUrls.length}个`);
+          setImages(prevImages => {
+            const newImages = validHistoryItems
+              .map((item: ImageHistoryItem) => item.image_url)
+              .filter((url: string) => !prevImages.includes(url));
             
-            setImages(prev => {
-              const combined = [...prev, ...newImageUrls];
-              // 确保URL唯一
-              const uniqueUrls = Array.from(new Set(combined));
-              console.log(`[useImageHistory] 更新后的图片总数: ${uniqueUrls.length}个`);
-              return uniqueUrls;
-            });
-            
-            // 预加载新加载的图片（最多5张）
-            newImageUrls.slice(0, 5).forEach((url: string) => {
-              const img = new Image();
-              img.src = url;
-            });
-          }
+            return [...prevImages, ...newImages];
+          });
+          
+          setOffset(prev => prev + validHistoryItems.length);
+          setHasMore(validHistoryItems.length > 0);
         }
         
-        setIsLoading(false);
         return true;
       } else {
-        console.error('[useImageHistory] 加载更多历史记录失败:', historyData.error || '未知错误');
-        setHasMore(false);
-        setIsLoading(false);
+        if (isMounted.current) {
+          console.error('[useImageHistory] 加载更多失败:', data.message || '未知错误');
+          setError(data.message || '加载更多历史记录失败');
+        }
         return false;
       }
     } catch (error) {
-      console.error('[useImageHistory] 加载更多历史记录出错:', error);
-      setHasMore(false);
-      setIsLoading(false);
+      if (isMounted.current) {
+        const errorMessage = error instanceof Error ? error.message : '加载更多历史记录失败';
+        console.error('[useImageHistory] 加载更多出错:', errorMessage);
+        setError(errorMessage);
+        toast.error('加载更多历史记录失败');
+      }
       return false;
+    } finally {
+      if (isMounted.current) setIsLoading(false);
+      
+      // 延迟释放请求锁
+      setTimeout(() => {
+        isRequestPending.current = false;
+      }, 300);
     }
-  }, [hasMore, isLoading, offset, batchSize, validateImageUrl]);
+  }, [batchSize, hasMore, isLoading, offset, validateImageUrl]);
 
-  // 删除图片
-  const deleteImage = useCallback(async (imageUrl: string): Promise<void> => {
+  // 删除历史记录中的图片
+  const deleteImage = useCallback(async (imageUrlOrItem: string | ImageHistoryItem): Promise<void> => {
     try {
-      console.log('[useImageHistory] 删除图片:', imageUrl);
+      // 处理不同类型的参数
+      let imageUrl: string;
+      let targetItem: ImageHistoryItem | undefined;
       
-      // 先从本地状态移除
-      const newHistoryItems = allHistoryItems.current.filter(item => item.image_url !== imageUrl);
-      allHistoryItems.current = newHistoryItems;
-      setHistoryItems(newHistoryItems);
-      setImages(prev => prev.filter(url => url !== imageUrl));
+      if (typeof imageUrlOrItem === 'string') {
+        // 如果是字符串，当作图片URL处理
+        imageUrl = imageUrlOrItem;
+        targetItem = historyItems.find(item => item.image_url === imageUrl);
+      } else if (imageUrlOrItem && typeof imageUrlOrItem === 'object') {
+        // 如果是对象，当作ImageHistoryItem处理
+        imageUrl = imageUrlOrItem.image_url;
+        targetItem = imageUrlOrItem;
+      } else {
+        toast.error('请指定要删除的图片');
+        return;
+      }
       
-      // 调用API删除
+      if (!imageUrl) {
+        toast.error('请指定要删除的图片');
+        return;
+      }
+      
+      if (!targetItem) {
+        toast.error('未找到相关历史记录');
+        return;
+      }
+      
+      setIsDeleting(true);
+      setCurrentDeleteUrl(imageUrl);
+      
+      // 乐观更新UI
+      setHistoryItems(prev => prev.filter((item: ImageHistoryItem) => item.image_url !== imageUrl));
+      setImages(prev => prev.filter((url: string) => url !== imageUrl));
+      
       const response = await fetch('/api/history/delete', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ imageUrl }),
+        body: JSON.stringify({ id: targetItem.id }),
       });
       
       if (!response.ok) {
-        throw new Error(`删除图片失败: HTTP ${response.status}`);
+        const errorData = await response.json();
+        console.error('删除图片失败:', errorData);
+        toast.error('删除图片失败，请稍后重试');
+        setIsDeleting(false);
+        setCurrentDeleteUrl('');
+        throw new Error(`删除历史记录失败: ${response.statusText}`);
       }
       
-      // 删除缓存
-      cacheService.delete(HISTORY_CACHE_KEY);
-      // 删除所有分页缓存
-      for (let i = 0; i < offset; i += batchSize) {
-        cacheService.delete(`${HISTORY_CACHE_KEY}:offset_${i}`);
-      }
+      // 更新全局引用
+      allHistoryItems.current = allHistoryItems.current.filter(
+        (i: ImageHistoryItem) => i.image_url !== imageUrl
+      );
       
-      console.log('[useImageHistory] 删除图片成功');
+      toast.success('图片已删除');
+      
+      // 如果删除后列表为空且有更多数据，自动加载下一批
+      if (historyItems.length <= 1 && hasMore && !isLoading) {
+        setTimeout(() => {
+          throttledFetchHistory(true, false);
+        }, 300);
+      }
     } catch (error) {
-      console.error('[useImageHistory] 删除图片失败:', error);
-      // 恢复删除前的状态 - 可选
-      await fetchImageHistory(true, false);
-      throw error;
+      console.error('删除图片时出错:', error);
+      toast.error('删除图片失败，请稍后重试');
+    } finally {
+      setIsDeleting(false);
+      setCurrentDeleteUrl('');
     }
-  }, [batchSize, fetchImageHistory, offset]);
+  }, [historyItems, hasMore, isLoading, throttledFetchHistory]);
 
-  // 初始加载
+  // 公开的刷新方法 - 使用防抖控制频率
+  const refetch = useCallback(async (forceRefresh = true, showLoading = true): Promise<void> => {
+    // 检查距离上次成功刷新的时间
+    const now = Date.now();
+    
+    // 如果只是非强制刷新，且距离上次刷新不到1秒，就跳过
+    if (!forceRefresh && (now - lastRequestTime.current < 1000)) {
+      console.log('[useImageHistory] 跳过非强制刷新，避免频繁请求');
+      return Promise.resolve();
+    }
+    
+    // 保持返回一个Promise以保证接口一致性
+    return throttledFetchHistory(forceRefresh, showLoading);
+  }, [throttledFetchHistory]);
+
+  // 初始化加载数据
   useEffect(() => {
-    fetchImageHistory(false, true);
-  }, [fetchImageHistory]);
+    console.log('[useImageHistory] 初始化历史记录');
+    
+    // 组件挂载时加载一次
+    throttledFetchHistory(false, true);
+    
+    // 组件卸载时清理
+    return () => {
+      console.log('[useImageHistory] 组件卸载，清理资源');
+      isMounted.current = false;
+    };
+  }, [throttledFetchHistory]);
 
   return {
     images,
@@ -575,7 +605,7 @@ export default function useImageHistory(initialBatchSize = DEFAULT_BATCH_SIZE): 
     isLoading,
     error,
     isCached: isCached.current,
-    refetch: fetchImageHistory,
+    refetch,
     deleteImage,
     loadMore,
     hasMore,

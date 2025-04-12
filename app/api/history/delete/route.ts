@@ -6,12 +6,13 @@ export async function POST(request: Request) {
   try {
     // 获取请求体
     const body = await request.json();
-    const { imageUrl } = body;
+    const { imageUrl, id } = body;
 
-    if (!imageUrl) {
+    // 如果同时没有提供imageUrl和id，返回错误
+    if (!imageUrl && !id) {
       return NextResponse.json({ 
         success: false, 
-        error: '缺少必要的图片URL参数' 
+        error: '缺少必要的参数，需要提供图片URL或记录ID' 
       }, { status: 400 });
     }
 
@@ -27,19 +28,46 @@ export async function POST(request: Request) {
       }, { status: 401 });
     }
 
-    console.log(`准备强制删除图片: ${imageUrl}`);
-    
-    // 提取文件名与其他关键部分
-    const fileName = imageUrl.split('/').pop() || '';
-    const hostname = imageUrl.split('/')[2] || '';
-    console.log(`提取的文件名: ${fileName}, 域名: ${hostname}`);
-    
     // 使用管理员客户端执行删除操作，绕过RLS和事务问题
     const adminClient = await createAdminClient();
     
     // 开始标记删除操作并记录时间戳
     const deleteStartTime = new Date().toISOString();
-    console.log(`[${deleteStartTime}] 开始执行强制删除操作`);
+    
+    // 优先通过ID删除记录
+    if (id) {
+      console.log(`准备通过ID删除记录: ${id}`);
+      
+      // 执行精确ID删除
+      const { error: deleteError } = await adminClient
+        .from('ai_images_creator_history')
+        .delete()
+        .eq('id', id)
+        .eq('user_id', user.id);
+      
+      if (deleteError) {
+        console.error(`通过ID删除记录失败:`, deleteError);
+        return NextResponse.json({
+          success: false,
+          error: `删除记录失败: ${deleteError.message}`
+        }, { status: 500 });
+      }
+      
+      console.log(`成功通过ID删除记录: ${id}`);
+      
+      return NextResponse.json({
+        success: true,
+        message: '记录已成功删除'
+      });
+    }
+    
+    // 如果没有ID但有URL，通过URL删除
+    console.log(`准备通过URL删除图片: ${imageUrl}`);
+    
+    // 提取文件名与其他关键部分
+    const fileName = imageUrl.split('/').pop() || '';
+    const hostname = imageUrl.split('/')[2] || '';
+    console.log(`提取的文件名: ${fileName}, 域名: ${hostname}`);
     
     // 先查询该图片的所有匹配记录
     const { data: matchingRecords, error: queryError } = await adminClient
