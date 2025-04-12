@@ -9,6 +9,41 @@ const HISTORY_CACHE_TTL = 30 * 60 * 1000; // 提高到30分钟
 const MAX_HISTORY_RECORDS = 100;
 // 分批加载的默认批次大小
 const DEFAULT_BATCH_SIZE = 20;
+// 请求节流时间(毫秒)
+const THROTTLE_TIME = 2000; // 限制请求频率为每2秒最多一次
+
+// 节流函数 - 修复为返回Promise
+function throttle<T extends (...args: any[]) => Promise<any>>(func: T, delay: number): (...args: Parameters<T>) => Promise<any> {
+  let lastCall = 0;
+  let timeout: NodeJS.Timeout | null = null;
+  
+  return async (...args: Parameters<T>): Promise<any> => {
+    const now = Date.now();
+    const timeSinceLastCall = now - lastCall;
+    
+    if (timeSinceLastCall >= delay) {
+      if (timeout) {
+        clearTimeout(timeout);
+        timeout = null;
+      }
+      lastCall = now;
+      return await func(...args);
+    } else if (!timeout) {
+      // 如果在冷却期间并且没有待处理的调用，则安排一个
+      return new Promise((resolve) => {
+        timeout = setTimeout(async () => {
+          lastCall = Date.now();
+          timeout = null;
+          const result = await func(...args);
+          resolve(result);
+        }, delay - timeSinceLastCall);
+      });
+    }
+    
+    // 如果已经有一个延迟的调用，返回一个已解决的Promise
+    return Promise.resolve();
+  };
+}
 
 export interface ImageHistoryItem {
   id: string;
@@ -51,6 +86,21 @@ export default function useImageHistory(initialBatchSize = DEFAULT_BATCH_SIZE): 
   
   // 存储完整的历史记录数据
   const allHistoryItems = useRef<ImageHistoryItem[]>([]);
+  
+  // 请求状态控制
+  const isRequestPending = useRef<boolean>(false);
+  const lastRequestTime = useRef<number>(0);
+  
+  // 跟踪组件挂载状态，避免内存泄漏
+  const isMounted = useRef<boolean>(true);
+  
+  // 组件卸载时清理
+  useEffect(() => {
+    isMounted.current = true;
+    return () => {
+      isMounted.current = false;
+    }
+  }, []);
 
   // 增强的图片URL验证与清理
   const validateImageUrl = useCallback((url: string): string | null => {
@@ -102,36 +152,60 @@ export default function useImageHistory(initialBatchSize = DEFAULT_BATCH_SIZE): 
     }
   }, []);
 
-  // 获取历史记录的方法
-  const fetchImageHistory = useCallback(async (forceRefresh = false, showLoading = true): Promise<void> => {
+  // 获取历史记录的方法 - 内部实现，不直接暴露给外部
+  const _fetchImageHistory = useCallback(async (forceRefresh = false, showLoading = true): Promise<void> => {
+    // 防止重复请求 - 请求锁定机制
+    if (isRequestPending.current) {
+      console.log('[useImageHistory] 上一个请求仍在进行中，跳过');
+      return;
+    }
+    
+    // 检查请求时间间隔 - 防止频繁请求
+    const now = Date.now();
+    if (now - lastRequestTime.current < THROTTLE_TIME && !forceRefresh) {
+      console.log(`[useImageHistory] 请求过于频繁，距上次请求仅${now - lastRequestTime.current}ms，跳过`);
+      return;
+    }
+    
+    // 更新请求状态
+    isRequestPending.current = true;
+    lastRequestTime.current = now;
+    
     try {
       console.log('[useImageHistory] 开始获取历史记录', forceRefresh ? '(强制刷新)' : '');
       
       // 设置加载状态
-      if (showLoading) {
+      if (showLoading && isMounted.current) {
         setIsLoading(true);
       }
       
       // 确保不是服务端渲染
       if (typeof window === 'undefined') {
         console.log('[useImageHistory] 服务端渲染，跳过获取历史记录');
-        setIsLoading(false);
+        if (isMounted.current) setIsLoading(false);
+        isRequestPending.current = false;
         return;
       }
       
       // 重置分页状态
-      setOffset(0);
-      setHasMore(true);
+      if (isMounted.current) {
+        setOffset(0);
+        setHasMore(true);
+      }
       
-      // 使用缓存服务获取数据
+      // 使用缓存服务获取数据，添加去重参数
       const historyData = await cacheService.getOrFetch(
         HISTORY_CACHE_KEY,
         async () => {
+          // 添加随机参数防止浏览器缓存
+          const requestId = Math.random().toString(36).substring(2, 15);
+          
           // 首次加载只获取一批数据
-          const response = await fetch(`/api/history/get?limit=${batchSize}&offset=0`, {
+          const response = await fetch(`/api/history/get?limit=${batchSize}&offset=0&_=${requestId}`, {
             headers: { 
               'Cache-Control': 'no-cache',
-              'X-Requested-With': 'XMLHttpRequest' // 防止重复请求
+              'X-Requested-With': 'XMLHttpRequest', // 防止重复请求
+              'X-Request-ID': requestId // 请求ID用于服务端去重
             }
           });
           
@@ -160,6 +234,11 @@ export default function useImageHistory(initialBatchSize = DEFAULT_BATCH_SIZE): 
       // 记录数据来源
       isCached.current = !forceRefresh && cacheService.checkStatus(HISTORY_CACHE_KEY) !== 'none';
       
+      if (!isMounted.current) {
+        isRequestPending.current = false;
+        return; // 如果组件已卸载，不再更新状态
+      }
+      
       if (historyData.success) {
         console.log(`[useImageHistory] 获取到历史记录数据: ${historyData.history.length} 条 ${isCached.current ? '(来自缓存)' : '(来自API)'}`);
         
@@ -167,6 +246,7 @@ export default function useImageHistory(initialBatchSize = DEFAULT_BATCH_SIZE): 
           console.error('[useImageHistory] 历史记录不是数组格式:', historyData.history);
           setError('历史记录格式错误');
           setIsLoading(false);
+          isRequestPending.current = false;
           return;
         }
         
@@ -183,6 +263,7 @@ export default function useImageHistory(initialBatchSize = DEFAULT_BATCH_SIZE): 
           setError(null);
           allHistoryItems.current = [];
           setIsLoading(false);
+          isRequestPending.current = false;
           return;
         }
         
@@ -238,6 +319,11 @@ export default function useImageHistory(initialBatchSize = DEFAULT_BATCH_SIZE): 
         setError(historyData.error || '获取历史记录失败');
       }
     } catch (error) {
+      if (!isMounted.current) {
+        isRequestPending.current = false;
+        return; // 如果组件已卸载，不再更新状态
+      }
+      
       const errorMessage = error instanceof Error ? error.message : String(error);
       console.error('[useImageHistory] 获取历史记录出错:', errorMessage);
       setError(errorMessage);
@@ -270,13 +356,21 @@ export default function useImageHistory(initialBatchSize = DEFAULT_BATCH_SIZE): 
         }
       }
     } finally {
-      // 设置加载结束状态
-      if (showLoading) {
+      if (isMounted.current) {
         setIsLoading(false);
       }
-      console.log('[useImageHistory] 历史记录加载完成');
+      // 延迟重置请求锁，确保有足够的间隔
+      setTimeout(() => {
+        isRequestPending.current = false;
+      }, 500);
     }
-  }, [router, validateImageUrl, batchSize]);
+  }, [router, batchSize, validateImageUrl]);
+  
+  // 应用节流，创建供外部使用的节流版本
+  const fetchImageHistory = useCallback(
+    throttle(_fetchImageHistory, THROTTLE_TIME),
+    [_fetchImageHistory]
+  );
 
   // 加载更多历史记录
   const loadMore = useCallback(async (specificOffset?: number): Promise<boolean> => {

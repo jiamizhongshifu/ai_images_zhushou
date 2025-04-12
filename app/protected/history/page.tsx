@@ -145,18 +145,42 @@ export default function HistoryPage() {
   
   // 初始加载和数据处理
   useEffect(() => {
-    // 初始加载
+    // 初始加载 - 添加防抖保护，避免页面多次加载
+    let initialLoadTimeout: NodeJS.Timeout | null = null;
+    
     if (!dataChecked) {
-      handleRefresh();
-      setDataChecked(true);
+      // 设置一个短延时，避免组件挂载阶段的多次调用
+      initialLoadTimeout = setTimeout(() => {
+        console.log("执行初始数据加载");
+        handleRefresh();
+        setDataChecked(true);
+      }, 100);
     }
+    
+    // 清理函数
+    return () => {
+      if (initialLoadTimeout) {
+        clearTimeout(initialLoadTimeout);
+      }
+    };
   }, [dataChecked]);
   
-  // 当图片加载完成后检查总数量
+  // 当图片加载完成后检查总数量 - 添加防抖处理
   useEffect(() => {
+    let totalCountTimeout: NodeJS.Timeout | null = null;
+    
     if (images.length > 0 && totalImages === 0) {
-      fetchTotalCount();
+      totalCountTimeout = setTimeout(() => {
+        console.log("执行总数量获取");
+        fetchTotalCount();
+      }, 300);
     }
+    
+    return () => {
+      if (totalCountTimeout) {
+        clearTimeout(totalCountTimeout);
+      }
+    };
   }, [images, totalImages]);
   
   // 当图片总数变化时检查页码是否有效
