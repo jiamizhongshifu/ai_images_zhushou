@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { createSecureClient, getCurrentUser } from '@/app/api/auth-middleware';
 import { taskClients, TaskClient, registerClient, removeClient } from './taskClients';
+import { TaskManager } from './TaskManager';
+import logger from '@/lib/logger';
 
 // 记录日志
 const logger = {
@@ -98,35 +100,14 @@ export async function POST(request: NextRequest) {
       userScript = `
         if (typeof window !== 'undefined') {
           try {
-            // 检查是否已经触发过此任务的完成事件，防止重复触发
-            const taskCompletedKey = 'task_completed_' + '${taskId}';
-            
-            // 如果这个任务已经触发过完成事件，则不再触发
-            if (sessionStorage.getItem(taskCompletedKey)) {
-              console.log('[任务通知] 任务 ${taskId} 的完成事件已经触发过，跳过重复触发');
-              return;
-            }
-            
-            // 记录此任务已触发完成事件
-            sessionStorage.setItem(taskCompletedKey, Date.now().toString());
-            
-            // 创建并分发自定义事件
             const taskCompletedEvent = new CustomEvent('task_completed', { 
               detail: {
                 taskId: '${taskId}',
                 timestamp: ${Date.now()}
               }
             });
-            
             window.dispatchEvent(taskCompletedEvent);
             console.log('[任务通知] 已分发任务完成事件: ${taskId}');
-            
-            // 添加额外的调试信息
-            console.log('[任务通知] 任务完成事件详情:', JSON.stringify({
-              taskId: '${taskId}',
-              timestamp: ${Date.now()},
-              notifyTime: new Date().toISOString()
-            }));
           } catch (err) {
             console.error('[任务通知] 分发事件失败:', err);
           }

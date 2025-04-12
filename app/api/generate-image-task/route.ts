@@ -680,6 +680,12 @@ export async function POST(request: NextRequest) {
         // 定义单一消息结构
         const messages: ChatCompletionMessageParam[] = [];
         
+        // 添加系统消息指导模型如何处理图片
+        messages.push({
+          role: 'system',
+          content: '当收到包含图片的请求时，你应该生成一张新的图像，保留原图的主要内容、人物、场景和构图，但应用用户指定的风格。请直接生成图像，返回图像URL，不要回复文字说明。'
+        });
+        
         // 获取图片尺寸比例参数
         let size: "1024x1024" | "1792x1024" | "1024x1792" = "1024x1024"; // 默认尺寸
         let aspectRatioDescription = ""; // 比例描述文本
@@ -795,7 +801,7 @@ export async function POST(request: NextRequest) {
                 textPrompt += textPrompt ? `，${style}风格` : `${style}风格`;
               }
               
-              finalPrompt = textPrompt || "请生成一张图片";
+              finalPrompt = textPrompt || "创建一张精美图像";
               
               messages.push({
                 role: 'user',
@@ -805,21 +811,18 @@ export async function POST(request: NextRequest) {
               // 组合提示词：用户输入的提示词 + 风格
               let promptText = "";
               if (prompt) {
-                promptText = prompt;
+                promptText = `将这张图片转换为: ${prompt}`;
+              } else {
+                promptText = "将这张图片重新创作";
               }
               
               if (style) {
-                promptText += promptText ? `，${style}风格` : `${style}风格`;
-              }
-              
-              // 如果两者都没有，使用一个基本提示
-              if (!promptText) {
-                promptText = "请基于这张图片生成新图片";
+                promptText += `，使用${style}风格，保留原图的主要元素和构图`;
               }
               
               // 添加图片比例要求
               if (aspectRatio) {
-                promptText += `，请严格保持${aspectRatio}的宽高比例，按照${size}尺寸生成`;
+                promptText += `，输出比例${aspectRatio}，尺寸${size}`;
               }
               
               // 保存最终提示词，用于记录
@@ -868,11 +871,11 @@ export async function POST(request: NextRequest) {
           // 没有参考图片，使用纯文本提示
           let textPrompt = prompt || "";
           if (style) {
-            textPrompt += textPrompt ? `，${style}风格` : `${style}风格`;
+            textPrompt += textPrompt ? `，以${style}风格创作` : `创作一张${style}风格的图像`;
           }
           
           // 保存最终提示词，用于记录
-          finalPrompt = textPrompt || "请生成一张图片";
+          finalPrompt = textPrompt || "创作一张图像";
           
           messages.push({
             role: 'user',
@@ -925,7 +928,7 @@ export async function POST(request: NextRequest) {
                 logger.info(`图片验证成功，数据大小: ${Math.round(imageUrl.length / 1024)}KB`);
                 
               } else {
-                logger.warn('消息中未找到图片内容，这可能导致工具调用失败');
+                logger.warn('消息中未找到图片内容，这可能影响图像生成效果');
                 logger.debug(`消息内容类型: ${messages[0].content.map(item => item.type).join(', ')}`);
               }
             }
@@ -933,13 +936,13 @@ export async function POST(request: NextRequest) {
             // 记录工具选择配置，确保正确设置
             logger.debug(`工具选择配置: tool_choice=auto`);
             
-            // 确保第一条消息包含清晰的指令，提示模型使用图像生成功能
+            // 确保第一条消息包含清晰的指令，不指示模型使用特定工具
             if (!Array.isArray(messages[0].content) || !messages[0].content.some(item => item.type === 'text')) {
               logger.warn('消息中缺少明确的文本指令，添加默认指令');
               // 如果消息中只有图片没有文本，添加明确的文本指令
               const textContent = {
                 type: 'text' as const,
-                text: '请根据这张图片生成一个新的图像。' + (prompt ? `图像应当是: ${prompt}` : '')
+                text: '将上传的图片重新创作' + (prompt ? `，主题: ${prompt}` : '') + (style ? `，使用${style}风格，保留原图主要内容` : '')
               };
               
               if (Array.isArray(messages[0].content)) {
@@ -1000,6 +1003,8 @@ export async function POST(request: NextRequest) {
                 messages: messages,
                 max_tokens: 1000,
                 temperature: 0.7,
+                tools: [],
+                tool_choice: "auto"
               });
               
               // 创建一个超时后的并发请求Promise
