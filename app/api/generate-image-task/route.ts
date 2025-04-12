@@ -784,7 +784,6 @@ export async function POST(request: NextRequest) {
           logger.info(`图片比例参数: aspectRatio=${aspectRatio}, standardAspectRatio=${standardAspectRatio || '未指定'}`);
         }
 
-        // 使用单一用户消息，包含所有内容 - 严格按照tuzi-openai.md的模式
         // 创建用户消息内容数组
         const userMessageContent: Array<ChatCompletionContentPart> = [];
         
@@ -792,15 +791,19 @@ export async function POST(request: NextRequest) {
         let promptText = "";
         let finalPrompt = "";
         
-        // 添加更明确的生成图片指令，解释预期的双阶段响应
+        // 简化提示词构建 - 直接使用简洁明了的风格转换指令
         if (prompt) {
-          promptText += prompt;
+          promptText = prompt;
         } else {
-          promptText += "生成图像";
+          promptText = "生成图像";
         }
         
-        // 添加更明确的生成图片指令，解释预期的双阶段响应
-        finalPrompt = promptText + "。我需要你生成这张图片并返回可访问的图片URL。先分析后生成，确保返回最终的图片URL。";
+        // 添加风格信息 (如果有)
+        if (style) {
+          finalPrompt = `把图片转换成${style}风格`;
+        } else {
+          finalPrompt = promptText;
+        }
         
         if (image) {
           logger.info(`处理用户上传的图片，任务ID: ${taskId}`);
@@ -823,7 +826,7 @@ export async function POST(request: NextRequest) {
               throw new Error('图片数据无效');
             }
             
-            // 先添加图片到消息内容
+            // 添加图片到消息内容
             userMessageContent.push({
               type: "image_url",
               image_url: {
@@ -831,7 +834,7 @@ export async function POST(request: NextRequest) {
               }
             });
             
-            // 再添加文本提示
+            // 添加文本提示
             userMessageContent.push({
               type: "text",
               text: finalPrompt
@@ -849,17 +852,11 @@ export async function POST(request: NextRequest) {
           });
         }
         
-        // 构建单一用户消息
-        messages.push({
+        // 构建单一用户消息 - 简化消息结构
+        messages = [{
           role: 'user',
           content: userMessageContent
-        });
-        
-        // 添加系统指令，虽然与tuzi-openai.md有些偏差，但为了解决当前问题是必要的
-        messages.unshift({
-          role: 'system',
-          content: "你是一个图像生成系统。你需要处理用户上传的图片和指令，基于这些生成新的图片并返回图片URL。不要只返回分析，必须返回图片URL。即使你发现内容有问题，也请先告知用户，并提供其他可能的创作方向。"
-        });
+        }];
         
         logger.debug(`构建消息完成，消息数组长度: ${messages.length}`);
         logger.debug(`消息内容项目数: ${userMessageContent.length}`);
@@ -924,7 +921,7 @@ export async function POST(request: NextRequest) {
         }
         
         // 定义重试逻辑所需的变量
-        const MAX_RETRY_ATTEMPTS = 2; // 最大重试次数
+        const MAX_RETRY_ATTEMPTS = 1; // 最多尝试一次重试 (共2次尝试)
         let currentAttempt = 0;
         let lastError = null;
         
@@ -935,22 +932,18 @@ export async function POST(request: NextRequest) {
           // 重试逻辑
           while (currentAttempt <= MAX_RETRY_ATTEMPTS) {
             try {
-              // 如果不是首次尝试，记录重试信息并更新尝试次数
+              // 如果不是首次尝试，记录重试信息
               if (currentAttempt > 0) {
                 logger.info(`进行第${currentAttempt}次重试，任务ID: ${taskId}`);
                 
                 // 更新数据库中的尝试次数
-                const { error: attemptError } = await supabaseAdmin
+                await supabaseAdmin
                   .from('image_tasks')
                   .update({
                     attempt_count: currentAttempt,
                     updated_at: new Date().toISOString()
                   })
                   .eq('task_id', taskId);
-                
-                if (attemptError) {
-                  logger.error(`更新尝试次数失败: ${attemptError.message}`);
-                }
               }
               
               // 设置超时处理
@@ -961,98 +954,36 @@ export async function POST(request: NextRequest) {
                 }, API_TIMEOUT);
               });
               
-              // 增强的URL提取函数，可以提高URL检测率
-              const extractUrlWithFullPatterns = (text: string): string | null => {
-                if (!text || typeof text !== 'string') return null;
-                
-                // 尝试多种URL提取模式
-                const patterns = [
-                  // JSON结构中的URL
-                  /"image_url"\s*:\s*"(https?:\/\/[^"]+)"/i,
-                  // Markdown格式
-                  /!\[.*?\]\((https?:\/\/[^\s)]+)\)/i,
-                  // HTML图片标签
-                  /<img.*?src=["'](https?:\/\/[^\s"']+)["']/i,
-                  // 直接URL
-                  /(https?:\/\/[^\s]+\.(?:png|jpg|jpeg|gif|webp)(?:\?[^\s]*)?)/i,
-                  // 通用URL模式
-                  /(https?:\/\/[^\s"'<>]+)/i,
-                  // 带有特定域名的URL
-                  /(https?:\/\/\w+\.(?:cloudfront|akamaized|staticflickr|googleusercontent|openai)\.(?:net|com|org)\/[^\s]+)/i
-                ];
-                
-                for (const pattern of patterns) {
-                  const match = text.match(pattern);
-                  if (match && match[1]) {
-                    logger.debug(`使用模式 ${pattern} 提取到URL: ${match[1]}`);
-                    return match[1];
-                  }
-                }
-                
-                return null;
-              };
-              
-              // 执行API调用 - 严格按照tuzi-openai.md的方式，但添加必要的参数
+              // 简化API调用 - 仅保留必要参数
               const apiPromise = openaiClient.chat.completions.create({
-                model: process.env.OPENAI_MODEL || 'gpt-4o-all', // 使用环境变量中配置的模型
+                model: process.env.OPENAI_MODEL || 'gpt-4o-all',
                 messages: messages,
-                stream: true,
-                max_tokens: 4096,  // 确保有足够的token来生成图片URL
-                temperature: 0.8,  // 增加创造性
-                tools: [], // 空工具数组表示支持vision
-                tool_choice: "auto" // 自动选择工具
+                stream: true
               });
                   
-              // 记录发送的消息结构和内容
-              logger.debug(`发送到API的消息数量: ${messages.length}`);
-              if (messages.length > 0 && messages[0].role === 'user') {
-                if (typeof messages[0].content === 'string') {
-                  logger.debug(`用户消息内容: ${messages[0].content.substring(0, 200)}...`);
-                } else if (Array.isArray(messages[0].content)) {
-                  const textContent = messages[0].content.find(item => item.type === 'text');
-                  if (textContent && 'text' in textContent) {
-                    logger.debug(`用户文本内容: ${textContent.text.substring(0, 200)}...`);
-                  }
-                  logger.debug(`消息包含图片: ${messages[0].content.some(item => item.type === 'image_url')}`);
-                }
-              }
-              
               // 竞争：API调用 vs 超时
               const stream = await Promise.race([
                 apiPromise,
                 timeoutPromise
-              ]) as any; // 使用any类型，因为Promise.race会返回多种可能类型
+              ]) as any;
               
-              logger.info(`请求成功完成，使用gpt-4o-all模型生成图像，使用单一用户消息包含所有指令`);
+              logger.info(`请求成功完成，使用gpt-4o-all模型生成图像`);
               logger.timing(apiRequestStartTime, `API请求完成`);
               
               // 收集响应内容
               let responseContent = '';
               let imageUrl = null;
-              let jsonPhaseComplete = false;
-              let streamEndTime = 0;
               
-              // 处理流式响应 - 按照tuzi-openai.md处理方式
+              // 处理流式响应 - 简化版
               for await (const chunk of stream) {
                 const content = chunk.choices[0]?.delta?.content || '';
                 if (content) {
                   responseContent += content;
                   process.stdout.write(content); // 输出流式内容到控制台
                   
-                  // 记录每次接收到内容的时间
-                  streamEndTime = Date.now();
-                  
-                  // 检测是否已完成JSON阶段 (收到完整的JSON对象后)
-                  if (!jsonPhaseComplete && responseContent.includes('}') && 
-                      (responseContent.includes('"prompt"') || responseContent.includes('"referenced_image_ids"'))) {
-                    jsonPhaseComplete = true;
-                    logger.info(`检测到JSON阶段完成，继续等待图片URL`);
-                    continue; // 继续等待下一部分内容
-                  }
-                  
                   // 尝试从内容中提取图片URL
                   if (content.includes('http')) {
-                    const extractedUrl = extractUrlWithFullPatterns(content);
+                    const extractedUrl = extractImageUrl(content);
                     if (extractedUrl) {
                       imageUrl = extractedUrl;
                       logger.info(`从流中提取到图片URL: ${imageUrl}`);
@@ -1061,127 +992,76 @@ export async function POST(request: NextRequest) {
                 }
               }
               
-              // 在流结束后，增加短暂等待，确保收到所有内容
-              if (jsonPhaseComplete && !imageUrl) {
-                logger.info(`流式响应结束，但仅收到JSON内容，等待额外2秒确认...`);
-                await new Promise(resolve => setTimeout(resolve, 2000));
-              }
-              
               // 如果没有从流中提取到图片URL，从整个响应内容中尝试提取
               if (!imageUrl && responseContent) {
                 logger.debug('尝试从完整的响应内容中提取URL');
-                imageUrl = extractUrlWithFullPatterns(responseContent);
+                imageUrl = extractImageUrl(responseContent);
                 if (imageUrl) {
                   logger.info(`从完整响应中提取到图片URL: ${imageUrl}`);
-                } else if (jsonPhaseComplete) {
-                  // 如果已完成JSON阶段但未找到URL，可能需要重试或提供更明确的提示
-                  logger.warn(`已完成JSON阶段但未找到图片URL，API可能未能完成图片生成`);
-                  
-                  // 检查是否有错误信息，如内容政策违规
-                  if (responseContent.includes("违反") || responseContent.includes("内容政策") || 
-                      responseContent.includes("policy") || responseContent.includes("不允许")) {
-                    throw new Error(`API内容审核未通过: ${responseContent.substring(0, 200)}`);
-                  }
-                  
-                  // 如果进入了重试的最后一次尝试，尝试调整提示词再试一次
-                  if (currentAttempt >= MAX_RETRY_ATTEMPTS - 1) {
-                    const shouldRetry = true; // 最后一次尝试总是重试
-                    if (shouldRetry) continue; // 继续外层循环进行重试
-                  }
                 }
               }
               
-              // 验证提取的URL是否有效
-              if (imageUrl) {
-                logger.info(`成功提取图片URL: ${imageUrl}`);
+              // 如果找到有效的图像URL，更新任务状态并返回
+              if (imageUrl && isValidImageUrl(imageUrl)) {
+                logger.info(`成功提取有效的图片URL: ${imageUrl}`);
                 
-                // 验证是否是有效的图像URL
-                if (!isValidImageUrl(imageUrl)) {
-                  logger.warn(`提取的URL不是有效的图像URL: ${imageUrl}`);
+                // 更新任务状态为成功
+                try {
+                  const { error: updateError } = await supabaseAdmin
+                    .from('image_tasks')
+                    .update({
+                      status: 'completed',
+                      provider: 'tuzi',
+                      image_url: imageUrl,
+                      updated_at: new Date().toISOString()
+                    })
+                    .eq('task_id', taskId);
                   
-                  // 查找任何可能的图像URL
-                  if (responseContent) {
-                    const backupUrl = extractImageUrl(responseContent);
-                    if (backupUrl && isValidImageUrl(backupUrl)) {
-                      imageUrl = backupUrl;
-                      logger.info(`找到备用有效图像URL: ${imageUrl}`);
-                    }
+                  if (updateError) {
+                    logger.error(`更新任务状态失败: ${updateError.message}`);
+                  } else {
+                    logger.stateChange(taskId, 'processing', 'completed');
+                    logger.info(`成功更新任务状态为completed, 任务ID: ${taskId}`);
                   }
+                } catch (updateError: unknown) {
+                  logger.error(`更新任务状态异常: ${updateError instanceof Error ? updateError.message : String(updateError)}`);
                 }
                 
-                // 如果找到有效的图像URL，更新任务状态并返回
-                if (imageUrl && isValidImageUrl(imageUrl)) {
-                  logger.info(`成功提取有效的图片URL: ${imageUrl}`);
+                // 记录生成历史
+                await saveGenerationHistory(supabaseAdmin, currentUser.id, imageUrl, finalPrompt, style, aspectRatio, standardAspectRatio)
+                  .catch(historyError => 
+                    logger.error(`记录生成历史失败: ${historyError instanceof Error ? historyError.message : String(historyError)}`)
+                  );
                   
-                  // 更新任务状态为成功
-                  try {
-                    const { error: updateError } = await supabaseAdmin
-                      .from('image_tasks')
-                      .update({
-                        status: 'completed',
-                        provider: 'tuzi',
-                        image_url: imageUrl,
-                        updated_at: new Date().toISOString()
-                      })
-                      .eq('task_id', taskId);
-                    
-                    if (updateError) {
-                      logger.error(`更新任务状态失败: ${updateError.message}`);
-                    } else {
-                      logger.stateChange(taskId, 'processing', 'completed');
-                      logger.info(`成功更新任务状态为completed, 任务ID: ${taskId}`);
-                    }
-                  } catch (updateError: unknown) {
-                    logger.error(`更新任务状态异常: ${updateError instanceof Error ? updateError.message : String(updateError)}`);
-                  }
+                // 发送任务完成通知
+                await notifyTaskUpdate(taskId, 'completed', imageUrl)
+                  .catch(notifyError => 
+                    logger.error(`发送任务完成通知失败: ${notifyError instanceof Error ? notifyError.message : String(notifyError)}`)
+                  );
                   
-                  // 记录生成历史
-                  await saveGenerationHistory(supabaseAdmin, currentUser.id, imageUrl, finalPrompt, style, aspectRatio, standardAspectRatio)
-                    .catch(historyError => 
-                      logger.error(`记录生成历史失败: ${historyError instanceof Error ? historyError.message : String(historyError)}`)
-                    );
-                    
-                  // 发送任务完成通知
-                  await notifyTaskUpdate(taskId, 'completed', imageUrl)
-                    .catch(notifyError => 
-                      logger.error(`发送任务完成通知失败: ${notifyError instanceof Error ? notifyError.message : String(notifyError)}`)
-                    );
-                    
-                  // 完成整个过程，记录总耗时
-                  logger.timing(startTime, `整个图像生成任务完成，任务ID: ${taskId}`);
-                  
-                  // 返回成功响应
-                  return NextResponse.json({ 
-                    taskId, 
-                    status: 'success',
-                    imageUrl: imageUrl,
-                    prompt: finalPrompt,
-                    style: style || null,
-                    model: process.env.OPENAI_MODEL || 'gpt-4o-all',
-                    provider: 'tuzi'
-                  }, { status: 200 });
-                }
+                // 完成整个过程，记录总耗时
+                logger.timing(startTime, `整个图像生成任务完成，任务ID: ${taskId}`);
+                
+                // 返回成功响应
+                return NextResponse.json({ 
+                  taskId, 
+                  status: 'success',
+                  imageUrl: imageUrl,
+                  prompt: finalPrompt,
+                  style: style || null,
+                  model: process.env.OPENAI_MODEL || 'gpt-4o-all',
+                  provider: 'tuzi'
+                }, { status: 200 });
               } else {
-                // 如果没有找到有效URL，但检测到是JSON格式的响应，可能是API只返回了分析而没有生成图片
-                if (jsonPhaseComplete && responseContent.includes('"prompt"')) {
-                  let errorMessage = `API只返回了JSON分析，未能生成图片。当前尝试次数: ${currentAttempt+1}/${MAX_RETRY_ATTEMPTS+1}`;
-                  
-                  // 如果还有重试机会，尝试调整提示词再试一次
-                  if (currentAttempt < MAX_RETRY_ATTEMPTS) {
-                    logger.warn(errorMessage + "，将尝试调整提示词重试");
-                    currentAttempt++;
-                    // 继续外层循环进行重试
-                    continue;
-                  }
-                  
-                  // 记录详细日志
-                  logger.error(`${errorMessage}，已达到最大重试次数，任务ID: ${taskId}`);
-                  logger.error(`接收到的响应内容: ${responseContent.substring(0, 400)}...`);
-                  throw new Error(errorMessage);
+                // 如果没有找到有效URL但还有重试机会
+                if (currentAttempt < MAX_RETRY_ATTEMPTS) {
+                  logger.warn(`未能提取到图片URL，将进行重试`);
+                  currentAttempt++;
+                  continue;
                 }
                 
                 // 如果没有找到有效URL，记录详细日志并抛出错误
-                logger.error(`所有方法都无法提取有效的图片URL，响应内容: ${responseContent?.substring(0, 200)}...`);
+                logger.error(`无法提取有效的图片URL，响应内容: ${responseContent?.substring(0, 200)}...`);
                 throw new Error('API返回的响应中没有包含有效的图像生成结果');
               }
             } catch (attemptError) {
@@ -1195,30 +1075,27 @@ export async function POST(request: NextRequest) {
                 errorMsg.includes('rate limit') ||
                 errorMsg.includes('too many requests') ||
                 errorMsg.includes('服务暂时不可用') ||
-                errorMsg.includes('temporary failure') ||
-                errorMsg.includes('500 Internal Server Error') ||
-                errorMsg.includes('503 Service Unavailable');
-              
-              // 如果当前已达到最大重试次数，或者错误类型不适合重试，则抛出
-              if (currentAttempt >= MAX_RETRY_ATTEMPTS || !shouldRetry) {
-                logger.error(`不再重试，错误为: ${errorMsg}`);
-                throw attemptError;
+                errorMsg.includes('从完整的响应内容中提取URL');
+                
+              if (shouldRetry && currentAttempt < MAX_RETRY_ATTEMPTS) {
+                logger.warn(`尝试${currentAttempt+1}/${MAX_RETRY_ATTEMPTS+1}失败: ${errorMsg}, 将进行重试...`);
+                currentAttempt++;
+                // 重试前短暂延迟
+                await new Promise(resolve => setTimeout(resolve, 2000));
+                continue; // 继续重试
               }
               
-              // 计算退避时间 (1秒, 3秒, 9秒...)
-              const backoffTime = Math.pow(3, currentAttempt) * 1000;
-              logger.info(`API请求失败，将在${backoffTime/1000}秒后重试: ${errorMsg}`);
-              
-              // 等待退避时间
-              await new Promise(resolve => setTimeout(resolve, backoffTime));
-              
-              // 增加尝试次数并继续循环
-              currentAttempt++;
+              // 已达最大重试次数或不需要重试的错误
+              logger.error(`图片生成失败，任务ID: ${taskId}, 错误: ${errorMsg}`);
+              throw attemptError; // 将错误抛出到外部处理
             }
           }
-        } catch (mainApiError) {
+          
+          // 这里理论上不应该执行到，但为了代码完整性
+          throw new Error(`图像生成失败：超出重试次数`);
+        } catch (finalError) {
           // 所有重试都失败，直接更新任务状态为失败
-          const errorMsg = mainApiError instanceof Error ? mainApiError.message : String(mainApiError);
+          const errorMsg = finalError instanceof Error ? finalError.message : String(finalError);
           logger.error(`图像生成失败: ${errorMsg}`);
         
         // 更新任务状态为失败
@@ -1249,84 +1126,84 @@ export async function POST(request: NextRequest) {
             );
           
           throw new Error(`图像生成失败: ${errorMsg}`);
+        }
+      } catch (error) {
+        // 错误处理 - 回滚点数
+        console.error('创建任务失败，尝试回滚点数:', error);
+        
+        try {
+          // 使用类型断言处理
+          const creditsObject = credits as { credits: number } | null | undefined;
+          
+          if (!creditsObject) {
+            console.log('无法回滚用户点数：credits对象为null或undefined');
+          } else if (typeof creditsObject.credits === 'number') {
+            await supabaseAdmin
+              .from('ai_images_creator_credits')
+              .update({
+                credits: creditsObject.credits,
+                updated_at: new Date().toISOString()
+              })
+              .eq('user_id', currentUser.id);
+            
+            console.log('成功回滚用户点数');
+          } else {
+            console.log('无法回滚用户点数：credits.credits不是有效的数字');
+          }
+        } catch (rollbackError) {
+          console.error('回滚用户点数失败:', rollbackError);
+        }
+        
+        // 返回错误响应
+        return NextResponse.json({
+          status: 'failed',
+          error: '创建图像任务失败',
+          details: error instanceof Error ? error.message : String(error)
+        }, { status: 500 });
       }
     } catch (error) {
-      // 错误处理 - 回滚点数
-      console.error('创建任务失败，尝试回滚点数:', error);
+      console.error(`处理图像生成请求失败:`, error);
       
-      try {
-        // 使用类型断言处理
-        const creditsObject = credits as { credits: number } | null | undefined;
-        
-        if (!creditsObject) {
-          console.log('无法回滚用户点数：credits对象为null或undefined');
-        } else if (typeof creditsObject.credits === 'number') {
-          await supabaseAdmin
-            .from('ai_images_creator_credits')
-            .update({
-              credits: creditsObject.credits,
-              updated_at: new Date().toISOString()
-            })
-            .eq('user_id', currentUser.id);
-            
-          console.log('成功回滚用户点数');
-        } else {
-          console.log('无法回滚用户点数：credits.credits不是有效的数字');
+      // 判断错误类型，提供更友好的错误信息
+      let status = 500;
+      let errorMessage = '创建图像任务失败';
+      let suggestion = '请稍后重试';
+      
+      if (error instanceof Error) {
+        if (error.message.includes('JSON')) {
+          status = 400;
+          errorMessage = '无效的请求格式';
+          suggestion = '请确保发送的是有效的JSON数据';
+        } else if (error.message.includes('点数')) {
+          status = 402;
+          errorMessage = error.message;
+          suggestion = '请充值点数或联系客服';
+        } else if (error.message.includes('大小') || error.message.includes('尺寸')) {
+          status = 413;
+          errorMessage = error.message;
+          suggestion = '请减小图片尺寸或降低质量后重试';
         }
-      } catch (rollbackError) {
-        console.error('回滚用户点数失败:', rollbackError);
       }
       
-      // 返回错误响应
-      return NextResponse.json({
-        status: 'failed',
-        error: '创建图像任务失败',
-        details: error instanceof Error ? error.message : String(error)
-      }, { status: 500 });
+      return NextResponse.json(
+        { 
+          status: 'failed',
+          error: errorMessage, 
+          suggestion,
+          details: error instanceof Error ? error.message : String(error) 
+        },
+        { status }
+      );
     }
-  } catch (error) {
-    console.error(`处理图像生成请求失败:`, error);
-    
-    // 判断错误类型，提供更友好的错误信息
-    let status = 500;
-    let errorMessage = '创建图像任务失败';
-    let suggestion = '请稍后重试';
-    
-    if (error instanceof Error) {
-      if (error.message.includes('JSON')) {
-        status = 400;
-        errorMessage = '无效的请求格式';
-        suggestion = '请确保发送的是有效的JSON数据';
-      } else if (error.message.includes('点数')) {
-        status = 402;
-        errorMessage = error.message;
-        suggestion = '请充值点数或联系客服';
-      } else if (error.message.includes('大小') || error.message.includes('尺寸')) {
-        status = 413;
-        errorMessage = error.message;
-        suggestion = '请减小图片尺寸或降低质量后重试';
-      }
-    }
-    
+  } catch (finalError) {
+    console.error(`图像生成全局错误:`, finalError);
     return NextResponse.json(
       { 
         status: 'failed',
-        error: errorMessage, 
-        suggestion,
-        details: error instanceof Error ? error.message : String(error) 
+        error: '系统错误',
+        details: '图像生成服务临时不可用，请稍后重试'
       },
-      { status }
+      { status: 500 }
     );
   }
-} catch (finalError) {
-  console.error(`图像生成全局错误:`, finalError);
-  return NextResponse.json(
-    { 
-      status: 'failed',
-      error: '系统错误',
-      details: '图像生成服务临时不可用，请稍后重试'
-    },
-    { status: 500 }
-  );
-}
 }
