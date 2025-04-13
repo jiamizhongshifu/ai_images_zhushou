@@ -262,6 +262,35 @@ function extractUrlFromContent(content: string): string | null {
   }
 }
 
+// 添加getImageSize函数，根据纵横比返回合适的图像尺寸
+function getImageSize(aspectRatio: string | null): "1024x1024" | "1792x1024" | "1024x1792" | "512x512" | "256x256" {
+  if (!aspectRatio) return '1024x1024'; // 默认正方形
+  
+  // 标准尺寸对应表 - 只使用OpenAI支持的尺寸
+  if (aspectRatio?.includes('16:9') || aspectRatio?.includes('1.78')) {
+    return '1792x1024'; // 宽屏 16:9
+  } else if (aspectRatio?.includes('9:16') || aspectRatio?.includes('0.56')) {
+    return '1024x1792'; // 竖屏 9:16
+  }
+  
+  // 如果是自定义比例，尝试解析并适配到最接近的标准尺寸
+  try {
+    if (aspectRatio?.includes(':')) {
+      const [width, height] = aspectRatio.split(':').map(Number);
+      const ratio = width / height;
+      
+      if (ratio > 1.2) return '1792x1024'; // 宽屏比例
+      if (ratio < 0.8) return '1024x1792'; // 竖屏比例
+      return '1024x1024'; // 接近正方形
+    }
+  } catch (e) {
+    console.error('解析自定义比例失败:', e);
+  }
+  
+  // 默认返回正方形
+  return '1024x1024';
+}
+
 // 直接生成图像API - 按照tuzi-openai.md重写
 export async function POST(request: NextRequest) {
   // 防止并发请求
@@ -530,58 +559,21 @@ export async function POST(request: NextRequest) {
         prompt: finalPrompt,
         n: 1,
         quality: "hd",
-        size: getImageSize(standardizedAspectRatio),
+        size: getImageSize(useStandardRatio || originalAspectRatio),
         response_format: "url",
-        user: userId
+        user: user.id
       });
       
-      // 收集图片URL
+      // 处理API响应
       let imageUrl = '';
-      const chunks: string[] = [];
       
-      // 处理流数据 - 只使用一个循环
-      for await (const chunk of response) {
-        const content = chunk.choices[0]?.delta?.content || '';
-        if (content) {
-          chunks.push(content);
-          
-          // 尝试从内容中提取图片URL
-          if (!imageUrl && content.includes('http')) {
-            // 使用增强的URL提取函数
-            const extractedUrl = extractUrlFromContent(content);
-            if (extractedUrl) {
-              imageUrl = extractedUrl;
-              logger.info(`从流中提取到图片URL: ${imageUrl}`);
-            }
-          }
-        }
-      }
-      
-      // 如果没有从流中提取到URL，尝试从完整响应中提取
-      if (!imageUrl) {
-        const fullContent = chunks.join('');
-        
-        // 检查是否包含内容政策违规信息
-        const contentPolicyViolation = checkContentPolicyViolation(fullContent);
-        if (contentPolicyViolation) {
-          logger.warn(`检测到内容政策违规: ${contentPolicyViolation.reason}`);
-          
-          // 获取提示词建议
-          const suggestions = getSuggestionForPrompt(prompt || "", style || null);
-          
-          throw new Error(`内容审核未通过: ${contentPolicyViolation.userMessage}。${suggestions}`);
-        }
-        
-        const extractedUrl = extractUrlFromContent(fullContent);
-        if (extractedUrl) {
-          imageUrl = extractedUrl;
-          logger.info(`从完整响应中提取到图片URL: ${imageUrl}`);
-        } else {
-          // 记录完整响应内容，帮助调试
-          logger.warn(`未能从响应中提取图片URL，完整响应:`);
-          logger.warn(fullContent.substring(0, 1000) + (fullContent.length > 1000 ? '...(已截断)' : ''));
-          throw new Error('未能提取图片URL，请检查您的提示词是否合适');
-        }
+      // 从响应中提取图片URL
+      if (response.data && response.data.length > 0 && response.data[0].url) {
+        imageUrl = response.data[0].url;
+        logger.info(`从API响应获取到图片URL: ${imageUrl}`);
+      } else {
+        logger.error(`API响应中不包含有效的图片URL，响应内容: ${JSON.stringify(response).substring(0, 200)}...`);
+        throw new Error('API返回的响应中不包含有效的图片URL');
       }
       
       // 保存历史记录
