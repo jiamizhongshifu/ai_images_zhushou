@@ -1,9 +1,25 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/utils/supabase/server';
 import { createAdminClient } from '@/utils/supabase/admin';
-import { getLogger } from '@/utils/logger';
+// import { getLogger } from '@/utils/logger';
 
-const logger = getLogger('task-final-check-api');
+// const logger = getLogger('task-final-check-api');
+
+// 日志工具函数
+const logger = {
+  error: (message: string, ...args: any[]) => {
+    console.error(`[任务终止检查API] ${message}`, ...args);
+  },
+  warn: (message: string, ...args: any[]) => {
+    console.warn(`[任务终止检查API] ${message}`, ...args);
+  },
+  info: (message: string, ...args: any[]) => {
+    console.log(`[任务终止检查API] ${message}`, ...args);
+  },
+  debug: (message: string, ...args: any[]) => {
+    console.log(`[任务终止检查API] ${message}`, ...args);
+  }
+};
 
 // 定义HTTP GET请求处理函数
 export async function GET(
@@ -36,7 +52,7 @@ export async function GET(
     // 处理外部请求的身份验证
     if (!isInternalCall) {
       // 创建Supabase客户端
-      supabase = createClient();
+      supabase = await createClient();
       const { data: { session } } = await supabase.auth.getSession();
       
       // 检查用户是否已登录
@@ -242,7 +258,7 @@ export async function POST(
     }
 
     // 创建Supabase客户端
-    const supabase = createClient();
+    const supabase = await createClient();
     const { data: { session } } = await supabase.auth.getSession();
     
     // 检查用户是否已登录
