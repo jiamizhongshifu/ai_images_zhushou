@@ -247,13 +247,26 @@ function extractImageUrl(content: string): string | null {
     /!\[.*?\]\((https?:\/\/[^\s)]+)\)/i,
     // HTML图片标签
     /<img.*?src=["'](https?:\/\/[^\s"'<>]+)["']/i,
+    // JSON格式中的URL
+    /"url"\s*:\s*"(https?:\/\/[^"]+)"/i,
+    // 常见图片服务商域名
+    /(https?:\/\/[^\s"'<>]+(?:openai\.com|cloudfront\.net|imgix\.net|googleapis\.com|googleusercontent\.com|bing\.com|tu-zi\.com|cdn\.openai\.com|azureedge\.net|storage\.googleapis\.com|s3\.amazonaws\.com)[^\s"'<>]*)/i,
+    // 带有filesystem.site的URL
+    /(https?:\/\/[^\s"'<>]*filesystem\.site[^\s"'<>]*)/i,
     // 任何URL (最后尝试)
     /(https?:\/\/[^\s"'<>]+)/i
   ];
   
+  // 清理内容 - 移除JSON格式相关字符，保留纯文本
+  const cleanedContent = content
+      .replace(/\\"/g, '"')     // 处理转义的引号
+      .replace(/\\n/g, ' ')     // 处理换行符
+      .replace(/\\r/g, ' ')     // 处理回车符
+      .replace(/\\t/g, ' ');    // 处理制表符
+  
   // 逐个尝试各种模式
   for (const pattern of patterns) {
-    const match = content.match(pattern);
+    const match = cleanedContent.match(pattern);
     if (match && match[1]) {
       logger.debug(`从内容中使用模式 ${pattern} 提取到URL: ${match[1]}`);
       return match[1];
@@ -531,14 +544,16 @@ function isValidImageUrl(url: string): boolean {
     // 必须是HTTP或HTTPS
     if (!parsedUrl.protocol.startsWith('http')) {
       logger.error(`URL协议不是http或https: ${parsedUrl.protocol}`);
-      return false;
-    }
+    return false;
+  }
     
     // 检查常见图片服务商域名
     const knownImageDomains = [
       'openai.com', 'cloudfront.net', 'imgix.net', 'googleapis.com', 
       'googleusercontent.com', 'bing.com', 'tu-zi.com', 'cdn.openai.com', 
-      'azureedge.net', 'storage.googleapis.com', 's3.amazonaws.com'
+      'azureedge.net', 'storage.googleapis.com', 's3.amazonaws.com',
+      'filesystem.site', 'cloudflare.com', 'cdn.tuzi.chat', 'cdn.openai.com',
+      'iili.io', 'imgbb.com'
     ];
     
     // 如果是已知图片服务商，直接通过
@@ -552,14 +567,14 @@ function isValidImageUrl(url: string): boolean {
     // 多层次的检查 - 优先级从高到低
     
     // 1. 路径以常见图片扩展名结尾
-    if (/\.(jpe?g|png|gif|webp|svg|bmp)($|\?)/i.test(parsedUrl.pathname)) {
+    if (/\.(jpe?g|png|gif|webp|svg|bmp|avif|tiff?)($|\?)/i.test(parsedUrl.pathname)) {
       logger.debug(`URL包含常见图片扩展名: ${parsedUrl.pathname}`);
       return true;
     }
     
     // 2. 路径包含常见图片相关路径
     if (/\/images?\//i.test(parsedUrl.pathname) || 
-        /\/(image|picture|photo|generated-image|file|content|media|asset|upload)/i.test(parsedUrl.pathname)) {
+        /\/(image|picture|photo|generated-image|file|content|media|asset|upload|cdn|gallery)/i.test(parsedUrl.pathname)) {
       logger.debug(`URL包含图片相关路径: ${parsedUrl.pathname}`);
       return true;
     }
@@ -570,19 +585,52 @@ function isValidImageUrl(url: string): boolean {
       return true;
     }
     
-    // 4. 检查特定格式的图片服务URL
-    if (/\/v\d+\/images\/generations\//i.test(parsedUrl.pathname)) {
-      logger.debug(`URL匹配特定图片生成服务格式: ${parsedUrl.pathname}`);
+    // 4. 域名特征判断
+    if (/\b(img|image|photo|pic|static|media|assets|upload)\b/i.test(parsedUrl.hostname)) {
+      logger.debug(`URL域名含有图片相关关键词: ${parsedUrl.hostname}`);
       return true;
     }
     
-    // 未满足任何已知图片URL模式
-    logger.warn(`URL不符合任何已知图片URL格式: ${url}`);
-    return false;
-  } catch (e) {
-    logger.error(`URL格式验证失败: ${e instanceof Error ? e.message : String(e)}`);
+    // 5. 如果URL非常长并且没有明显图片特征，可能不是图片URL
+    if (url.length > 300 && !url.includes('image') && !url.includes('photo') && !url.includes('picture')) {
+      logger.warn(`URL过长且无图片特征，可能不是图片URL: ${url.substring(0, 100)}...`);
+      return false;
+    }
+    
+    // 如果达到这里，我们无法确定是否为有效的图片URL，但仍然允许通过
+    logger.warn(`无法确定URL是否为图片，但允许通过: ${url}`);
+    return true;
+    
+  } catch (error) {
+    // URL无效
+    logger.error(`URL格式无效: ${error instanceof Error ? error.message : String(error)}`);
     return false;
   }
+}
+
+// 在findAspectRatioParameters函数之后添加新函数，用于将比例转换为模型所需的尺寸描述
+function getAspectRatioDescription(aspectRatio: string, standardAspectRatio?: string | null): string {
+  if (!aspectRatio) return '';
+  
+  const [width, height] = aspectRatio.split(':').map(Number);
+  let description = `宽高比为${width}:${height}`;
+  
+  if (standardAspectRatio) {
+    description += `（标准比例：${standardAspectRatio}）`;
+  }
+  
+  // 添加具体尺寸描述
+  if (standardAspectRatio) {
+    if (standardAspectRatio.includes('16:9') || standardAspectRatio.includes('4:3') || standardAspectRatio.includes('3:2')) {
+      description += `，应为横向图片，推荐尺寸1792x1024或类似的宽屏比例`;
+    } else if (standardAspectRatio.includes('9:16') || standardAspectRatio.includes('3:4') || standardAspectRatio.includes('2:3')) {
+      description += `，应为竖向图片，推荐尺寸1024x1792或类似的竖屏比例`;
+    } else if (standardAspectRatio.includes('1:1')) {
+      description += `，应为正方形图片，推荐尺寸1024x1024`;
+    }
+  }
+  
+  return description;
 }
 
 export async function POST(request: NextRequest) {
@@ -752,7 +800,8 @@ export async function POST(request: NextRequest) {
         // 根据请求参数和提示词确定合适的尺寸
         if (aspectRatio) {
           // 添加比例描述到提示词中
-          aspectRatioDescription = `，保持${aspectRatio}的宽高比例`;
+          aspectRatioDescription = getAspectRatioDescription(aspectRatio, standardAspectRatio);
+          logger.info(`使用比例描述: ${aspectRatioDescription}`);
           
           // 根据实际图片比例决定输出尺寸
           logger.info(`检测到图片比例: ${aspectRatio}`);
@@ -781,63 +830,60 @@ export async function POST(request: NextRequest) {
         const userMessageContent: Array<ChatCompletionContentPart> = [];
         
         // 初始化提示词变量
-        let promptText = "";
+        let promptText = prompt || "生成图像";
         let finalPrompt = "";
         
-        // 简化提示词构建 - 直接使用简洁明了的风格转换指令
-        if (prompt) {
-          promptText = prompt;
-        } else {
-          promptText = "生成图像";
-        }
-        
-        // 添加风格信息 (如果有)
-        if (style) {
-          finalPrompt = `把图片转换成${style}风格`;
-        } else {
-          finalPrompt = promptText;
-        }
-        
+        // 构建优化后的提示词 - 减少冗余，更加简洁明了
         if (image) {
-          logger.info(`处理用户上传的图片，任务ID: ${taskId}`);
+          // 构建针对图片转换的标准化提示词
+          const styleText = style ? `使用${style}风格` : "";
+          const aspectText = aspectRatio ? `，图片比例与参考图片保持一致` : "";
           
-          try {
-            // 改进图片数据处理 - 增强可靠性
-            let imageData;
-            
-            // 处理图片数据...
-            if (image.startsWith('data:image/')) {
-              imageData = image;
-            } else {
-              // 为原始base64添加data URL前缀
-              const mimeType = 'image/jpeg'; // 默认JPEG
-                imageData = `data:${mimeType};base64,${image}`;
-            }
-            
-            // 验证图片数据
-            if (!imageData || imageData.length < 100) {
-              throw new Error('图片数据无效');
-            }
-            
-            // 添加图片到消息内容
-            userMessageContent.push({
-              type: "image_url",
-                  image_url: {
-                url: imageData
-              }
-            });
-            
-            // 添加文本提示
-            userMessageContent.push({
-              type: "text",
-              text: finalPrompt
-            });
-            
-          } catch (imageProcessError) {
-            logger.error(`图片处理过程中出错: ${imageProcessError instanceof Error ? imageProcessError.message : String(imageProcessError)}`);
-            throw new Error(`无法处理图片数据: ${imageProcessError instanceof Error ? imageProcessError.message : String(imageProcessError)}`);
+          finalPrompt = `[必须保持图片比例=${aspectRatio}，输出尺寸=${size}] ${promptText}，${styleText}${aspectText}。
+请严格保持原图中的所有关键内容和元素：
+1. 保留所有人物、表情、姿势和位置
+2. 保留场景布局、背景环境和主要物体
+3. 保留原始构图、视角和透视关系
+4. 保留画面中的关键动作和互动
+仅转换视觉风格，不要改变任何内容或主题。严格遵守图片比例=${aspectRatio}，这是最高优先级。`;
+          
+          // 处理图片数据...
+          let imageData;
+          if (image.startsWith('data:image/')) {
+            imageData = image;
+          } else {
+            // 为原始base64添加data URL前缀
+            const mimeType = 'image/jpeg'; // 默认JPEG
+            imageData = `data:${mimeType};base64,${image}`;
           }
+          
+          // 验证图片数据
+          if (!imageData || imageData.length < 100) {
+            throw new Error('图片数据无效');
+          }
+          
+          // 添加图片到消息内容
+          userMessageContent.push({
+            type: "image_url",
+            image_url: {
+              url: imageData
+            }
+          });
+          
+          // 添加文本提示
+          userMessageContent.push({
+            type: "text",
+            text: finalPrompt
+          });
+          
+          logger.info(`图片处理：使用优化后的提示词模板，长度=${finalPrompt.length}字符`);
         } else {
+          // 没有图片时的简化提示词
+          const styleText = style ? `使用${style}风格` : "";
+          const aspectText = aspectRatio ? `，保持${aspectRatioDescription}` : "";
+          
+          finalPrompt = `${promptText}${styleText ? '，' + styleText : ''}${aspectText}。直接生成图片并返回URL，不要做任何分析。`;
+          
           // 没有图片时，只添加文本内容
           userMessageContent.push({
             type: "text",
@@ -847,18 +893,21 @@ export async function POST(request: NextRequest) {
         
         // 构建单一用户消息 - 简化消息结构
         messages = [{
-            role: 'user',
+          role: 'user',
           content: userMessageContent
         }];
-          
+        
         logger.debug(`构建消息完成，消息数组长度: ${messages.length}`);
         logger.debug(`消息内容项目数: ${userMessageContent.length}`);
+        
+        // 记录最终提示词内容（完整记录，用于调试）
+        logger.info(`最终提示词: "${finalPrompt}"`);
         
         // 图像生成参数
         const quality = "hd"; // 使用高清质量，提高输出图像质量
         
-        // 使用gpt-4o-all通过聊天API生成图像
-        logger.info(`使用聊天API (${process.env.OPENAI_MODEL || 'gpt-4o-image-vip'})生成图片，提示词: "${finalPrompt.substring(0, 50)}${finalPrompt.length > 50 ? '...' : ''}"`);
+        // 使用gpt-4o通过聊天API生成图像
+        logger.info(`使用聊天API (${process.env.OPENAI_MODEL || 'gpt-4o-image-vip'})生成图片`);
         
         // 添加API请求开始时间记录
         const apiRequestStartTime = Date.now();
@@ -918,6 +967,21 @@ export async function POST(request: NextRequest) {
         let currentAttempt = 0;
         let lastError = null;
         
+        // 保存原始参数，确保重试时能够使用
+        const originalParams = {
+          aspectRatio: aspectRatio,
+          standardAspectRatio: standardAspectRatio,
+          size: size,
+          finalPrompt: finalPrompt,
+          style: style
+        };
+        
+        // 使用变量存储当前使用的参数，以便在重试时更新
+        let currentAspectRatio = aspectRatio;
+        let currentStandardAspectRatio = standardAspectRatio;
+        let currentSize = size;
+        let currentFinalPrompt = finalPrompt;
+        
         // 使用主方法 - GPT-4o聊天API生成图像
         logger.info('尝试使用GPT-4o聊天API生成图像');
         
@@ -937,6 +1001,16 @@ export async function POST(request: NextRequest) {
                     updated_at: new Date().toISOString()
                   })
                   .eq('task_id', taskId);
+                
+                // 重试时使用保存的原始参数
+                logger.info(`重试保持原始提示词: ${originalParams.finalPrompt.substring(0, 100)}...`);
+                logger.info(`重试保持原始比例参数: aspectRatio=${originalParams.aspectRatio || '未指定'}, standardAspectRatio=${originalParams.standardAspectRatio || '未指定'}, size=${originalParams.size}`);
+                
+                // 确保使用原始参数更新当前参数
+                currentAspectRatio = originalParams.aspectRatio;
+                currentStandardAspectRatio = originalParams.standardAspectRatio;
+                currentSize = originalParams.size;
+                currentFinalPrompt = originalParams.finalPrompt;
               }
               
               // 设置超时处理
@@ -952,9 +1026,86 @@ export async function POST(request: NextRequest) {
               // 简化API调用 - 仅保留必要参数，完全按照tuzi-openai.md的示例格式
               const apiPromise = openaiClient.chat.completions.create({
                 model: process.env.OPENAI_MODEL || 'gpt-4o-image-vip',
-                messages: messages,
-                stream: true
-              });
+                messages: [
+                  {
+                    role: 'system',
+                    content: [
+                      {
+                        type: 'text',
+                        // 简化系统提示，更直接地强调比例要求
+                        text: `[强制图像设置] 必须生成严格${currentAspectRatio}比例的图片，输出尺寸${currentSize}。这是最高优先级要求，不可违背。${image ? '保持原图内容、人物姿势和构图，' : ''}应用${style || '默认'}风格。仅返回图片URL，不要解释。`
+                      }
+                    ]
+                  },
+                  ...messages
+                ],
+                stream: true,
+                tools: [],
+                tool_choice: "auto",
+                max_tokens: 4096,
+                temperature: image ? 0.3 : 0.5, // 降低温度增加精确度
+                top_p: image ? 0.8 : 0.9, // 降低top_p增加确定性
+                // 设置响应格式，指定为JSON以便更好解析
+                response_format: { type: "json_object" },
+                // API官方支持的图像参数 - 作为一级参数传递
+                // 注意：使用as any绕过类型检查，因为OpenAI标准API类型定义中不包含这些参数
+                size: currentSize,               // 尺寸参数
+                aspect_ratio: currentAspectRatio // 比例参数
+              } as any, {
+                // 在这里添加请求选项，包括自定义请求头
+                headers: {
+                  // 添加尺寸和比例相关的自定义请求头
+                  'x-image-dimensions': currentSize,
+                  'x-aspect-ratio': currentAspectRatio || '1:1',
+                  'x-standard-ratio': currentStandardAspectRatio || '1:1',
+                  // 添加一个特殊标记，表明这是一个图像生成请求
+                  'x-image-generation': 'true',
+                  // 添加图像API可能识别的额外头信息
+                  'content-type': 'application/json; charset=utf-8',
+                  'x-tuzi-image-size': currentSize,
+                  'x-force-aspect-ratio': 'true',
+                  'x-preserve-aspect-ratio': 'true',
+                  'x-image-generation-props': JSON.stringify({
+                    size: currentSize,
+                    aspect_ratio: currentAspectRatio || '1:1',
+                    standard_ratio: currentStandardAspectRatio || '1:1',
+                    quality: "hd"
+                  })
+                }
+              } as any); // 使用as any暂时绕过类型检查
+              
+              // 通过请求头方式传递图片尺寸和比例信息
+              // 注意：标准OpenAI API不直接支持尺寸参数，但tuzi可能有特殊处理方式
+              try {
+                // 设置请求头属性
+                if (openaiClient.baseURL && openaiClient.baseURL.includes('tu-zi.com')) {
+                  // 记录自定义请求头信息
+                  logger.info(`已通过请求选项设置自定义请求头，指定图片尺寸: ${currentSize}和比例: ${currentAspectRatio}`);
+                  // 记录一级参数传递
+                  logger.info(`已通过API一级参数直接传递尺寸和比例: size=${currentSize}, aspect_ratio=${currentAspectRatio}`);
+                }
+              } catch (headerError) {
+                logger.warn(`记录自定义请求头信息失败: ${headerError instanceof Error ? headerError.message : String(headerError)}`);
+              }
+              
+              // 增强API参数日志记录
+              logger.info(`详细API调用参数：
+- 模型: ${process.env.OPENAI_MODEL || 'gpt-4o-image-vip'}
+- 比例: ${currentAspectRatio || '未指定'} (${currentStandardAspectRatio || '未标准化'})
+- 输出尺寸: ${currentSize}
+- 参数传递方式: API一级参数 + 强制性系统提示 + 自定义头部信息
+- temperature: ${image ? 0.3 : 0.5}, top_p: ${image ? 0.8 : 0.9}
+- 包含图片: ${image ? '是' : '否'}
+- 附加工具设置: tools=[], tool_choice="auto"
+- 最大token数: 4096
+- 响应格式: JSON
+- 一级参数: size=${currentSize}, aspect_ratio=${currentAspectRatio}
+              `);
+              
+              // 系统提示词长度检查
+              const systemPromptText = `[强制图像设置] 必须生成严格${currentAspectRatio}比例的图片，输出尺寸${currentSize}。这是最高优先级要求，不可违背。${image ? '保持原图内容、人物姿势和构图，' : ''}应用${style || '默认'}风格。仅返回图片URL，不要解释。`;
+              logger.info(`简化后的系统提示词: "${systemPromptText}"`);
+              logger.info(`系统提示词长度: ${systemPromptText.length}字符`);
                   
               // 竞争：API调用 vs 超时
               const stream = await Promise.race([
@@ -962,19 +1113,91 @@ export async function POST(request: NextRequest) {
                 timeoutPromise
               ]) as any;
               
-              logger.info(`请求成功完成，使用${process.env.OPENAI_MODEL || 'gpt-4o-image-vip'}模型处理图像，完全按照tuzi-openai.md的API格式`);
-              logger.timing(apiRequestStartTime, `API请求完成`);
+              logger.info(`请求成功发送，等待响应流...`);
+              logger.timing(apiRequestStartTime, `API请求发送完成`);
               
               // 收集响应内容
               let responseContent = '';
-                  let imageUrl = null;
+              let imageUrl = null;
+              let jsonPhaseComplete = false; // 标志是否完成了JSON分析阶段
+              
+              // 增强型响应分析记录
+              let responseAnalysis = {
+                totalChunks: 0,
+                containsJsonStructure: false,
+                mentionsRatio: false,
+                mentionsDimensions: false,
+                extractedJson: null as any,
+                firstChunk: '',
+                lastChunk: ''
+              };
                   
-              // 处理流式响应 - 简化版
+              // 处理流式响应 - 带增强分析
               for await (const chunk of stream) {
+                responseAnalysis.totalChunks++;
                 const content = chunk.choices[0]?.delta?.content || '';
+                
+                // 保存第一个非空内容块
+                if (content && !responseAnalysis.firstChunk) {
+                  responseAnalysis.firstChunk = content;
+                }
+                
+                // 持续更新最后一个内容块
+                if (content) {
+                  responseAnalysis.lastChunk = content;
+                }
+                
+                // 检查JSON结构标记
+                if (content.includes('{') && content.includes('}')) {
+                  responseAnalysis.containsJsonStructure = true;
+                  
+                  // 尝试提取和记录完整JSON
+                  try {
+                    const jsonMatch = content.match(/({[\s\S]*})/);
+                    if (jsonMatch && jsonMatch[1]) {
+                      try {
+                        responseAnalysis.extractedJson = JSON.parse(jsonMatch[1]);
+                        logger.info(`从响应中提取到JSON: ${JSON.stringify(responseAnalysis.extractedJson)}`);
+                      } catch (e) {
+                        // JSON可能不完整，忽略解析错误
+                      }
+                    }
+                  } catch (e) {
+                    // 忽略JSON提取错误
+                  }
+                }
+                
+                // 检查与比例相关的内容
+                if (content.includes('ratio') || content.includes('比例') || 
+                    content.includes('aspect') || content.includes('3:4') || 
+                    content.includes('4:3') || content.includes('1:1')) {
+                  responseAnalysis.mentionsRatio = true;
+                  logger.info(`响应流中提到比例相关内容: "${content}"`);
+                }
+                
+                // 检查与尺寸相关的内容
+                if (content.includes('size') || content.includes('dimension') || 
+                    content.includes('尺寸') || content.includes('1024x1792') || 
+                    content.includes('1792x1024') || content.includes('1024x1024')) {
+                  responseAnalysis.mentionsDimensions = true;
+                  logger.info(`响应流中提到尺寸相关内容: "${content}"`);
+                }
+                
                 if (content) {
                   responseContent += content;
-                  process.stdout.write(content); // 输出流式内容到控制台
+                  // 输出流式内容到控制台
+                  process.stdout.write(content);
+                  
+                  // 检查是否已经完成JSON分析阶段
+                  if (!jsonPhaseComplete && (
+                    content.includes('生成图片') || 
+                    content.includes('开始生成') || 
+                    content.includes('正在生成图像') ||
+                    responseContent.length > 500
+                  )) {
+                    jsonPhaseComplete = true;
+                    logger.info('JSON分析阶段已完成，正在等待图像URL');
+                  }
                   
                   // 尝试从内容中提取图片URL
                   if (content.includes('http')) {
@@ -987,67 +1210,138 @@ export async function POST(request: NextRequest) {
                 }
               }
               
+              // 记录完整响应分析结果
+              logger.info(`响应分析结果:
+- 总内容块数: ${responseAnalysis.totalChunks}
+- 包含JSON结构: ${responseAnalysis.containsJsonStructure ? '是' : '否'}
+- 提及比例相关内容: ${responseAnalysis.mentionsRatio ? '是' : '否'}
+- 提及尺寸相关内容: ${responseAnalysis.mentionsDimensions ? '是' : '否'}
+- 首个内容块: "${responseAnalysis.firstChunk}"
+- 最后内容块: "${responseAnalysis.lastChunk}"
+- 响应总长度: ${responseContent.length}字符
+- 是否提取到图片URL: ${imageUrl ? '是' : '否'}
+              `);
+              
               // 如果没有从流中提取到图片URL，从整个响应内容中尝试提取
               if (!imageUrl && responseContent) {
                 logger.debug('尝试从完整的响应内容中提取URL');
-                imageUrl = extractImageUrl(responseContent);
-                if (imageUrl) {
-                  logger.info(`从完整响应中提取到图片URL: ${imageUrl}`);
+                
+                // 尝试解析JSON
+                try {
+                  // 尝试从文本中找到JSON格式的内容
+                  const jsonMatch = responseContent.match(/({[\s\S]*})/);
+                  if (jsonMatch && jsonMatch[1]) {
+                    try {
+                      const jsonData = JSON.parse(jsonMatch[1]);
+                      logger.debug(`尝试从JSON中提取URL: ${JSON.stringify(jsonData).substring(0, 100)}...`);
+                      logger.info(`完整JSON响应: ${JSON.stringify(jsonData)}`);
+                      
+                      // 在JSON中查找URL字段
+                      if (jsonData.url) {
+                        imageUrl = jsonData.url;
+                        logger.info(`从JSON的url字段中提取到图片URL: ${imageUrl}`);
+                      } else if (jsonData.image_url) {
+                        imageUrl = jsonData.image_url;
+                        logger.info(`从JSON的image_url字段中提取到图片URL: ${imageUrl}`);
+                      } else if (jsonData.result_url) {
+                        imageUrl = jsonData.result_url;
+                        logger.info(`从JSON的result_url字段中提取到图片URL: ${imageUrl}`);
+                      }
+                      
+                      // 记录与比例相关的字段（用于调试）
+                      if (jsonData.ratio || jsonData.aspect_ratio || jsonData.dimensions) {
+                        logger.info(`JSON中包含比例相关字段: 
+- ratio: ${jsonData.ratio || '无'}
+- aspect_ratio: ${jsonData.aspect_ratio || '无'}
+- dimensions: ${jsonData.dimensions || '无'}
+                        `);
+                      }
+                    } catch (jsonError) {
+                      logger.warn(`JSON解析失败: ${jsonError instanceof Error ? jsonError.message : String(jsonError)}`);
+                    }
+                  }
+                } catch (jsonParseError) {
+                  logger.warn(`尝试解析JSON失败: ${jsonParseError instanceof Error ? jsonParseError.message : String(jsonParseError)}`);
+                }
+                
+                // 如果从JSON解析中没有找到URL，继续使用正则提取
+                if (!imageUrl) {
+                  imageUrl = extractImageUrl(responseContent);
+                  if (imageUrl) {
+                    logger.info(`从完整响应中提取到图片URL: ${imageUrl}`);
+                  }
                 }
               }
               
               // 如果找到有效的图像URL，更新任务状态并返回
-                  if (imageUrl && isValidImageUrl(imageUrl)) {
-                    logger.info(`成功提取有效的图片URL: ${imageUrl}`);
-                    
-                    // 更新任务状态为成功
-                    try {
-                      const { error: updateError } = await supabaseAdmin
-                        .from('image_tasks')
-                        .update({
-                          status: 'completed',
-                          provider: 'tuzi',
-                          image_url: imageUrl,
-                          updated_at: new Date().toISOString()
-                        })
-                        .eq('task_id', taskId);
-                    
-                      if (updateError) {
-                        logger.error(`更新任务状态失败: ${updateError.message}`);
-                      } else {
-                        logger.stateChange(taskId, 'processing', 'completed');
-                        logger.info(`成功更新任务状态为completed, 任务ID: ${taskId}`);
-                      }
-                    } catch (updateError: unknown) {
-                      logger.error(`更新任务状态异常: ${updateError instanceof Error ? updateError.message : String(updateError)}`);
-                    }
-                    
+              if (imageUrl && isValidImageUrl(imageUrl)) {
+                logger.info(`成功提取有效的图片URL: ${imageUrl}`);
+                
+                // 更新任务状态为成功
+                try {
+                  const { error: updateError } = await supabaseAdmin
+                    .from('image_tasks')
+                    .update({
+                      status: 'completed',
+                      provider: 'tuzi',
+                      image_url: imageUrl,
+                      updated_at: new Date().toISOString()
+                    })
+                    .eq('task_id', taskId);
+                
+                  if (updateError) {
+                    logger.error(`更新任务状态失败: ${updateError.message}`);
+                  } else {
+                    logger.stateChange(taskId, 'processing', 'completed');
+                    logger.info(`成功更新任务状态为completed, 任务ID: ${taskId}`);
+                  }
+                } catch (updateError: unknown) {
+                  logger.error(`更新任务状态异常: ${updateError instanceof Error ? updateError.message : String(updateError)}`);
+                }
+                
                 // 记录生成历史
-                await saveGenerationHistory(supabaseAdmin, currentUser.id, imageUrl, finalPrompt, style, aspectRatio, standardAspectRatio)
+                await saveGenerationHistory(supabaseAdmin, currentUser.id, imageUrl, currentFinalPrompt, originalParams.style, currentAspectRatio, currentStandardAspectRatio)
                   .catch(historyError => 
                     logger.error(`记录生成历史失败: ${historyError instanceof Error ? historyError.message : String(historyError)}`)
                   );
-                    
-                    // 发送任务完成通知
-                    await notifyTaskUpdate(taskId, 'completed', imageUrl)
-                      .catch(notifyError => 
-                        logger.error(`发送任务完成通知失败: ${notifyError instanceof Error ? notifyError.message : String(notifyError)}`)
-                      );
-                    
-                    // 完成整个过程，记录总耗时
-                    logger.timing(startTime, `整个图像生成任务完成，任务ID: ${taskId}`);
-                    
-                    // 返回成功响应
-                    return NextResponse.json({ 
-                      taskId, 
-                      status: 'success',
-                      imageUrl: imageUrl,
-                      prompt: finalPrompt,
-                      style: style || null,
-                      model: process.env.OPENAI_MODEL || 'gpt-4o-image-vip',
-                      provider: 'tuzi'
-                    }, { status: 200 });
-                  } else {
+                
+                // 记录图像结果与原始参数的对比
+                logger.info(`图像生成结果分析:
+- 生成的图片URL: ${imageUrl.substring(0, 50)}...
+- 比例参数: aspectRatio=${currentAspectRatio || '未指定'}, standardAspectRatio=${currentStandardAspectRatio || '未指定'}
+- 目标尺寸: ${currentSize}
+- 使用风格: ${originalParams.style || '未指定'}
+- API响应耗时: ${Date.now() - apiRequestStartTime}ms
+- 总处理耗时: ${Date.now() - startTime}ms
+                `);
+                
+                // 发送任务完成通知
+                await notifyTaskUpdate(taskId, 'completed', imageUrl)
+                  .catch(notifyError => 
+                    logger.error(`发送任务完成通知失败: ${notifyError instanceof Error ? notifyError.message : String(notifyError)}`)
+                  );
+                
+                // 完成整个过程，记录总耗时
+                logger.timing(startTime, `整个图像生成任务完成，任务ID: ${taskId}`);
+                
+                // 返回成功响应
+                return NextResponse.json({ 
+                  taskId, 
+                  status: 'success',
+                  imageUrl: imageUrl,
+                  prompt: currentFinalPrompt,
+                  style: originalParams.style || null,
+                  model: process.env.OPENAI_MODEL || 'gpt-4o-image-vip',
+                  provider: 'tuzi'
+                }, { status: 200 });
+              } else {
+                // 如果JSON分析阶段尚未完成，并且这是首次尝试，不要立即判定为失败
+                if (!jsonPhaseComplete && currentAttempt === 0) {
+                  logger.warn(`API响应未包含图片URL，但JSON分析阶段尚未完成，将进行重试`);
+                  currentAttempt++;
+                  continue;
+                }
+                
                 // 如果没有找到有效URL但还有重试机会
                 if (currentAttempt < MAX_RETRY_ATTEMPTS) {
                   logger.warn(`未能提取到图片URL，将进行重试`);
@@ -1093,7 +1387,7 @@ export async function POST(request: NextRequest) {
           const errorMsg = finalError instanceof Error ? finalError.message : String(finalError);
           logger.error(`图像生成失败: ${errorMsg}`);
         
-        // 更新任务状态为失败
+          // 更新任务状态为失败
           try {
             const { error: updateError } = await supabaseAdmin
               .from('image_tasks')
@@ -1121,40 +1415,40 @@ export async function POST(request: NextRequest) {
             );
           
           throw new Error(`图像生成失败: ${errorMsg}`);
-      }
-    } catch (error) {
-      // 错误处理 - 回滚点数
-      console.error('创建任务失败，尝试回滚点数:', error);
-      
-      try {
+        }
+      } catch (error) {
+        // 错误处理 - 回滚点数
+        console.error('创建任务失败，尝试回滚点数:', error);
+        
+        try {
           // 使用类型断言处理
           const creditsObject = credits as { credits: number } | null | undefined;
           
           if (!creditsObject) {
             console.log('无法回滚用户点数：credits对象为null或undefined');
           } else if (typeof creditsObject.credits === 'number') {
-        await supabaseAdmin
-          .from('ai_images_creator_credits')
-          .update({
+            await supabaseAdmin
+              .from('ai_images_creator_credits')
+              .update({
                 credits: creditsObject.credits,
-            updated_at: new Date().toISOString()
-          })
-          .eq('user_id', currentUser.id);
-          
-        console.log('成功回滚用户点数');
+                updated_at: new Date().toISOString()
+              })
+              .eq('user_id', currentUser.id);
+            
+            console.log('成功回滚用户点数');
           } else {
             console.log('无法回滚用户点数：credits.credits不是有效的数字');
           }
-      } catch (rollbackError) {
-        console.error('回滚用户点数失败:', rollbackError);
-      }
-      
-      // 返回错误响应
-      return NextResponse.json({
-        status: 'failed',
-        error: '创建图像任务失败',
-        details: error instanceof Error ? error.message : String(error)
-      }, { status: 500 });
+        } catch (rollbackError) {
+          console.error('回滚用户点数失败:', rollbackError);
+        }
+        
+        // 返回错误响应
+        return NextResponse.json({
+          status: 'failed',
+          error: '创建图像任务失败',
+          details: error instanceof Error ? error.message : String(error)
+        }, { status: 500 });
       }
     } catch (error) {
       console.error(`处理图像生成请求失败:`, error);
