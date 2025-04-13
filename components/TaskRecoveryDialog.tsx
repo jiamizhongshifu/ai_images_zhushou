@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { formatDistanceToNow } from 'date-fns';
-import { zh } from 'date-fns/locale';
+import { zhCN } from 'date-fns/locale/zh-CN';
 import { getAllPendingTasks, StoredTaskInfo } from '@/utils/taskStorage';
 
 interface TaskRecoveryDialogProps {
@@ -70,7 +70,7 @@ export default function TaskRecoveryDialog({ onRecover, onDiscard }: TaskRecover
   // 格式化时间
   const formattedTime = formatDistanceToNow(new Date(pendingTask.timestamp), {
     addSuffix: true,
-    locale: zh
+    locale: zhCN
   });
 
   // 格式化提示词，截取前30个字符
