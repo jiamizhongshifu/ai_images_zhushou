@@ -71,21 +71,22 @@ const TIMEOUT = 180000; // 3分钟超时
 // 延时函数
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-// 创建图资API客户端 - 按照tuzi-openai.md的方式
+// 创建图资API客户端
 function createTuziClient() {
   // 获取环境配置
   const apiConfig = getApiConfig('tuzi') as TuziConfig;
   
   // 优先使用环境变量中的配置
   const apiKey = apiConfig.apiKey || process.env.OPENAI_API_KEY;
-  const baseURL = apiConfig.apiUrl || process.env.OPENAI_BASE_URL || "https://api.tu-zi.com/v1";
+  const baseURL = apiConfig.apiUrl || process.env.OPENAI_BASE_URL || "https://api.tu-zi.com/v1/chat/completions";
   
-  logger.info(`创建图资API客户端，使用BASE URL: ${baseURL}`);
+  logger.info(`创建图资API客户端，使用BASE URL: ${baseURL}，模型: ${process.env.OPENAI_MODEL || 'gpt-4o-image-vip'}`);
   
   // 返回配置的客户端 - 使用图资API
   return new OpenAI({
     apiKey: apiKey,
     baseURL: baseURL,
+    defaultQuery: { model: process.env.OPENAI_MODEL || 'gpt-4o-image-vip' }
   });
 }
 
@@ -523,28 +524,23 @@ export async function POST(request: NextRequest) {
       
       logger.info(`开始向图资API发送请求，最终提示词: ${finalPrompt.substring(0, 50)}...`);
       
-      // 获取环境配置
-      const apiConfig = getApiConfig('tuzi') as TuziConfig;
-      // 使用环境变量中指定的模型，默认为gpt-4o-all
-      const modelName = apiConfig.model || 'gpt-4o-all';
-      
-      // 创建流式响应
-      const stream = await tuziClient.chat.completions.create({
-        model: modelName,
-        messages: messages,
-        stream: true, // 使用流式响应
-        tools: [], // 添加空工具数组
-        tool_choice: "auto" // 设置工具选择为自动
+      // 调用图资API生成图像
+      const response = await tuziClient.images.generate({
+        model: process.env.OPENAI_MODEL || 'gpt-4o-image-vip',
+        prompt: finalPrompt,
+        n: 1,
+        quality: "hd",
+        size: getImageSize(standardizedAspectRatio),
+        response_format: "url",
+        user: userId
       });
-      
-      logger.info(`与图资API建立连接成功，开始接收数据流`);
       
       // 收集图片URL
       let imageUrl = '';
       const chunks: string[] = [];
       
       // 处理流数据 - 只使用一个循环
-      for await (const chunk of stream) {
+      for await (const chunk of response) {
         const content = chunk.choices[0]?.delta?.content || '';
         if (content) {
           chunks.push(content);

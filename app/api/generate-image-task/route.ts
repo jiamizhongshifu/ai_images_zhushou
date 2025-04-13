@@ -103,30 +103,23 @@ function createTuziClient() {
   
   // 优先使用环境变量中的配置
   const apiKey = apiConfig.apiKey || process.env.OPENAI_API_KEY;
-  const baseURL = apiConfig.apiUrl || process.env.OPENAI_BASE_URL || "https://api.tu-zi.com/v1";
+  const baseURL = apiConfig.apiUrl || process.env.OPENAI_BASE_URL || "https://api.tu-zi.com/v1/chat/completions";
   
-  // 设置gpt-4o-all作为默认模型
-  let imageModel = "gpt-4o-all"; 
-  
-  // 记录环境变量配置情况，但始终使用gpt-4o-all
-  if (process.env.OPENAI_IMAGE_MODEL) {
-    logger.info(`环境变量中配置的模型: ${process.env.OPENAI_IMAGE_MODEL}，但将使用gpt-4o-all`);
-  } else {
-    logger.info(`未找到OPENAI_IMAGE_MODEL环境变量，将使用gpt-4o-all`);
-  }
+  // 使用环境变量中的模型
+  const imageModel = process.env.OPENAI_MODEL || "gpt-4o-image-vip"; 
   
   logger.info(`创建图资API客户端，使用BASE URL: ${baseURL}`);
   logger.debug(`API密钥状态: ${apiKey ? '已配置' : '未配置'} (长度: ${apiKey?.length || 0})`);
-  logger.debug(`使用统一图像生成模型: ${imageModel}`);
+  logger.debug(`使用图像生成模型: ${imageModel}`);
   
   if (!apiKey) {
     logger.error('API密钥未配置，请检查环境变量OPENAI_API_KEY');
     throw new Error('API密钥未配置');
   }
   
-  // 设置API超时时间 - 默认60秒
-  const apiTimeout = parseInt(process.env.OPENAI_TIMEOUT || '60000');
-  logger.debug(`API超时设置: ${apiTimeout}ms`);
+  // 设置API超时时间 - 从环境变量读取，默认3分钟
+  const apiTimeout = parseInt(process.env.OPENAI_TIMEOUT || '180000');
+  logger.debug(`API超时设置: ${apiTimeout}ms (${apiTimeout/1000}秒)`);
   
   // 设置API最大重试次数 - 默认2次
   const maxRetries = parseInt(process.env.OPENAI_MAX_RETRIES || '2');
@@ -168,8 +161,8 @@ async function saveGenerationHistory(
       logger.warn(`检查表结构失败: ${tableError.message}`);
     }
     
-    // 始终使用gpt-4o-all作为模型名称
-    const modelUsed = 'gpt-4o-all';
+    // 使用环境变量中的模型名称
+    const modelUsed = process.env.OPENAI_MODEL || 'gpt-4o-all';
     
     // 构建基本数据对象
     const historyData: any = {
@@ -712,7 +705,7 @@ export async function POST(request: NextRequest) {
           style: style || null,
           aspect_ratio: aspectRatio || null,
           provider: 'tuzi',
-          model: 'gpt-4o-all',
+          model: process.env.OPENAI_MODEL || 'gpt-4o-image-vip',
           request_id: taskId,
           attempt_count: 0,
           created_at: new Date().toISOString(),
@@ -818,7 +811,7 @@ export async function POST(request: NextRequest) {
             } else {
               // 为原始base64添加data URL前缀
               const mimeType = 'image/jpeg'; // 默认JPEG
-              imageData = `data:${mimeType};base64,${image}`;
+                imageData = `data:${mimeType};base64,${image}`;
             }
             
             // 验证图片数据
@@ -829,7 +822,7 @@ export async function POST(request: NextRequest) {
             // 添加图片到消息内容
             userMessageContent.push({
               type: "image_url",
-              image_url: {
+                  image_url: {
                 url: imageData
               }
             });
@@ -854,18 +847,18 @@ export async function POST(request: NextRequest) {
         
         // 构建单一用户消息 - 简化消息结构
         messages = [{
-          role: 'user',
+            role: 'user',
           content: userMessageContent
         }];
-        
+          
         logger.debug(`构建消息完成，消息数组长度: ${messages.length}`);
         logger.debug(`消息内容项目数: ${userMessageContent.length}`);
-
+        
         // 图像生成参数
         const quality = "hd"; // 使用高清质量，提高输出图像质量
         
         // 使用gpt-4o-all通过聊天API生成图像
-        logger.info(`使用聊天API (${process.env.OPENAI_MODEL || 'gpt-4o-all'})生成图片，提示词: "${finalPrompt.substring(0, 50)}${finalPrompt.length > 50 ? '...' : ''}"`);
+        logger.info(`使用聊天API (${process.env.OPENAI_MODEL || 'gpt-4o-image-vip'})生成图片，提示词: "${finalPrompt.substring(0, 50)}${finalPrompt.length > 50 ? '...' : ''}"`);
         
         // 添加API请求开始时间记录
         const apiRequestStartTime = Date.now();
@@ -901,25 +894,25 @@ export async function POST(request: NextRequest) {
         // 重要：在执行API调用前，将任务状态从pending更新为processing
         try {
           const { error: statusUpdateError } = await supabaseAdmin
-            .from('image_tasks')
-            .update({
+                  .from('image_tasks')
+                  .update({
               status: 'processing',
-              updated_at: new Date().toISOString()
-            })
-            .eq('task_id', taskId);
-          
+                    updated_at: new Date().toISOString()
+                  })
+                  .eq('task_id', taskId);
+                
           if (statusUpdateError) {
             logger.error(`更新任务状态为processing失败: ${statusUpdateError.message}`);
             // 继续执行，不中断流程，但记录错误
-              } else {
+                } else {
             logger.stateChange(taskId, 'pending', 'processing');
             logger.info(`已更新任务状态为processing, 任务ID: ${taskId}`);
-          }
+                }
         } catch (statusError) {
           logger.error(`更新任务状态异常: ${statusError instanceof Error ? statusError.message : String(statusError)}`);
-          // 继续执行，不中断流程
-        }
-        
+                // 继续执行，不中断流程
+              }
+              
         // 定义重试逻辑所需的变量
         const MAX_RETRY_ATTEMPTS = 1; // 最多尝试一次重试 (共2次尝试)
         let currentAttempt = 0;
@@ -947,16 +940,18 @@ export async function POST(request: NextRequest) {
               }
               
               // 设置超时处理
-              const API_TIMEOUT = parseInt(process.env.OPENAI_TIMEOUT || '60000');
+              const API_TIMEOUT = parseInt(process.env.OPENAI_TIMEOUT || '180000');
               const timeoutPromise = new Promise((_, reject) => {
-                setTimeout(() => {
+                    setTimeout(() => {
                   reject(new Error(`API请求超时，超过${API_TIMEOUT/1000}秒未响应`));
                 }, API_TIMEOUT);
               });
               
-              // 简化API调用 - 仅保留必要参数
+              logger.info(`设置API请求超时: ${API_TIMEOUT/1000}秒`);
+              
+              // 简化API调用 - 仅保留必要参数，完全按照tuzi-openai.md的示例格式
               const apiPromise = openaiClient.chat.completions.create({
-                model: process.env.OPENAI_MODEL || 'gpt-4o-all',
+                model: process.env.OPENAI_MODEL || 'gpt-4o-image-vip',
                 messages: messages,
                 stream: true
               });
@@ -967,13 +962,13 @@ export async function POST(request: NextRequest) {
                 timeoutPromise
               ]) as any;
               
-              logger.info(`请求成功完成，使用gpt-4o-all模型生成图像`);
+              logger.info(`请求成功完成，使用${process.env.OPENAI_MODEL || 'gpt-4o-image-vip'}模型处理图像，完全按照tuzi-openai.md的API格式`);
               logger.timing(apiRequestStartTime, `API请求完成`);
               
               // 收集响应内容
               let responseContent = '';
-              let imageUrl = null;
-              
+                  let imageUrl = null;
+                  
               // 处理流式响应 - 简化版
               for await (const chunk of stream) {
                 const content = chunk.choices[0]?.delta?.content || '';
@@ -1002,57 +997,57 @@ export async function POST(request: NextRequest) {
               }
               
               // 如果找到有效的图像URL，更新任务状态并返回
-              if (imageUrl && isValidImageUrl(imageUrl)) {
-                logger.info(`成功提取有效的图片URL: ${imageUrl}`);
-                
-                // 更新任务状态为成功
-                try {
-                  const { error: updateError } = await supabaseAdmin
-                    .from('image_tasks')
-                    .update({
-                      status: 'completed',
-                      provider: 'tuzi',
-                      image_url: imageUrl,
-                      updated_at: new Date().toISOString()
-                    })
-                    .eq('task_id', taskId);
-                  
-                  if (updateError) {
-                    logger.error(`更新任务状态失败: ${updateError.message}`);
-                  } else {
-                    logger.stateChange(taskId, 'processing', 'completed');
-                    logger.info(`成功更新任务状态为completed, 任务ID: ${taskId}`);
-                  }
-                } catch (updateError: unknown) {
-                  logger.error(`更新任务状态异常: ${updateError instanceof Error ? updateError.message : String(updateError)}`);
-                }
-                
+                  if (imageUrl && isValidImageUrl(imageUrl)) {
+                    logger.info(`成功提取有效的图片URL: ${imageUrl}`);
+                    
+                    // 更新任务状态为成功
+                    try {
+                      const { error: updateError } = await supabaseAdmin
+                        .from('image_tasks')
+                        .update({
+                          status: 'completed',
+                          provider: 'tuzi',
+                          image_url: imageUrl,
+                          updated_at: new Date().toISOString()
+                        })
+                        .eq('task_id', taskId);
+                    
+                      if (updateError) {
+                        logger.error(`更新任务状态失败: ${updateError.message}`);
+                      } else {
+                        logger.stateChange(taskId, 'processing', 'completed');
+                        logger.info(`成功更新任务状态为completed, 任务ID: ${taskId}`);
+                      }
+                    } catch (updateError: unknown) {
+                      logger.error(`更新任务状态异常: ${updateError instanceof Error ? updateError.message : String(updateError)}`);
+                    }
+                    
                 // 记录生成历史
                 await saveGenerationHistory(supabaseAdmin, currentUser.id, imageUrl, finalPrompt, style, aspectRatio, standardAspectRatio)
                   .catch(historyError => 
                     logger.error(`记录生成历史失败: ${historyError instanceof Error ? historyError.message : String(historyError)}`)
                   );
-                  
-                // 发送任务完成通知
-                await notifyTaskUpdate(taskId, 'completed', imageUrl)
-                  .catch(notifyError => 
-                    logger.error(`发送任务完成通知失败: ${notifyError instanceof Error ? notifyError.message : String(notifyError)}`)
-                  );
-                  
-                // 完成整个过程，记录总耗时
-                logger.timing(startTime, `整个图像生成任务完成，任务ID: ${taskId}`);
-                
-                // 返回成功响应
-                return NextResponse.json({ 
-                  taskId, 
-                  status: 'success',
-                  imageUrl: imageUrl,
-                  prompt: finalPrompt,
-                  style: style || null,
-                  model: process.env.OPENAI_MODEL || 'gpt-4o-all',
-                  provider: 'tuzi'
-                }, { status: 200 });
-              } else {
+                    
+                    // 发送任务完成通知
+                    await notifyTaskUpdate(taskId, 'completed', imageUrl)
+                      .catch(notifyError => 
+                        logger.error(`发送任务完成通知失败: ${notifyError instanceof Error ? notifyError.message : String(notifyError)}`)
+                      );
+                    
+                    // 完成整个过程，记录总耗时
+                    logger.timing(startTime, `整个图像生成任务完成，任务ID: ${taskId}`);
+                    
+                    // 返回成功响应
+                    return NextResponse.json({ 
+                      taskId, 
+                      status: 'success',
+                      imageUrl: imageUrl,
+                      prompt: finalPrompt,
+                      style: style || null,
+                      model: process.env.OPENAI_MODEL || 'gpt-4o-image-vip',
+                      provider: 'tuzi'
+                    }, { status: 200 });
+                  } else {
                 // 如果没有找到有效URL但还有重试机会
                 if (currentAttempt < MAX_RETRY_ATTEMPTS) {
                   logger.warn(`未能提取到图片URL，将进行重试`);
@@ -1126,40 +1121,40 @@ export async function POST(request: NextRequest) {
             );
           
           throw new Error(`图像生成失败: ${errorMsg}`);
-        }
-      } catch (error) {
-        // 错误处理 - 回滚点数
-        console.error('创建任务失败，尝试回滚点数:', error);
-        
-        try {
+      }
+    } catch (error) {
+      // 错误处理 - 回滚点数
+      console.error('创建任务失败，尝试回滚点数:', error);
+      
+      try {
           // 使用类型断言处理
           const creditsObject = credits as { credits: number } | null | undefined;
           
           if (!creditsObject) {
             console.log('无法回滚用户点数：credits对象为null或undefined');
           } else if (typeof creditsObject.credits === 'number') {
-            await supabaseAdmin
-              .from('ai_images_creator_credits')
-              .update({
+        await supabaseAdmin
+          .from('ai_images_creator_credits')
+          .update({
                 credits: creditsObject.credits,
-                updated_at: new Date().toISOString()
-              })
-              .eq('user_id', currentUser.id);
-            
-            console.log('成功回滚用户点数');
+            updated_at: new Date().toISOString()
+          })
+          .eq('user_id', currentUser.id);
+          
+        console.log('成功回滚用户点数');
           } else {
             console.log('无法回滚用户点数：credits.credits不是有效的数字');
           }
-        } catch (rollbackError) {
-          console.error('回滚用户点数失败:', rollbackError);
-        }
-        
-        // 返回错误响应
-        return NextResponse.json({
-          status: 'failed',
-          error: '创建图像任务失败',
-          details: error instanceof Error ? error.message : String(error)
-        }, { status: 500 });
+      } catch (rollbackError) {
+        console.error('回滚用户点数失败:', rollbackError);
+      }
+      
+      // 返回错误响应
+      return NextResponse.json({
+        status: 'failed',
+        error: '创建图像任务失败',
+        details: error instanceof Error ? error.message : String(error)
+      }, { status: 500 });
       }
     } catch (error) {
       console.error(`处理图像生成请求失败:`, error);
@@ -1206,4 +1201,4 @@ export async function POST(request: NextRequest) {
       { status: 500 }
     );
   }
-}
+} 

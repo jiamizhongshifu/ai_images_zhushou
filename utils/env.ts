@@ -89,11 +89,10 @@ export function getApiConfig(type: 'security' | 'tuzi' | 'all' = 'security'): Se
 
   // TUZI API配置
   const tuziConfig: TuziConfig = {
-    // 优先使用TUZI专用的环境变量，如果不存在则回退到旧的OPENAI环境变量
-    apiUrl: getEnv('OPENAI_BASE_URL') || getEnv('OPENAI_BASE_URL'),
-    apiKey: getEnv('OPENAI_API_KEY') || getEnv('OPENAI_API_KEY'),
-    model: getEnv('OPENAI_MODEL') || getEnv('OPENAI_MODEL', 'gpt-4o-all'),
-    isConfigComplete: false
+    apiKey: getEnv('OPENAI_API_KEY'),
+    apiUrl: getEnv('OPENAI_BASE_URL') || 'https://api.tu-zi.com/v1/chat/completions',
+    model: getEnv('OPENAI_MODEL') || getEnv('OPENAI_MODEL', 'gpt-4o-image-vip'),
+    isConfigComplete: !!getEnv('OPENAI_API_KEY') && !!getEnv('OPENAI_BASE_URL')
   };
   
   // 检查TUZI配置完整性

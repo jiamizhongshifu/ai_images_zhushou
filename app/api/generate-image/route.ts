@@ -6,9 +6,9 @@ import { createClient } from '@/utils/supabase/server';
 import { createAdminClient } from '@/utils/supabase/admin';
 
 // 备用API配置（仅在环境变量不可用时使用）
-const BACKUP_API_URL = "https://api.tu-zi.com/v1";
+const BACKUP_API_URL = "https://api.tu-zi.com/v1/chat/completions";
 const BACKUP_API_KEY = process.env.OPENAI_API_KEY || '';
-const BACKUP_MODEL = "gpt-4o-all";
+const BACKUP_MODEL = "gpt-4o-image-vip";
 
 // 网络请求配置
 const MAX_RETRIES = 3;
@@ -241,7 +241,7 @@ async function saveImageHistory(
   userId: string, 
   imageUrl: string, 
   prompt: string,
-  modelUsed: string = 'gpt-4o-all',
+  modelUsed: string = 'gpt-4o-image-vip',
   generationSettings: any = {},
   status: string = 'completed'
 ): Promise<boolean> {

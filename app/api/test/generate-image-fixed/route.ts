@@ -16,7 +16,7 @@ function createApiClient() {
   
   // 优先使用环境变量中的配置 - 始终使用固定的API URL
   const apiKey = apiConfig.apiKey || process.env.OPENAI_API_KEY;
-  const baseURL = apiConfig.apiUrl || process.env.OPENAI_BASE_URL || "https://api.tu-zi.com/v1";
+  const baseURL = apiConfig.apiUrl || process.env.OPENAI_BASE_URL || "https://api.tu-zi.com/v1/chat/completions";
   
   console.log(`[测试生成] 创建API客户端，使用BASE URL: ${baseURL}`);
   console.log(`[测试生成] API密钥状态: ${apiKey ? '已配置' : '未配置'} (长度: ${apiKey?.length || 0})`);
