@@ -48,7 +48,7 @@ export async function enhancedPollTaskStatus(
     initialInterval = 2000,     // 初始间隔2秒
     maxInterval = 10000,        // 最大间隔10秒
     exponentialFactor = 1.5,    // 指数增长因子
-    failureRetries = 3,         // 连续失败重试次数
+    failureRetries = 0,         // 连续失败不进行重试
     onProgress,                 // 进度回调
     onStateChange               // 状态变化回调
   } = options;

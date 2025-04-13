@@ -126,7 +126,7 @@ function createTuziClient() {
   logger.debug(`API超时设置: ${apiTimeout}ms (${apiTimeout/1000}秒)`);
   
   // 设置API最大重试次数 - 默认2次
-  const maxRetries = 0; // 修改为0，表示不进行重试
+  const maxRetries = parseInt(process.env.OPENAI_MAX_RETRIES || '2');
   logger.debug(`API最大重试次数: ${maxRetries}次`);
   
   // 返回配置的客户端以及模型配置
@@ -288,9 +288,18 @@ const notifyCreditsUpdate = async (userId: string, newCredits: number) => {
     updateCredits(newCredits);
     logger.info(`已触发点数更新事件, 用户: ${userId}, 新点数: ${newCredits}`);
     
-    // 不进行重试，删除原有重试逻辑
-  } catch (error) {
-    logger.error(`触发点数更新事件失败: ${error instanceof Error ? error.message : String(error)}`);
+    // 只进行一次延迟重试，不再使用多次重试机制
+      setTimeout(() => {
+        try {
+          updateCredits(newCredits);
+        logger.info(`重试触发点数更新事件, 用户: ${userId}, 新点数: ${newCredits}`);
+        } catch (retryError) {
+        logger.error(`重试触发点数更新事件失败: ${retryError instanceof Error ? retryError.message : String(retryError)}`);
+      }
+    }, 2000); // 延迟2秒进行单次重试
+    
+  } catch (eventError) {
+    logger.error(`触发点数更新事件失败: ${eventError instanceof Error ? eventError.message : String(eventError)}`);
   }
 };
 
@@ -548,7 +557,7 @@ async function notifyTaskUpdate(taskId: string, status: string, imageUrl?: strin
     }
     
     // 执行通知请求 - 现在作为次要手段
-    const MAX_RETRIES = 1; // 修改为1，表示不进行重试，只尝试一次
+    const MAX_RETRIES = 3;
     let lastError = null;
     
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {

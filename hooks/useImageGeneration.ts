@@ -184,7 +184,7 @@ export default function useImageGeneration(
       initialInterval: 2000,    // 初始间隔2秒
       maxInterval: 10000,       // 最大间隔10秒
       exponentialFactor: 1.5,   // 指数增长因子
-      failureRetries: 3,        // 连续失败重试次数
+      failureRetries: 0,        // 连续失败不重试
       onProgress: (progress, stage) => {
         if (cancelled) return;
         updateGenerationStage(stage as GenerationStage, progress);
@@ -410,15 +410,34 @@ export default function useImageGeneration(
       // 保存任务ID
       const taskId = data.taskId;
       setCurrentTaskId(taskId);
-      console.log(`[useImageGeneration] 创建任务成功，任务ID: ${taskId}`);
-      
-      // 保存任务到本地存储
-      savePendingTask({
-        taskId,
-        params: options,
-        timestamp: Date.now(),
-        status: 'processing'
-      });
+
+      // 检查是否为重复请求
+      if (data.status === 'duplicate') {
+        console.log(`[useImageGeneration] 服务器检测到重复请求，使用已存在的任务: ${taskId}`);
+        notify("服务器检测到相同请求正在处理中，继续使用已存在任务", 'info');
+        
+        // 检查本地是否已有相同任务
+        const localTask = getPendingTask(taskId);
+        if (!localTask) {
+          // 本地没有记录，创建新的记录
+          savePendingTask({
+            taskId,
+            params: options,
+            timestamp: Date.now(), // 使用当前时间
+            status: 'processing'
+          });
+        }
+      } else {
+        console.log(`[useImageGeneration] 创建任务成功，任务ID: ${taskId}`);
+        
+        // 保存任务到本地存储
+        savePendingTask({
+          taskId,
+          params: options,
+          timestamp: Date.now(),
+          status: 'processing'
+        });
+      }
       
       // 开始轮询任务状态
       updateGenerationStage('processing', 30);
