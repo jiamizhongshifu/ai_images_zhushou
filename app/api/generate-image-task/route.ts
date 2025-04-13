@@ -96,6 +96,9 @@ const logger = {
   }
 };
 
+// 设置API超时时间 - 调整为适配Vercel Pro的超时时间
+const API_TIMEOUT = 270000; // 270秒，给Vercel平台留出30秒处理开销
+
 // 创建图资API客户端 - 按照tuzi-openai.md的方式
 function createTuziClient() {
   // 获取环境配置
@@ -117,8 +120,8 @@ function createTuziClient() {
     throw new Error('API密钥未配置');
   }
   
-  // 设置API超时时间 - 从环境变量读取，默认3分钟
-  const apiTimeout = parseInt(process.env.OPENAI_TIMEOUT || '180000');
+  // 设置API超时时间 - 使用优化后的超时设置
+  const apiTimeout = API_TIMEOUT;
   logger.debug(`API超时设置: ${apiTimeout}ms (${apiTimeout/1000}秒)`);
   
   // 设置API最大重试次数 - 默认2次
@@ -633,16 +636,32 @@ function getAspectRatioDescription(aspectRatio: string, standardAspectRatio?: st
   return description;
 }
 
+// 主API处理函数，优化为监控执行时间和支持降级策略
 export async function POST(request: NextRequest) {
+  const requestStartTime = Date.now();
+  let timeoutChecker: NodeJS.Timeout | null = null;
+  let isTimeoutWarned = false;
+  let useBackupStrategy = false;
+  
   try {
-    // 预检查请求大小
+    // 设置超时监控
+    timeoutChecker = setInterval(() => {
+      const elapsedTime = Date.now() - requestStartTime;
+      if (elapsedTime > 240000 && !isTimeoutWarned) { // 240秒(4分钟)时发出警告
+        logger.warn(`请求执行时间已达到240秒，接近Vercel限制`);
+        isTimeoutWarned = true;
+        // 此时可以考虑激活降级策略
+        useBackupStrategy = true;
+      }
+    }, 10000);
+    
+    logger.debug(`开始验证用户身份...`);
+    
+    // 检查请求大小
     const sizeCheck = await checkRequestSize(request);
     if (!sizeCheck.isValid) {
-      return NextResponse.json({ 
-        status: 'failed',
-        error: sizeCheck.error,
-        suggestion: '请使用较小的图片或降低图片质量后重试'
-      }, { status: 413 });
+      logger.warn(`请求大小检查失败: ${sizeCheck.error}`);
+      return NextResponse.json({ success: false, error: sizeCheck.error }, { status: 413 });
     }
     
     // 解析请求体
@@ -782,11 +801,11 @@ export async function POST(request: NextRequest) {
       // 直接进行图像生成 - 不等待异步过程
       try {
         // 创建OpenAI客户端
-        const { client: openaiClient, imageModel } = createTuziClient();
+        const tuziClient = createTuziClient();
         
         // 记录开始时间
         const startTime = Date.now();
-        logger.info(`开始处理图像，任务ID: ${taskId}，使用模型: ${imageModel}`);
+        logger.info(`开始处理图像，任务ID: ${taskId}，使用模型: ${tuziClient.imageModel}`);
         logger.debug(`环境变量OPENAI_IMAGE_MODEL: ${process.env.OPENAI_IMAGE_MODEL || '未设置'}`);
         logger.debug(`环境变量OPENAI_MODEL: ${process.env.OPENAI_MODEL || '未设置'}`);
         
@@ -1022,7 +1041,7 @@ export async function POST(request: NextRequest) {
               logger.info(`设置API请求超时: ${API_TIMEOUT/1000}秒`);
               
               // 简化API调用 - 完全采用py.md中的简洁模式
-              const apiPromise = openaiClient.chat.completions.create({
+              const apiPromise = tuziClient.client.chat.completions.create({
                 model: process.env.OPENAI_MODEL || 'gpt-4o-image-vip',
                 messages: [
                   // 移除系统提示，简化调用结构
@@ -1438,5 +1457,14 @@ export async function POST(request: NextRequest) {
       },
       { status: 500 }
     );
+  } finally {
+    // 清理超时检查器
+    if (timeoutChecker) {
+      clearInterval(timeoutChecker);
+    }
+    
+    // 记录总处理时间
+    const totalTime = Date.now() - requestStartTime;
+    logger.info(`API请求总处理时间: ${totalTime}ms (${totalTime/1000}秒)`);
   }
 } 

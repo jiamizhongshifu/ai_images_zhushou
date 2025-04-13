@@ -65,8 +65,8 @@ let isProcessing = false;
 // 缓存图资支持的模型列表
 let cachedTuziModels: string[] | null = null;
 
-// 网络请求配置
-const TIMEOUT = 180000; // 3分钟超时
+// 设置网络请求配置 - 调整为适配Vercel Pro的超时时间
+const API_TIMEOUT = 270000; // 270秒，给Vercel平台留出30秒处理开销
 
 // 延时函数
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -80,13 +80,14 @@ function createTuziClient() {
   const apiKey = apiConfig.apiKey || process.env.OPENAI_API_KEY;
   const baseURL = apiConfig.apiUrl || process.env.OPENAI_BASE_URL || "https://api.tu-zi.com/v1/chat/completions";
   
-  logger.info(`创建图资API客户端，使用BASE URL: ${baseURL}，模型: ${process.env.OPENAI_MODEL || 'gpt-4o-image-vip'}`);
+  logger.info(`创建图资API客户端，使用BASE URL: ${baseURL}，模型: ${process.env.OPENAI_MODEL || 'gpt-4o-image-vip'}，超时: ${API_TIMEOUT}ms`);
   
   // 返回配置的客户端 - 使用图资API
   return new OpenAI({
     apiKey: apiKey,
     baseURL: baseURL,
-    defaultQuery: { model: process.env.OPENAI_MODEL || 'gpt-4o-image-vip' }
+    defaultQuery: { model: process.env.OPENAI_MODEL || 'gpt-4o-image-vip' },
+    timeout: API_TIMEOUT
   });
 }
 
@@ -306,8 +307,22 @@ export async function POST(request: NextRequest) {
   
   isProcessing = true;
   const startTime = Date.now();
+  let timeoutChecker: NodeJS.Timeout | null = null;
+  let isTimeoutWarned = false;
+  let useBackupStrategy = false;
   
   try {
+    // 设置超时监控
+    timeoutChecker = setInterval(() => {
+      const elapsedTime = Date.now() - startTime;
+      if (elapsedTime > 240000 && !isTimeoutWarned) { // 240秒(4分钟)时发出警告
+        logger.warn(`请求执行时间已达到240秒，接近Vercel限制`);
+        isTimeoutWarned = true;
+        // 此时可以考虑激活降级策略
+        useBackupStrategy = true;
+      }
+    }, 10000);
+
     // 获取当前认证用户
     const supabase = await createClient();
     const { data: { user }, error: authError } = await supabase.auth.getUser();
@@ -553,16 +568,20 @@ export async function POST(request: NextRequest) {
       
       logger.info(`开始向图资API发送请求，最终提示词: ${finalPrompt.substring(0, 50)}...`);
       
+      logger.info(`发送API请求前，已用时间: ${(Date.now() - startTime)/1000}秒`);
+      
       // 调用图资API生成图像
       const response = await tuziClient.images.generate({
-        model: process.env.OPENAI_MODEL || 'gpt-4o-image-vip',
+        model: useBackupStrategy ? 'dall-e-3' : (process.env.OPENAI_MODEL || 'gpt-4o-image-vip'), // 如果接近超时，使用更快的模型
         prompt: finalPrompt,
         n: 1,
-        quality: "hd",
+        quality: useBackupStrategy ? "standard" : "hd", // 降级使用标准质量
         size: getImageSize(useStandardRatio || originalAspectRatio),
         response_format: "url",
         user: user.id
       });
+      
+      logger.info(`API响应接收完成，总用时: ${(Date.now() - startTime)/1000}秒`);
       
       // 处理API响应
       let imageUrl = '';
@@ -570,7 +589,7 @@ export async function POST(request: NextRequest) {
       // 从响应中提取图片URL
       if (response.data && response.data.length > 0 && response.data[0].url) {
         imageUrl = response.data[0].url;
-        logger.info(`从API响应获取到图片URL: ${imageUrl}`);
+        logger.info(`从API响应获取到图片URL: ${imageUrl}, 总用时: ${(Date.now() - startTime)/1000}秒`);
       } else {
         logger.error(`API响应中不包含有效的图片URL，响应内容: ${JSON.stringify(response).substring(0, 200)}...`);
         throw new Error('API返回的响应中不包含有效的图片URL');
@@ -582,14 +601,15 @@ export async function POST(request: NextRequest) {
       const endTime = Date.now();
       const duration = endTime - startTime;
       
-      logger.info(`图片生成请求完成，总耗时: ${duration}ms`);
+      logger.info(`图片生成请求完成，总耗时: ${duration}ms (${duration/1000}秒)`);
       
       // 返回结果
       return new Response(JSON.stringify({ 
         success: true,
         imageUrl: imageUrl,
         message: '图片生成成功',
-        duration: duration
+        duration: duration,
+        usedBackupStrategy: useBackupStrategy
       }), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
@@ -597,7 +617,55 @@ export async function POST(request: NextRequest) {
       
     } catch (generationError) {
       // 图片生成过程中出错，退还点数
-      logger.error(`图片生成过程失败: ${generationError instanceof Error ? generationError.message : String(generationError)}`);
+      logger.error(`图片生成过程失败: ${generationError instanceof Error ? generationError.message : String(generationError)}, 已用时间: ${(Date.now() - startTime)/1000}秒`);
+      
+      // 如果错误与超时有关，并且尚未尝试降级策略，尝试使用备用模型重试
+      if (!useBackupStrategy && 
+          (generationError instanceof Error) && 
+          (generationError.message.includes('timeout') || generationError.message.includes('time') || 
+          (Date.now() - startTime) > 180000)) {
+        
+        logger.warn(`检测到可能的超时问题，尝试使用备用策略重试`);
+        useBackupStrategy = true;
+        
+        // 使用提示词的简化版本
+        const shortenedPrompt = prompt ? prompt.substring(0, Math.min(prompt.length, 1000)) : "生成图像";
+        
+        // 使用较快的dall-e-3模型重试
+        const retryResponse = await tuziClient.images.generate({
+          model: 'dall-e-3', // 降级到更快的模型
+          prompt: shortenedPrompt, // 使用简化版提示词
+          n: 1,
+          quality: "standard", // 使用标准质量提高速度
+          size: "1024x1024", // 使用标准尺寸
+          response_format: "url",
+          user: `${user.id}_retry`
+        });
+        
+        logger.info(`备用策略API响应接收完成，总用时: ${(Date.now() - startTime)/1000}秒`);
+        
+        if (retryResponse.data && retryResponse.data.length > 0 && retryResponse.data[0].url) {
+          const imageUrl = retryResponse.data[0].url;
+          logger.info(`使用备用策略成功生成图片: ${imageUrl}`);
+          
+          // 保存历史记录
+          await saveGenerationHistory(user.id, prompt, imageUrl, style || null, originalAspectRatio || null, useStandardRatio || null);
+          
+          const endTime = Date.now();
+          const duration = endTime - startTime;
+          
+          return new Response(JSON.stringify({ 
+            success: true,
+            imageUrl: imageUrl,
+            message: '使用备用策略生成图片成功',
+            duration: duration,
+            usedBackupStrategy: true
+          }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+      }
       
       // 尝试退还用户点数
       try {
@@ -664,6 +732,11 @@ export async function POST(request: NextRequest) {
       headers: { 'Content-Type': 'application/json' },
     });
   } finally {
+    // 清理超时检查器
+    if (timeoutChecker) {
+      clearInterval(timeoutChecker);
+    }
+    
     // 无论成功失败，都释放锁
     isProcessing = false;
   }
