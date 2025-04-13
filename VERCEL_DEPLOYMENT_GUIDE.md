@@ -145,6 +145,18 @@ https://[your-vercel-domain]/toast-demo
    const { taskId } = await params;
    ```
 
+   **重要**: 不仅是GET方法，所有HTTP方法处理函数(POST、PUT、DELETE等)都需要进行相同的类型修改：
+   ```typescript
+   // POST、PUT、DELETE等方法同样需要更新
+   export async function POST(
+     request: NextRequest,
+     { params }: { params: Promise<{ taskId: string }> }
+   ) {
+     const { taskId } = await params;
+     // ...
+   }
+   ```
+
 2. **环境变量设置**: 确保在Vercel部署配置中添加所有必要的环境变量，或者在项目根目录创建`.env.production`文件(注意不要提交带有敏感信息的环境变量文件到代码仓库)。
 
 3. **构建缓存**: 如果修改后仍然遇到问题，请尝试在Vercel部署时禁用构建缓存，以确保所有更改都被应用。

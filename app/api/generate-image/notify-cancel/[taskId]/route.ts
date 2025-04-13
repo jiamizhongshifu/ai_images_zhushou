@@ -20,11 +20,11 @@ const cancelledTaskIds = new Set<string>();
  */
 export async function POST(
   request: NextRequest,
-  { params }: { params: { taskId: string } }
+  { params }: { params: Promise<{ taskId: string }> }
 ) {
   try {
     // 获取任务ID
-    const { taskId } = params;
+    const { taskId } = await params;
     
     if (!taskId) {
       return NextResponse.json({ 
