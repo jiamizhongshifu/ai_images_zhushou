@@ -22,6 +22,8 @@ import useImageGeneration from "@/hooks/useImageGeneration";
 import useImageHandling from "@/hooks/useImageHandling";
 import useNotification from "@/hooks/useNotification";
 import TaskStatusListener from "@/app/components/TaskStatusListener";
+import TaskRecoveryDialog from "@/app/components/TaskRecoveryDialog";
+import { PendingTask } from "@/utils/taskRecovery";
 
 // 动态导入CreditRechargeDialog组件
 const CreditRechargeDialog = dynamic(
@@ -46,10 +48,12 @@ export default function ProtectedPage() {
   // 添加当前任务ID状态
   const [currentTaskId, setCurrentTaskId] = useState<string | null>(null);
   
-  // 使用自定义hooks
+  // 积分状态
   const { credits, isLoading: isLoadingCredits, refetch: refreshCredits } = useUserCredits();
-  const { images, refetch: refreshHistory, deleteImage } = useImageHistory();
   const { showNotification } = useNotification();
+  
+  // 使用自定义hooks
+  const { images, refetch: refreshHistory, deleteImage } = useImageHistory();
   const { 
     handleImageLoad, 
     handleImageError, 
@@ -57,16 +61,27 @@ export default function ProtectedPage() {
     imageLoadRetries
   } = useImageHandling();
   
+  // 刷新图片列表函数
+  const refreshImages = async () => {
+    await refreshHistory();
+  };
+  
+  // 使用图像生成钩子
   const {
     generatedImages,
+    setGeneratedImages,
     isGenerating,
     error: generationError,
     generateImage,
-    setGeneratedImages,
     generationStage,
-    generationPercentage
+    generationPercentage,
+    recoverTask,
+    discardTask,
+    checkPendingTask
   } = useImageGeneration(
-    showNotification
+    showNotification,
+    undefined,
+    refreshImages
   );
   
   // 监听生成完成状态
@@ -217,6 +232,23 @@ export default function ProtectedPage() {
            (hasUploadedImage && !needsPrompt && !isGenerating);
   };
 
+  // 处理任务恢复
+  const handleTaskRecover = async (task: PendingTask) => {
+    try {
+      // 设置当前任务ID，以便TaskStatusListener可以处理
+      setCurrentTaskId(task.taskId);
+      await recoverTask(task.taskId);
+    } catch (error) {
+      console.error("恢复任务失败:", error);
+      showNotification("恢复任务失败", "error");
+    }
+  };
+
+  // 处理任务放弃
+  const handleTaskDiscard = (taskId: string) => {
+    discardTask(taskId);
+  };
+
   // 结合错误信息
   const displayError = error || generationError;
   const isInitializing = isLoadingCredits && generatedImages.length === 0;
@@ -231,6 +263,12 @@ export default function ProtectedPage() {
           onError={handleTaskError}
         />
       )}
+      
+      {/* 添加任务恢复对话框 */}
+      <TaskRecoveryDialog
+        onRecover={handleTaskRecover}
+        onDiscard={handleTaskDiscard}
+      />
       
       <div className="max-w-7xl w-full px-4 py-8">
         {/* 页面标题 */}

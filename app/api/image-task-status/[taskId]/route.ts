@@ -1,111 +1,243 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/utils/supabase/server';
 
+// 日志工具函数
+const logger = {
+  error: (message: string) => {
+    console.error(`[TaskStatus API] ${message}`);
+  },
+  warn: (message: string) => {
+    console.warn(`[TaskStatus API] ${message}`);
+  },
+  info: (message: string) => {
+    console.log(`[TaskStatus API] ${message}`);
+  },
+  debug: (message: string) => {
+    console.log(`[TaskStatus API] ${message}`);
+  }
+};
+
+/**
+ * 任务状态查询API端点
+ * 主要用于前端轮询任务状态
+ */
 export async function GET(
   request: NextRequest,
   context: { params: Promise<{ taskId: string }> }
 ) {
   try {
+    // 生成请求ID，用于跟踪日志
+    const requestId = Math.random().toString(36).substring(2, 10);
+    
     // 获取任务ID - 注意Next.js 15需要await params
     const params = await context.params;
     const { taskId } = params;
     
-    console.log(`[TaskStatus API] 获取任务状态: ${taskId}`);
+    logger.info(`[${requestId}] 获取任务状态: ${taskId}`);
     
     if (!taskId) {
-      console.log('[TaskStatus API] 缺少任务ID');
+      logger.warn(`[${requestId}] 缺少任务ID`);
       return NextResponse.json(
-        { error: '缺少任务ID' },
+        { error: '缺少任务ID', code: 'missing_task_id' },
         { status: 400 }
       );
     }
     
-    // 获取用户信息
+    // 检查是否是内部调用（后台服务）
+    const isInternalCall = request.headers.get('authorization') === `Bearer ${process.env.TASK_PROCESS_SECRET_KEY}`;
+    
+    // 获取用户信息（如果不是内部调用）
     const supabase = await createClient();
-    const { data: { user }, error: authError } = await supabase.auth.getUser();
     
-    if (!user) {
-      console.log('[TaskStatus API] 用户未认证');
-      return NextResponse.json(
-        { error: '未授权访问' },
-        { status: 401 }
-      );
-    }
-    
-    console.log(`[TaskStatus API] 用户已认证: ${user.id}, 查询任务: ${taskId}`);
-    
-    // 查询任务状态
-    const { data, error } = await supabase
-      .from('image_tasks')
-      .select('*')
-      .eq('task_id', taskId)
-      .eq('user_id', user.id)
-      .single();
-    
-    if (error) {
-      // 如果任务不存在，也视为"已取消"
-      if (error.code === 'PGRST116') {
-        console.log(`[TaskStatus API] 任务不存在: ${taskId}`);
+    if (!isInternalCall) {
+      const { data: { user }, error: authError } = await supabase.auth.getUser();
+      
+      if (!user) {
+        logger.warn(`[${requestId}] 用户未认证`);
         return NextResponse.json(
-          { error: '任务不存在或无权访问' },
+          { error: '未授权访问', code: 'unauthorized' },
+          { status: 401 }
+        );
+      }
+      
+      logger.info(`[${requestId}] 用户已认证: ${user.id}, 查询任务: ${taskId}`);
+      
+      // 查询任务状态 - 只能查询自己的任务
+      const { data, error } = await supabase
+        .from('image_tasks')
+        .select('*')
+        .eq('task_id', taskId)
+        .eq('user_id', user.id)
+        .single();
+      
+      if (error) {
+        // 如果任务不存在，也视为"已取消"
+        if (error.code === 'PGRST116') {
+          logger.warn(`[${requestId}] 任务不存在: ${taskId}`);
+          return NextResponse.json(
+            { error: '任务不存在或无权访问', code: 'task_not_found' },
+            { status: 404 }
+          );
+        }
+        
+        logger.error(`[${requestId}] 查询任务状态失败: ${error.message}`);
+        return NextResponse.json(
+          { error: '查询任务状态失败', details: error.message, code: 'query_error' },
+          { status: 500 }
+        );
+      }
+      
+      if (!data) {
+        logger.warn(`[${requestId}] 任务不存在或无权访问: ${taskId}`);
+        return NextResponse.json(
+          { error: '任务不存在或无权访问', code: 'task_not_found' },
           { status: 404 }
         );
       }
       
-      console.error(`[TaskStatus API] 查询任务状态失败: ${error.message}`);
-      return NextResponse.json(
-        { error: '查询任务状态失败', details: error.message },
-        { status: 500 }
-      );
-    }
-    
-    if (!data) {
-      console.log(`[TaskStatus API] 任务不存在或无权访问: ${taskId}`);
-      return NextResponse.json(
-        { error: '任务不存在或无权访问' },
-        { status: 404 }
-      );
-    }
-    
-    // 构建响应数据，确保包含必要的字段，并处理可能不存在的字段
-    const responseData = {
-      taskId: data.task_id,
-      status: data.status || 'pending',
-      imageUrl: data.image_url || null,
-      error_message: data.error_message || null,
-      created_at: data.created_at || new Date().toISOString(),
-      updated_at: data.updated_at || new Date().toISOString(),
-      completed_at: data.completed_at || null,
-      prompt: data.prompt || '',
-      style: data.style || null
-    };
-    
-    // 根据任务状态返回不同的响应
-    switch (data.status) {
-      case 'completed':
-        console.log(`[TaskStatus API] 任务已完成: ${taskId}`);
-        return NextResponse.json(responseData);
-        
-      case 'failed':
-        console.log(`[TaskStatus API] 任务失败: ${taskId}, 错误: ${data.error_message}`);
-        return NextResponse.json(responseData);
-        
-      case 'pending':
-      case 'processing':
-      default:
-        const waitTime = Math.floor((Date.now() - new Date(data.created_at).getTime()) / 1000);
-        console.log(`[TaskStatus API] 任务处理中: ${taskId}, 状态: ${data.status}, 等待时间: ${waitTime}秒`);
-        return NextResponse.json({
-          ...responseData,
-          waitTime: waitTime
-        });
+      // 构建响应数据，确保包含必要的字段，并处理可能不存在的字段
+      const responseData = {
+        taskId: data.task_id,
+        status: data.status || 'pending',
+        imageUrl: data.image_url || null,
+        error: data.error_message || null,
+        created_at: data.created_at || new Date().toISOString(),
+        updated_at: data.updated_at || new Date().toISOString(),
+        completed_at: data.completed_at || null,
+        prompt: data.prompt || '',
+        style: data.style || null
+      };
+      
+      // 计算额外信息
+      const createdTime = new Date(data.created_at).getTime();
+      const now = Date.now();
+      const waitTime = Math.floor((now - createdTime) / 1000);
+      
+      logger.debug(`[${requestId}] 任务 ${taskId} 等待时间: ${waitTime}秒`);
+      
+      // 根据任务状态返回不同的响应
+      switch (data.status) {
+        case 'completed':
+          logger.info(`[${requestId}] 任务已完成: ${taskId}`);
+          return NextResponse.json({
+            ...responseData,
+            waitTime: 0,
+            isSuccess: true
+          });
+          
+        case 'failed':
+          logger.info(`[${requestId}] 任务失败: ${taskId}, 错误: ${data.error_message}`);
+          return NextResponse.json({
+            ...responseData,
+            waitTime: waitTime,
+            isSuccess: false
+          });
+          
+        case 'cancelled':
+          logger.info(`[${requestId}] 任务已取消: ${taskId}`);
+          return NextResponse.json({
+            ...responseData,
+            waitTime: 0,
+            isSuccess: false,
+            code: 'task_cancelled'
+          });
+          
+        case 'pending':
+        case 'processing':
+        default:
+          logger.info(`[${requestId}] 任务处理中: ${taskId}, 状态: ${data.status}, 等待时间: ${waitTime}秒`);
+          
+          // 对于长时间运行的任务，更新估计进度
+          const estimatedProgress = calculateProgress(waitTime);
+          const processingStage = determineProcessingStage(waitTime);
+          
+          return NextResponse.json({
+            ...responseData,
+            waitTime: waitTime,
+            estimatedProgress: estimatedProgress,
+            processingStage: processingStage
+          });
+      }
+    } else {
+      // 内部调用，可以查询任何任务
+      logger.info(`[${requestId}] 内部调用，查询任务: ${taskId}`);
+      
+      const { data, error } = await supabase
+        .from('image_tasks')
+        .select('*')
+        .eq('task_id', taskId)
+        .single();
+      
+      if (error) {
+        logger.error(`[${requestId}] 内部调用查询任务失败: ${error.message}`);
+        return NextResponse.json(
+          { error: '查询任务失败', details: error.message, code: 'query_error' },
+          { status: 500 }
+        );
+      }
+      
+      if (!data) {
+        logger.warn(`[${requestId}] 内部调用任务不存在: ${taskId}`);
+        return NextResponse.json(
+          { error: '任务不存在', code: 'task_not_found' },
+          { status: 404 }
+        );
+      }
+      
+      const waitTime = Math.floor((Date.now() - new Date(data.created_at).getTime()) / 1000);
+      
+      return NextResponse.json({
+        taskId: data.task_id,
+        userId: data.user_id,
+        status: data.status,
+        imageUrl: data.image_url,
+        error: data.error_message,
+        created_at: data.created_at,
+        updated_at: data.updated_at,
+        completed_at: data.completed_at,
+        waitTime: waitTime,
+        attempt_count: data.attempt_count || 0,
+        model: data.model || 'unknown'
+      });
     }
     
   } catch (error) {
-    console.error(`[TaskStatus API] 处理任务状态查询失败: ${error instanceof Error ? error.message : String(error)}`);
+    logger.error(`处理任务状态查询失败: ${error instanceof Error ? error.message : String(error)}`);
     return NextResponse.json(
-      { error: '查询任务状态失败', details: error instanceof Error ? error.message : String(error) },
+      { error: '查询任务状态失败', details: error instanceof Error ? error.message : String(error), code: 'server_error' },
       { status: 500 }
     );
   }
+}
+
+/**
+ * 根据等待时间计算估计进度
+ * @param waitTime 等待时间（秒）
+ * @returns 估计进度（0-100）
+ */
+function calculateProgress(waitTime: number): number {
+  if (waitTime < 5) return 5;
+  if (waitTime < 10) return 10;
+  if (waitTime < 20) return 20;
+  if (waitTime < 30) return 30;
+  if (waitTime < 60) return 30 + Math.min(30, waitTime / 2);
+  if (waitTime < 120) return Math.min(80, 60 + waitTime / 6);
+  
+  // 超过120秒后进度缓慢增加
+  return Math.min(95, 80 + (waitTime - 120) / 12);
+}
+
+/**
+ * 根据等待时间确定处理阶段
+ * @param waitTime 等待时间（秒）
+ * @returns 处理阶段描述
+ */
+function determineProcessingStage(waitTime: number): string {
+  if (waitTime < 5) return 'preparing';
+  if (waitTime < 10) return 'configuring';
+  if (waitTime < 15) return 'sending_request';
+  if (waitTime < 60) return 'processing';
+  if (waitTime < 120) return 'processing';
+  if (waitTime < 150) return 'extracting_image';
+  return 'finalizing';
 } 

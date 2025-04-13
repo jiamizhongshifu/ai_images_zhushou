@@ -483,53 +483,133 @@ function logEnhancedError(context: string, error: any, taskId?: string) {
 // 添加任务通知函数
 async function notifyTaskUpdate(taskId: string, status: string, imageUrl?: string, error?: string) {
   try {
-    // 获取API密钥
-    const apiKey = process.env.INTERNAL_API_KEY || 'development-key';
+    // 记录开始时间
+    const startTime = Date.now();
+    logger.info(`开始通知任务${taskId}状态更新为${status}`);
     
-    // 尝试调用内部API触发通知
-    const notifyResponse = await fetch(`${process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000'}/api/notify-task-update`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': apiKey
-      },
-      body: JSON.stringify({
-        taskId,
-        status,
-        imageUrl,
-        error,
-        timestamp: new Date().toISOString()
-      })
-    });
+    // 获取环境变量
+    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000';
+    const secretKey = process.env.TASK_PROCESS_SECRET_KEY;
     
-    if (notifyResponse.ok) {
-      logger.info(`已成功触发任务${taskId}的${status}通知`);
+    // 构建请求URL
+    const notifyUrl = `${siteUrl}/api/task-notification`;
+    
+    // 准备请求数据
+    const notifyData = {
+      taskId,
+      status,
+      imageUrl,
+      error,
+      source: 'generate-image-task'
+    };
+    
+    // 设置请求头
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${secretKey}`
+    };
+    
+    // 执行请求
+    const MAX_RETRIES = 3;
+    let lastError = null;
+    
+    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+      try {
+        // 如果不是首次尝试，添加延迟
+        if (attempt > 0) {
+          await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
+          logger.info(`尝试第${attempt + 1}次通知任务${taskId}状态更新`);
+        }
+        
+        // 发送通知请求
+        const response = await fetch(notifyUrl, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(notifyData),
+          // 设置超时
+          signal: AbortSignal.timeout 
+            ? AbortSignal.timeout(10000) 
+            : new AbortController().signal
+        });
+        
+        // 检查响应
+        if (!response.ok) {
+          throw new Error(`通知请求失败: ${response.status} ${response.statusText}`);
+        }
+        
+        const result = await response.json();
+        
+        // 通知成功
+        logger.info(`任务${taskId}状态通知成功，耗时: ${Date.now() - startTime}ms`);
+        return true;
+      } catch (error) {
+        // 记录错误
+        lastError = error;
+        logger.warn(`通知任务${taskId}状态失败(尝试${attempt + 1}/${MAX_RETRIES}): ${error instanceof Error ? error.message : String(error)}`);
+        
+        // 最后一次尝试失败
+        if (attempt === MAX_RETRIES - 1) {
+          logger.error(`无法通知任务${taskId}状态更新，已达到最大重试次数`);
+        }
+      }
+    }
+    
+    // 所有尝试都失败，使用备用方法
+    // 尝试直接更新数据库
+    try {
+      logger.warn(`使用备用方法更新任务${taskId}状态`);
+      
+      const supabaseAdmin = await createAdminClient();
+      
+      // 根据状态更新数据库
+      if (status === 'completed' && imageUrl) {
+        await supabaseAdmin
+          .from('image_tasks')
+          .update({
+            status: 'completed',
+            image_url: imageUrl,
+            completed_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          })
+          .eq('task_id', taskId);
+          
+        logger.info(`使用备用方法更新任务${taskId}状态为completed成功`);
+      } else if (status === 'failed') {
+        await supabaseAdmin
+          .from('image_tasks')
+          .update({
+            status: 'failed',
+            error_message: error || '未知错误',
+            updated_at: new Date().toISOString()
+          })
+          .eq('task_id', taskId);
+          
+        logger.info(`使用备用方法更新任务${taskId}状态为failed成功`);
+      } else {
+        await supabaseAdmin
+          .from('image_tasks')
+          .update({
+            status: status,
+            updated_at: new Date().toISOString()
+          })
+          .eq('task_id', taskId);
+          
+        logger.info(`使用备用方法更新任务${taskId}状态为${status}成功`);
+      }
+      
       return true;
-    } else {
-      const errorText = await notifyResponse.text();
-      logger.error(`触发任务通知失败: ${errorText}`);
-      return false;
+    } catch (backupError) {
+      logger.error(`使用备用方法更新任务${taskId}状态失败: ${backupError instanceof Error ? backupError.message : String(backupError)}`);
+      
+      // 两种方法都失败
+      if (lastError) {
+        throw lastError;
+      }
+      throw backupError;
     }
   } catch (error) {
-    logger.error(`发送任务通知异常: ${error instanceof Error ? error.message : String(error)}`);
-    // 尝试备用通知方法 - 直接插入数据库记录
-    try {
-      const supabaseAdmin = await createAdminClient();
-      await supabaseAdmin
-        .from('task_status_updates')
-        .insert({
-          task_id: taskId,
-          status: status,
-          image_url: imageUrl || null,
-          error_message: error || null,
-          created_at: new Date().toISOString()
-        });
-      logger.info(`使用备用方法记录任务${taskId}的${status}通知`);
-      return true;
-    } catch (dbError) {
-      logger.error(`备用通知方法也失败: ${dbError instanceof Error ? dbError.message : String(dbError)}`);
-      return false;
-    }
+    logEnhancedError('通知任务状态更新失败', error, taskId);
+    return false;
   }
 }
 
