@@ -24,15 +24,16 @@ const logger = {
 // 定义HTTP GET请求处理函数
 export async function GET(
   request: NextRequest,
-  context: { params: { taskId: string } }
+  { params }: { params: Promise<{ taskId: string }> }
 ) {
+  const resolvedParams = await params;
   const requestId = crypto.randomUUID().substring(0, 8);
   const startTime = Date.now();
-  logger.info(`[${requestId}] 开始执行任务终止检查: ${context.params.taskId}`);
+  logger.info(`[${requestId}] 开始执行任务终止检查: ${resolvedParams.taskId}`);
 
   try {
     // 验证任务ID参数是否存在
-    const taskId = context.params.taskId;
+    const taskId = resolvedParams.taskId;
     if (!taskId) {
       logger.error(`[${requestId}] 缺少任务ID参数`);
       return NextResponse.json(
@@ -240,15 +241,16 @@ export async function GET(
 // 定义HTTP POST请求处理函数，用于主动取消任务
 export async function POST(
   request: NextRequest,
-  context: { params: { taskId: string } }
+  { params }: { params: Promise<{ taskId: string }> }
 ) {
+  const resolvedParams = await params;
   const requestId = crypto.randomUUID().substring(0, 8);
   const startTime = Date.now();
-  logger.info(`[${requestId}] 开始执行任务取消操作: ${context.params.taskId}`);
+  logger.info(`[${requestId}] 开始执行任务取消操作: ${resolvedParams.taskId}`);
 
   try {
     // 验证任务ID参数是否存在
-    const taskId = context.params.taskId;
+    const taskId = resolvedParams.taskId;
     if (!taskId) {
       logger.error(`[${requestId}] 缺少任务ID参数`);
       return NextResponse.json(
