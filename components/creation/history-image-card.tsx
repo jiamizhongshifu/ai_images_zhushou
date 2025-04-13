@@ -45,7 +45,7 @@ export default function HistoryImageCard({
   const [loadFailed, setLoadFailed] = useState(false);
   
   // 格式化日期
-  const formatDate = (dateString: string): string => {
+  const formatDate = (dateString: string | undefined): string => {
     if (!dateString) return "未知时间";
     try {
       const date = new Date(dateString);
