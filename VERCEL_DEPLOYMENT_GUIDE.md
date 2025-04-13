@@ -119,3 +119,32 @@ https://[your-vercel-domain]/toast-demo
 7. 确保`pnpm-lock.yaml`文件与`package.json`保持同步，避免"frozen-lockfile"错误 
 8. 查看props传递是否完整，特别是组件接口中定义为必需的属性
 9. 在使用泛型类型或联合类型时，通过类型断言（`as Type`）明确指定具体类型
+
+## Next.js 15版本部署问题解决
+
+如果在使用Next.js 15.x版本部署到Vercel时遇到类型错误，尤其是与动态路由(如`[taskId]`)相关的错误，请注意以下事项：
+
+1. **动态路由参数类型更新**: 在Next.js 15中，动态路由处理函数的参数类型发生了变化。需要将：
+   ```typescript
+   export async function GET(
+     request: NextRequest,
+     { params }: { params: { taskId: string } }
+   )
+   ```
+   
+   更新为：
+   ```typescript
+   export async function GET(
+     request: NextRequest,
+     { params }: { params: Promise<{ taskId: string }> }
+   )
+   ```
+   
+   并在函数内使用`await params`获取参数值：
+   ```typescript
+   const { taskId } = await params;
+   ```
+
+2. **环境变量设置**: 确保在Vercel部署配置中添加所有必要的环境变量，或者在项目根目录创建`.env.production`文件(注意不要提交带有敏感信息的环境变量文件到代码仓库)。
+
+3. **构建缓存**: 如果修改后仍然遇到问题，请尝试在Vercel部署时禁用构建缓存，以确保所有更改都被应用。

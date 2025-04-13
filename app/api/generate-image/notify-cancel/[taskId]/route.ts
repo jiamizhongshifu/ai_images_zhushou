@@ -146,10 +146,10 @@ export async function POST(
  */
 export async function GET(
   request: NextRequest,
-  { params }: { params: { taskId: string } }
+  { params }: { params: Promise<{ taskId: string }> }
 ) {
   try {
-    const { taskId } = params;
+    const { taskId } = await params;
     
     if (!taskId) {
       return NextResponse.json({ 
