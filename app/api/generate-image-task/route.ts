@@ -835,17 +835,13 @@ export async function POST(request: NextRequest) {
         
         // 构建优化后的提示词 - 减少冗余，更加简洁明了
         if (image) {
-          // 构建针对图片转换的标准化提示词
+          // 构建针对图片转换的标准化提示词，自然表达比例需求
           const styleText = style ? `使用${style}风格` : "";
-          const aspectText = aspectRatio ? `，图片比例与参考图片保持一致` : "";
+          const aspectText = aspectRatio ? `，保持${aspectRatio}比例` : "";
+          const sizeHint = size.includes("1792x1024") ? "横向图片" : (size.includes("1024x1792") ? "竖向图片" : "正方形图片");
           
-          finalPrompt = `[必须保持图片比例=${aspectRatio}，输出尺寸=${size}] ${promptText}，${styleText}${aspectText}。
-请严格保持原图中的所有关键内容和元素：
-1. 保留所有人物、表情、姿势和位置
-2. 保留场景布局、背景环境和主要物体
-3. 保留原始构图、视角和透视关系
-4. 保留画面中的关键动作和互动
-仅转换视觉风格，不要改变任何内容或主题。严格遵守图片比例=${aspectRatio}，这是最高优先级。`;
+          // 更自然地表达比例需求，不使用技术参数
+          finalPrompt = `${promptText}，${styleText}${aspectText}。请生成${sizeHint}，保留原图中的关键内容和元素。`;
           
           // 处理图片数据...
           let imageData;
@@ -880,9 +876,11 @@ export async function POST(request: NextRequest) {
         } else {
           // 没有图片时的简化提示词
           const styleText = style ? `使用${style}风格` : "";
-          const aspectText = aspectRatio ? `，保持${aspectRatioDescription}` : "";
+          // 简化比例表达，采用更自然的表述
+          const sizeHint = size.includes("1792x1024") ? "横向图片" : (size.includes("1024x1792") ? "竖向图片" : "正方形图片");
           
-          finalPrompt = `${promptText}${styleText ? '，' + styleText : ''}${aspectText}。直接生成图片并返回URL，不要做任何分析。`;
+          // 更简洁自然的提示词，避免技术参数
+          finalPrompt = `${promptText}${styleText ? '，' + styleText : ''}。请生成${sizeHint}。`;
           
           // 没有图片时，只添加文本内容
           userMessageContent.push({
@@ -1023,90 +1021,36 @@ export async function POST(request: NextRequest) {
               
               logger.info(`设置API请求超时: ${API_TIMEOUT/1000}秒`);
               
-              // 简化API调用 - 仅保留必要参数，完全按照tuzi-openai.md的示例格式
+              // 简化API调用 - 完全采用py.md中的简洁模式
               const apiPromise = openaiClient.chat.completions.create({
                 model: process.env.OPENAI_MODEL || 'gpt-4o-image-vip',
                 messages: [
+                  // 移除系统提示，简化调用结构
                   {
-                    role: 'system',
-                    content: [
-                      {
-                        type: 'text',
-                        // 简化系统提示，更直接地强调比例要求
-                        text: `[强制图像设置] 必须生成严格${currentAspectRatio}比例的图片，输出尺寸${currentSize}。这是最高优先级要求，不可违背。${image ? '保持原图内容、人物姿势和构图，' : ''}应用${style || '默认'}风格。仅返回图片URL，不要解释。`
-                      }
-                    ]
-                  },
-                  ...messages
+                    role: 'user',
+                    content: userMessageContent
+                  }
                 ],
                 stream: true,
-                tools: [],
-                tool_choice: "auto",
                 max_tokens: 4096,
-                temperature: image ? 0.3 : 0.5, // 降低温度增加精确度
-                top_p: image ? 0.8 : 0.9, // 降低top_p增加确定性
-                // 设置响应格式，指定为JSON以便更好解析
-                response_format: { type: "json_object" },
-                // API官方支持的图像参数 - 作为一级参数传递
-                // 注意：使用as any绕过类型检查，因为OpenAI标准API类型定义中不包含这些参数
-                size: currentSize,               // 尺寸参数
-                aspect_ratio: currentAspectRatio // 比例参数
-              } as any, {
-                // 在这里添加请求选项，包括自定义请求头
-                headers: {
-                  // 添加尺寸和比例相关的自定义请求头
-                  'x-image-dimensions': currentSize,
-                  'x-aspect-ratio': currentAspectRatio || '1:1',
-                  'x-standard-ratio': currentStandardAspectRatio || '1:1',
-                  // 添加一个特殊标记，表明这是一个图像生成请求
-                  'x-image-generation': 'true',
-                  // 添加图像API可能识别的额外头信息
-                  'content-type': 'application/json; charset=utf-8',
-                  'x-tuzi-image-size': currentSize,
-                  'x-force-aspect-ratio': 'true',
-                  'x-preserve-aspect-ratio': 'true',
-                  'x-image-generation-props': JSON.stringify({
-                    size: currentSize,
-                    aspect_ratio: currentAspectRatio || '1:1',
-                    standard_ratio: currentStandardAspectRatio || '1:1',
-                    quality: "hd"
-                  })
-                }
-              } as any); // 使用as any暂时绕过类型检查
+                temperature: image ? 0.3 : 0.5,
+                top_p: image ? 0.8 : 0.9,
+                response_format: { type: "json_object" }
+                // 移除所有一级参数和自定义头部信息
+              });
               
-              // 通过请求头方式传递图片尺寸和比例信息
-              // 注意：标准OpenAI API不直接支持尺寸参数，但tuzi可能有特殊处理方式
-              try {
-                // 设置请求头属性
-                if (openaiClient.baseURL && openaiClient.baseURL.includes('tu-zi.com')) {
-                  // 记录自定义请求头信息
-                  logger.info(`已通过请求选项设置自定义请求头，指定图片尺寸: ${currentSize}和比例: ${currentAspectRatio}`);
-                  // 记录一级参数传递
-                  logger.info(`已通过API一级参数直接传递尺寸和比例: size=${currentSize}, aspect_ratio=${currentAspectRatio}`);
-                }
-              } catch (headerError) {
-                logger.warn(`记录自定义请求头信息失败: ${headerError instanceof Error ? headerError.message : String(headerError)}`);
-              }
+              // 记录使用更简化的API调用方式
+              logger.info(`使用简化的API调用方式，遵循官方文档推荐结构`);
               
               // 增强API参数日志记录
               logger.info(`详细API调用参数：
 - 模型: ${process.env.OPENAI_MODEL || 'gpt-4o-image-vip'}
-- 比例: ${currentAspectRatio || '未指定'} (${currentStandardAspectRatio || '未标准化'})
-- 输出尺寸: ${currentSize}
-- 参数传递方式: API一级参数 + 强制性系统提示 + 自定义头部信息
-- temperature: ${image ? 0.3 : 0.5}, top_p: ${image ? 0.8 : 0.9}
-- 包含图片: ${image ? '是' : '否'}
-- 附加工具设置: tools=[], tool_choice="auto"
-- 最大token数: 4096
+- 仅包含用户消息，无系统提示
+- 提示词中自然表达比例需求
+- 图片上传: ${image ? '是' : '否'}
 - 响应格式: JSON
-- 一级参数: size=${currentSize}, aspect_ratio=${currentAspectRatio}
               `);
               
-              // 系统提示词长度检查
-              const systemPromptText = `[强制图像设置] 必须生成严格${currentAspectRatio}比例的图片，输出尺寸${currentSize}。这是最高优先级要求，不可违背。${image ? '保持原图内容、人物姿势和构图，' : ''}应用${style || '默认'}风格。仅返回图片URL，不要解释。`;
-              logger.info(`简化后的系统提示词: "${systemPromptText}"`);
-              logger.info(`系统提示词长度: ${systemPromptText.length}字符`);
-                  
               // 竞争：API调用 vs 超时
               const stream = await Promise.race([
                 apiPromise,
