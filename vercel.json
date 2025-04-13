@@ -5,23 +5,23 @@
   "functions": {
     "app/api/generate-image-direct/route.ts": {
       "memory": 1024,
-      "maxDuration": 60
+      "maxDuration": 300
     },
     "app/api/generate-image/route.ts": {
       "memory": 1024,
-      "maxDuration": 60
+      "maxDuration": 300
     },
     "app/api/generate-image-task/route.ts": {
       "memory": 1024,
-      "maxDuration": 60
+      "maxDuration": 300
     },
     "app/api/generate-image/process/route.ts": {
       "memory": 1024,
-      "maxDuration": 60
+      "maxDuration": 300
     },
     "app/api/generate-image/create/route.ts": {
       "memory": 1024,
-      "maxDuration": 60
+      "maxDuration": 300
     }
   },
   "crons": [
