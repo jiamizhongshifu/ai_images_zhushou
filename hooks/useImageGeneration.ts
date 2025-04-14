@@ -26,7 +26,6 @@ import { authService } from '@/utils/auth-service';
 import logger from '@/utils/logger';
 import { useSession } from 'next-auth/react';
 import { v4 as uuidv4 } from 'uuid';
-import { trackEvent } from '@/utils/tracking';
 import { showNotification } from '@/utils/notification';
 
 // 图片大小限制配置
