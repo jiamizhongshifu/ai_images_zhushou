@@ -470,6 +470,23 @@ export default function useImageGeneration(
     
     console.log('[useImageGeneration] 开始生成图片流程');
     
+    // 尝试清除可能存在的登出标记
+    try {
+      if (typeof localStorage !== 'undefined') {
+        localStorage.removeItem('force_logged_out');
+        localStorage.removeItem('logged_out');
+      }
+      if (typeof sessionStorage !== 'undefined') {
+        sessionStorage.removeItem('isLoggedOut');
+      }
+      if (typeof document !== 'undefined') {
+        document.cookie = 'force_logged_out=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
+        document.cookie = 'logged_out=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
+      }
+    } catch (e) {
+      console.warn('[useImageGeneration] 清除登出标记失败:', e);
+    }
+    
     // 检查用户是否已验证 - 使用authService直接验证
     const authState = authService.getAuthState();
     if (!authState?.isAuthenticated) {
