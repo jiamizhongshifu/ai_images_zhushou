@@ -48,6 +48,7 @@ export interface GenerationOptions {
   style?: string;
   aspectRatio?: string | null;
   standardAspectRatio?: string | null;
+  forced?: boolean;  // 添加强制生成选项，即使有重复任务也继续生成
 }
 
 export interface UseImageGenerationResult {
@@ -479,7 +480,7 @@ export default function useImageGeneration(
     if (TaskSyncManager.hasSubmissionLock()) {
       logger.warn(`[任务重复] 全局提交锁已激活，无法提交新任务`);
       console.log(`[任务重复] 全局提交锁已激活，无法提交新任务`);
-      toast.warning("请等待当前任务完成");
+      toast("请等待当前任务完成", { icon: '⚠️' });
       return null;
     }
 
@@ -493,7 +494,7 @@ export default function useImageGeneration(
       if (duplicateTask) {
         logger.warn(`[任务重复] 发现重复任务，当前已有${tasks.length}个活跃任务`);
         console.log(`[任务重复] 检测到重复参数：${JSON.stringify(options)}, 当前已有${tasks.length}个任务`);
-        toast.warning("相似任务正在处理中");
+        toast("相似任务正在处理中", { icon: '⚠️' });
         return null;
       }
     }
@@ -505,7 +506,7 @@ export default function useImageGeneration(
       if (diff < 1000) { // 1秒内不能重复提交
         logger.warn(`[任务重复] 提交过于频繁，间隔 ${diff}ms`);
         console.log(`[任务重复] 提交过于频繁：上次 ${lastSubmitTimeRef.current}, 当前 ${now}, 间隔 ${diff}ms`);
-        toast.warning("请勿频繁提交");
+        toast("请勿频繁提交", { icon: '⚠️' });
         return null;
       }
     }
