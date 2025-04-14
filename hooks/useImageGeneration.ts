@@ -461,8 +461,11 @@ export default function useImageGeneration(
   const generateImage = useCallback(async (options: GenerationOptions): Promise<{taskId: string} | null> => {
     const { prompt, image, style, aspectRatio, standardAspectRatio } = options;
     
+    console.log('[useImageGeneration] 开始生成图片流程');
+    
     // 防止未登录用户提交请求
     if (!authService.isAuthenticated()) {
+      console.log('[useImageGeneration] 用户未登录，拒绝请求');
       toast.error(t('loginRequired', { defaultValue: '请先登录' }));
       router.push('/login');
       return null;
@@ -470,43 +473,37 @@ export default function useImageGeneration(
     
     // 检查是否有提交锁，防止多标签页重复提交
     if (!TaskSyncManager.canSubmitTask()) {
+      console.log('[useImageGeneration] 检测到任务锁或活跃任务，拒绝请求');
       toast.error(t('alreadySubmitting', { defaultValue: '已有图像生成任务正在提交中，请稍后再试' }));
       return null;
     }
     
     // 检查是否与已有任务重复
     if (checkDuplicateSubmission(options)) {
+      console.log('[useImageGeneration] 检测到重复提交的任务，拒绝请求');
       toast.error(t('duplicateSubmission', { defaultValue: '相同参数的图像生成任务已经在处理中，请勿重复提交' }));
-      return null;
-    }
-    
-    // 获取提交锁
-    TaskSyncManager.setSubmitLock();
-    
-    // 检查提交锁定状态
-    if (TaskSyncManager.hasSubmissionLock()) {
-      notify("请求处理中，请勿重复提交", 'info');
       return null;
     }
     
     // 检查提交时间间隔
     const now = Date.now();
     if (now - lastSubmitTimeRef.current < SUBMIT_LOCK_TIMEOUT) {
+      console.log('[useImageGeneration] 提交过于频繁，拒绝请求');
       notify(`操作太频繁，请等待${Math.ceil(SUBMIT_LOCK_TIMEOUT/1000)}秒后再试`, 'info');
-      return null;
-    }
-    
-    // 检查跨标签页任务状态
-    if (!TaskSyncManager.canSubmitTask()) {
-      notify("有任务正在其他标签页中处理，请稍后再试", 'info');
       return null;
     }
     
     // 验证参数
     if (!prompt.trim() && !image && (!style || style === '自定义')) {
+      console.log('[useImageGeneration] 参数验证失败，拒绝请求');
       setError("请输入提示词，或上传图片并选择艺术风格");
       return null;
     }
+    
+    // 所有条件检查通过后，才设置提交锁定
+    console.log('[useImageGeneration] 所有检查通过，设置提交锁定');
+    TaskSyncManager.setSubmitLock();
+    lastSubmitTimeRef.current = now;
     
     // 检查是否有未完成的相同任务
     const pendingTask = checkPendingTask();
@@ -514,8 +511,7 @@ export default function useImageGeneration(
       console.log(`[useImageGeneration] 检测到未完成的相同任务: ${pendingTask.taskId}`);
       notify("继续处理之前的相同请求...", 'info');
       
-      // 设置提交锁定和时间戳
-      TaskSyncManager.setSubmitLock();
+      // 更新时间戳
       lastSubmitTimeRef.current = now;
       
       // 更新状态
@@ -537,10 +533,6 @@ export default function useImageGeneration(
       
       return { taskId: pendingTask.taskId };
     }
-    
-    // 设置提交锁定和时间戳
-    TaskSyncManager.setSubmitLock();
-    lastSubmitTimeRef.current = now;
     
     // 开始新的任务生成流程
     setError(null);

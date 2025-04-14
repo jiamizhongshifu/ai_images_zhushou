@@ -149,6 +149,7 @@ export const TaskSyncManager = {
         const lockTime = parseInt(lockTimeStr);
         // 如果锁定时间在10秒内，不允许提交
         if (Date.now() - lockTime < 10000) {
+          console.log('[TaskSync] 存在提交锁，拒绝任务');
           return false;
         }
       }
@@ -159,6 +160,7 @@ export const TaskSyncManager = {
         // 如果任务状态为处理中且在5分钟内创建的，不允许提交
         if (taskInfo.status === 'processing' && 
             Date.now() - taskInfo.timestamp < 5 * 60 * 1000) {
+          console.log('[TaskSync] 存在活跃任务，拒绝新任务');
           return false;
         }
       }
@@ -172,6 +174,8 @@ export const TaskSyncManager = {
   
   /**
    * 检查当前是否有提交锁定
+   * 此方法仅用于DEBUG和日志目的，不应用于逻辑判断
+   * 逻辑判断请使用 canSubmitTask
    */
   hasSubmissionLock: (): boolean => {
     try {
