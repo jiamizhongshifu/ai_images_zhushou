@@ -503,6 +503,36 @@ export default function useImageGeneration(
       return null;
     }
 
+    // 生成请求ID，用于防止重复提交
+    const requestId = uuidv4();
+    // 使用sessionStorage存储最近的请求ID和时间戳
+    try {
+      if (typeof sessionStorage !== 'undefined') {
+        const lastRequestData = sessionStorage.getItem('last_image_request');
+        if (lastRequestData) {
+          const lastRequest = JSON.parse(lastRequestData);
+          const timeSinceLastRequest = Date.now() - lastRequest.timestamp;
+          
+          // 如果5秒内有相同参数的请求，阻止重复提交
+          if (timeSinceLastRequest < 5000 && isSameRequest(lastRequest.params, options)) {
+            logger.warn(`[任务重复] 检测到5秒内重复提交，拒绝新请求`);
+            console.log(`[任务重复] 检测到5秒内重复提交，拒绝新请求，间隔: ${timeSinceLastRequest}ms`);
+            toast("请勿频繁提交相同请求", { icon: '⚠️' });
+            return null;
+          }
+        }
+        
+        // 记录当前请求
+        sessionStorage.setItem('last_image_request', JSON.stringify({
+          id: requestId,
+          timestamp: Date.now(),
+          params: options
+        }));
+      }
+    } catch (e) {
+      console.warn('[useImageGeneration] 检查或记录最近请求失败:', e);
+    }
+
     // 检查是否有重复任务
     const tasks = getAllPendingTasks();
     if (tasks.length > 0 && !options.forced) {
@@ -522,7 +552,7 @@ export default function useImageGeneration(
     if (!options.forced && lastSubmitTimeRef.current) {
       const now = Date.now();
       const diff = now - lastSubmitTimeRef.current;
-      if (diff < 1000) { // 1秒内不能重复提交
+      if (diff < 2000) { // 2秒内不能重复提交，改为2秒，更严格的控制
         logger.warn(`[任务重复] 提交过于频繁，间隔 ${diff}ms`);
         console.log(`[任务重复] 提交过于频繁：上次 ${lastSubmitTimeRef.current}, 当前 ${now}, 间隔 ${diff}ms`);
         toast("请勿频繁提交", { icon: '⚠️' });
@@ -530,7 +560,7 @@ export default function useImageGeneration(
       }
     }
     
-    // 检查提交时间间隔
+    // 检查提交时间间隔 
     const now = Date.now();
     if (now - lastSubmitTimeRef.current < SUBMIT_LOCK_TIMEOUT) {
       console.log('[useImageGeneration] 提交过于频繁，拒绝请求');
@@ -648,7 +678,8 @@ export default function useImageGeneration(
         image: processedImage || undefined,
         style: style !== "自定义" ? style : undefined,
         aspectRatio,
-        standardAspectRatio
+        standardAspectRatio,
+        requestId // 添加请求ID到请求数据，服务器端可以用它来防止重复处理
       };
       
       // 更详细的日志，包括完整的图片信息
@@ -656,6 +687,7 @@ export default function useImageGeneration(
       console.log(`- 提示词: ${fullPrompt.length > 100 ? fullPrompt.substring(0, 100) + '...' : fullPrompt}`);
       console.log(`- 风格: ${requestData.style || '(自定义)'}`);
       console.log(`- 比例: ${aspectRatio || '(默认)'} / 标准比例: ${standardAspectRatio || '(默认)'}`);
+      console.log(`- 请求ID: ${requestId}`);
       
       // 记录图片信息但不输出完整base64以避免日志过大
       if (processedImage) {
@@ -669,74 +701,127 @@ export default function useImageGeneration(
       // 发送请求阶段
       updateGenerationStage('sending_request', 20);
       
-      // 调用异步API创建任务
-      const response = await fetch("/api/generate-image-task", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(requestData),
-      });
+      // 使用带有超时和重试限制的fetch
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 60000); // 60秒超时
       
-      // 检查响应状态
-      if (response.status === 413) {
-        throw new Error('图片尺寸过大，请使用较小的图片或降低图片质量');
-      }
-      
-      const data = await response.json().catch(err => {
-        console.error('[useImageGeneration] 解析创建任务响应失败:', err);
-        return { error: '解析响应数据失败' };
-      });
-      
-      if (!response.ok || !data.taskId) {
-        throw new Error(data.error || `创建图像任务失败: HTTP ${response.status}`);
-      }
-      
-      // 保存任务ID
-      const taskId = data.taskId;
-      setCurrentTaskId(taskId);
-
-      // 检查是否为重复请求
-      if (data.status === 'duplicate') {
-        console.log(`[useImageGeneration] 服务器检测到重复请求，使用已存在的任务: ${taskId}`);
-        notify("服务器检测到相同请求正在处理中，继续使用已存在任务", 'info');
+      try {
+        // 调用异步API创建任务
+        const response = await fetch("/api/generate-image-task", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Request-ID": requestId // 添加请求ID头，帮助服务器端识别重复请求
+          },
+          signal: controller.signal,
+          body: JSON.stringify(requestData),
+        });
         
-        // 检查本地是否已有相同任务
-        const localTask = getPendingTask(taskId);
-        if (!localTask) {
-          // 本地没有记录，创建新的记录
+        clearTimeout(timeoutId);
+        
+        // 检查响应状态
+        if (response.status === 413) {
+          throw new Error('图片尺寸过大，请使用较小的图片或降低图片质量');
+        }
+        
+        if (response.status === 409) {
+          // 处理重复提交的情况
+          const data = await response.json();
+          notify(data.message || "检测到重复提交，请稍后重试", 'info');
+          
+          // 如果服务器报告有重复任务但包含了任务ID，使用这个ID进行后续处理
+          if (data.taskId) {
+            console.log(`[useImageGeneration] 服务器检测到重复请求，使用已存在的任务: ${data.taskId}`);
+            
+            setCurrentTaskId(data.taskId);
+            
+            // 保存或更新任务记录
+            savePendingTask({
+              taskId: data.taskId,
+              params: options,
+              timestamp: Date.now(),
+              status: 'processing'
+            });
+            
+            // 开始轮询任务状态
+            updateGenerationStage('processing', 30);
+            startEnhancedPollingTaskStatus(data.taskId);
+            
+            return { taskId: data.taskId };
+          }
+          
+          // 否则中止处理
+          setIsGenerating(false);
+          return null;
+        }
+        
+        const data = await response.json().catch(err => {
+          console.error('[useImageGeneration] 解析创建任务响应失败:', err);
+          return { error: '解析响应数据失败' };
+        });
+        
+        if (!response.ok || !data.taskId) {
+          throw new Error(data.error || `创建图像任务失败: HTTP ${response.status}`);
+        }
+        
+        // 保存任务ID
+        const taskId = data.taskId;
+        setCurrentTaskId(taskId);
+
+        // 检查是否为重复请求
+        if (data.status === 'duplicate') {
+          console.log(`[useImageGeneration] 服务器检测到重复请求，使用已存在的任务: ${taskId}`);
+          notify("服务器检测到相同请求正在处理中，继续使用已存在任务", 'info');
+          
+          // 检查本地是否已有相同任务
+          const localTask = getPendingTask(taskId);
+          if (!localTask) {
+            // 本地没有记录，创建新的记录
+            savePendingTask({
+              taskId,
+              params: options,
+              timestamp: Date.now(), // 使用当前时间
+              status: 'processing'
+            });
+          }
+        } else {
+          console.log(`[useImageGeneration] 创建任务成功，任务ID: ${taskId}`);
+          
+          // 保存任务到本地存储
           savePendingTask({
             taskId,
             params: options,
-            timestamp: Date.now(), // 使用当前时间
+            timestamp: Date.now(),
             status: 'processing'
           });
         }
-      } else {
-        console.log(`[useImageGeneration] 创建任务成功，任务ID: ${taskId}`);
         
-        // 保存任务到本地存储
-        savePendingTask({
+        // 开始轮询任务状态
+        updateGenerationStage('processing', 30);
+        startEnhancedPollingTaskStatus(taskId);
+        
+        // 记录到跨标签页同步管理器
+        TaskSyncManager.recordTask({
           taskId,
-          params: options,
           timestamp: Date.now(),
-          status: 'processing'
+          status: 'processing',
+          params: options
         });
+        
+        return { taskId }; // 返回任务ID以支持外部状态监听
+      } catch (fetchError) {
+        clearTimeout(timeoutId);
+        
+        // 特殊处理AbortError（超时）
+        if (fetchError.name === 'AbortError') {
+          console.error('[useImageGeneration] 请求超时:', fetchError);
+          throw new Error('请求超时，请稍后重试');
+        }
+        
+        // 重新抛出其他错误
+        console.error('[useImageGeneration] 请求失败:', fetchError);
+        throw fetchError;
       }
-      
-      // 开始轮询任务状态
-      updateGenerationStage('processing', 30);
-      startEnhancedPollingTaskStatus(taskId);
-      
-      // 记录到跨标签页同步管理器
-      TaskSyncManager.recordTask({
-        taskId,
-        timestamp: Date.now(),
-        status: 'processing',
-        params: options
-      });
-      
-      return { taskId }; // 返回任务ID以支持外部状态监听
     } catch (err) {
       // 处理错误
       const errorMessage = err instanceof Error ? err.message : String(err);
@@ -755,7 +840,7 @@ export default function useImageGeneration(
     } finally {
       // 不需要手动释放锁定，TaskSyncManager会自动处理锁超时
     }
-  }, [router, t, session]);
+  }, [router, t, authService]);
 
   // 增强版的恢复任务函数，添加网络故障处理
   const recoverTask = useCallback(async (taskId: string): Promise<boolean> => {
