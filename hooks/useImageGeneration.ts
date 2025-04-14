@@ -472,7 +472,8 @@ export default function useImageGeneration(
     
     // 检查用户是否已验证
     if (!session || session.status !== 'authenticated') {
-      logger.warn("生成图片失败：用户未登录");
+      console.log('[useImageGeneration] 用户未登录，无法生成图片');
+      toast("需要登录才能生成图片", { icon: '⚠️' });
       return null;
     }
 
