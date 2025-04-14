@@ -171,6 +171,23 @@ export const TaskSyncManager = {
   },
   
   /**
+   * 检查当前是否有提交锁定
+   */
+  hasSubmissionLock: (): boolean => {
+    try {
+      const lockTimeStr = sessionStorage.getItem(SUBMIT_LOCK_KEY);
+      if (!lockTimeStr) return false;
+      
+      const lockTime = parseInt(lockTimeStr);
+      // 如果锁定时间在5秒内，认为有活跃锁定
+      return Date.now() - lockTime < 5000;
+    } catch (error) {
+      console.error('[TaskSync] 检查提交锁定状态失败:', error);
+      return false; // 出错时默认无锁定
+    }
+  },
+  
+  /**
    * 设置提交锁定
    */
   setSubmitLock: (): void => {

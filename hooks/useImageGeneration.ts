@@ -85,7 +85,8 @@ export default function useImageGeneration(
 
   const { triggerCreditRefresh } = useUserState();
 
-  // 添加提交锁定
+  // 添加提交锁定 - 已弃用，使用 TaskSyncManager.hasSubmissionLock() 替代
+  // @deprecated 使用 TaskSyncManager.hasSubmissionLock() 和 TaskSyncManager.setSubmitLock() 替代
   const submissionLockRef = useRef<boolean>(false);
   const lastSubmitTimeRef = useRef<number>(0);
 
@@ -433,7 +434,7 @@ export default function useImageGeneration(
     }
     
     // 检查是否有提交锁，防止多标签页重复提交
-    if (TaskSyncManager.hasSubmissionLock('imageGeneration')) {
+    if (!TaskSyncManager.canSubmitTask()) {
       toast.error(t('alreadySubmitting', { defaultValue: '已有图像生成任务正在提交中，请稍后再试' }));
       return null;
     }
@@ -445,10 +446,10 @@ export default function useImageGeneration(
     }
     
     // 获取提交锁
-    TaskSyncManager.setSubmissionLock('imageGeneration');
+    TaskSyncManager.setSubmitLock();
     
     // 检查提交锁定状态
-    if (submissionLockRef.current) {
+    if (TaskSyncManager.hasSubmissionLock()) {
       notify("请求处理中，请勿重复提交", 'info');
       return null;
     }
@@ -479,7 +480,7 @@ export default function useImageGeneration(
       notify("继续处理之前的相同请求...", 'info');
       
       // 设置提交锁定和时间戳
-      submissionLockRef.current = true;
+      TaskSyncManager.setSubmitLock();
       lastSubmitTimeRef.current = now;
       
       // 更新状态
@@ -497,16 +498,13 @@ export default function useImageGeneration(
       // 开始恢复轮询
       startEnhancedPollingTaskStatus(pendingTask.taskId);
       
-      // 延迟释放提交锁定
-      setTimeout(() => {
-        submissionLockRef.current = false;
-      }, 2000);
+      // 延迟释放提交锁定（不需要手动释放，TaskSyncManager 会自动处理锁超时）
       
       return { taskId: pendingTask.taskId };
     }
     
     // 设置提交锁定和时间戳
-    submissionLockRef.current = true;
+    TaskSyncManager.setSubmitLock();
     lastSubmitTimeRef.current = now;
     
     // 开始新的任务生成流程
@@ -679,10 +677,7 @@ export default function useImageGeneration(
       
       return null;
     } finally {
-      // 延迟释放锁定
-      setTimeout(() => {
-        submissionLockRef.current = false;
-      }, 2000);
+      // 不需要手动释放锁定，TaskSyncManager会自动处理锁超时
     }
   }, [userId, router, t]);
 
