@@ -720,7 +720,7 @@ export default function useImageGeneration(
 
   // 增强版的恢复任务函数，添加网络故障处理
   const recoverTask = useCallback(async (taskId: string): Promise<boolean> => {
-    let taskInfo = null;
+    let taskInfo: PendingTask | null = null;
     
     try {
       const task = getPendingTask(taskId);
@@ -780,12 +780,12 @@ export default function useImageGeneration(
         onProgress: (progress, stage) => {
           console.log(`[任务恢复] 状态更新: ${progress}%, 阶段: ${stage}`);
           // 更新本地存储中的任务状态
-          updatePendingTaskStatus(taskInfo.taskId, stage as string);
+          updatePendingTaskStatus(taskInfo!.taskId, stage as string);
         }
       });
       
       // 处理轮询结果
-      handlePollingResult(pollingResult, taskInfo.taskId);
+      handlePollingResult(pollingResult, taskInfo!.taskId);
       
       return true;
     } catch (error: any) {
@@ -801,7 +801,7 @@ export default function useImageGeneration(
     } finally {
       setIsGenerating(false);
     }
-  }, [handlePollingResult, t, checkDuplicateSubmission]);
+  }, [handlePollingResult, t]);
 
   // 放弃任务
   const discardTask = (taskId: string): void => {
