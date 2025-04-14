@@ -18,11 +18,11 @@ import {
 import { enhancedPollTaskStatus } from '@/utils/taskPoller';
 import TaskSyncManager, { TaskStatus } from '@/utils/taskSync/taskSyncManager';
 import { useRouter } from 'next/navigation';
-import { useUser } from '@clerk/nextjs';
 import toast from 'react-hot-toast';
 import { useTranslation } from '@/i18n/client';
 import { notify } from '@/utils/notification';
 import { trackPromptUsage } from '@/utils/tracking';
+import { authService } from '@/utils/auth-service';
 
 // 图片大小限制配置
 const MAX_IMAGE_SIZE_KB = 6144; // 6MB
@@ -91,8 +91,6 @@ export default function useImageGeneration(
   const lastSubmitTimeRef = useRef<number>(0);
 
   const { t } = useTranslation('image');
-  const { user } = useUser();
-  const userId = user?.id;
   const router = useRouter();
 
   // 页面加载时清理过期任务
@@ -457,14 +455,14 @@ export default function useImageGeneration(
     // 延迟几秒执行，避免与应用初始化冲突
     const timer = setTimeout(checkPendingTasks, 3000);
     return () => clearTimeout(timer);
-  }, [userId]);
+  }, [t]);
 
   // 生成图片 - 调用异步API
   const generateImage = useCallback(async (options: GenerationOptions): Promise<{taskId: string} | null> => {
     const { prompt, image, style, aspectRatio, standardAspectRatio } = options;
     
     // 防止未登录用户提交请求
-    if (!userId) {
+    if (!authService.isAuthenticated()) {
       toast.error(t('loginRequired', { defaultValue: '请先登录' }));
       router.push('/login');
       return null;
@@ -716,7 +714,7 @@ export default function useImageGeneration(
     } finally {
       // 不需要手动释放锁定，TaskSyncManager会自动处理锁超时
     }
-  }, [userId, router, t]);
+  }, [router, t]);
 
   // 增强版的恢复任务函数，添加网络故障处理
   const recoverTask = useCallback(async (taskId: string): Promise<boolean> => {
