@@ -294,6 +294,45 @@ export default function useImageGeneration(
     });
   };
 
+  // 处理轮询结果的函数
+  const handlePollingResult = useCallback((result: any, taskId: string) => {
+    if (result.status === 'completed' && result.data?.imageUrl) {
+      // 更新UI状态
+      setIsGenerating(false);
+      setStatus('success');
+      setCurrentTaskId(null);
+      updateGenerationStage('completed', 100);
+      
+      // 添加生成的图片
+      addGeneratedImage(result.data.imageUrl);
+      
+      // 清除任务本地存储
+      clearPendingTask(taskId);
+      
+      // 显示成功通知
+      notify('图片生成成功！', 'success');
+      
+      // 刷新其他数据
+      cacheService.delete(USER_CREDITS_CACHE_KEY);
+      cacheService.delete(HISTORY_CACHE_KEY);
+      if (triggerCreditRefresh) triggerCreditRefresh();
+      if (refreshHistory) refreshHistory();
+    } else if (result.status === 'failed' || result.status === 'error') {
+      // 更新失败状态
+      setIsGenerating(false);
+      setStatus('error');
+      setCurrentTaskId(null);
+      updateGenerationStage('failed', 0);
+      setError(result.error || '图像生成失败');
+      
+      // 更新任务本地存储状态
+      updatePendingTaskStatus(taskId, 'failed', result.error || '图像生成失败');
+      
+      // 显示错误通知
+      notify(`生成失败: ${result.error || '未知错误'}`, 'error');
+    }
+  }, [triggerCreditRefresh, refreshHistory]);
+
   // 添加useEffect钩子来初始化任务同步监听器
   useEffect(() => {
     // 初始化任务状态同步监听
@@ -331,11 +370,9 @@ export default function useImageGeneration(
         }
       },
       onSubmitLock: () => {
-        // 当其他标签页设置提交锁定时，同步本地锁定状态
-        submissionLockRef.current = true;
-        setTimeout(() => {
-          submissionLockRef.current = false;
-        }, 2000);
+        // 当其他标签页设置提交锁定时，更新最后提交时间
+        lastSubmitTimeRef.current = Date.now();
+        console.log('[useImageGeneration] 收到其他标签页的提交锁定信号');
       }
     });
     
@@ -683,6 +720,8 @@ export default function useImageGeneration(
 
   // 增强版的恢复任务函数，添加网络故障处理
   const recoverTask = useCallback(async (taskId: string): Promise<boolean> => {
+    let taskInfo = null;
+    
     try {
       const task = getPendingTask(taskId);
       if (!task) {
@@ -690,8 +729,11 @@ export default function useImageGeneration(
         return false;
       }
       
+      // 保存任务信息到外部变量，使其在 catch 块中也可访问
+      taskInfo = task;
+      
       // 检查是否与已有任务重复
-      if (checkDuplicateSubmission(task.params)) {
+      if (checkDuplicateSubmission(taskInfo.params)) {
         toast.error(t('duplicateTaskRecovery', { defaultValue: '相同参数的任务已经在处理中，无需重复恢复' }));
         return false;
       }
@@ -699,29 +741,29 @@ export default function useImageGeneration(
       console.log(`[任务恢复] 开始恢复任务 ${taskId}`);
       
       setIsGenerating(true);
-      setCurrentTaskId(task.taskId);
+      setCurrentTaskId(taskInfo.taskId);
       setError(null);
       
       // 更新状态为恢复中
-      updatePendingTaskStatus(task.taskId, 'recovering');
+      updatePendingTaskStatus(taskInfo.taskId, 'recovering');
       
       // 查询当前任务状态
-      const statusResponse = await fetch(`/api/image-task-status/${task.taskId}`);
+      const statusResponse = await fetch(`/api/image-task-status/${taskInfo.taskId}`);
       console.log(`[任务恢复] 当前任务状态:`, statusResponse);
       
-      // 如果任务已完成或失败，直接处理结果
-      if (['completed', 'failed'].includes(statusResponse.status)) {
-        console.log(`[任务恢复] 任务已${statusResponse.status === 'completed' ? '完成' : '失败'}`);
+      if (statusResponse.ok) {
+        const statusData = await statusResponse.json();
         
-        // 使用前面定义的轮询结果处理函数
-        handlePollingResult({
-          status: statusResponse.status,
-          data: statusResponse.data,
-          error: statusResponse.error
-        } as PollingResult, task.taskId);
-        
-        setIsGenerating(false);
-        return true;
+        // 如果任务已完成或失败，直接处理结果
+        if (['completed', 'failed'].includes(statusData.status)) {
+          console.log(`[任务恢复] 任务已${statusData.status === 'completed' ? '完成' : '失败'}`);
+          
+          // 使用前面定义的轮询结果处理函数
+          handlePollingResult(statusData, taskInfo.taskId);
+          
+          setIsGenerating(false);
+          return true;
+        }
       }
       
       // 如果任务仍在进行中，开始轮询状态
@@ -729,18 +771,21 @@ export default function useImageGeneration(
       toast.success(t('taskRecovering', { defaultValue: '正在恢复任务...' }));
       
       // 开始轮询任务状态
-      const pollingResult = await enhancedPollTaskStatus({
-        taskId,
-        initialDelay: 1000, // 恢复任务立即开始轮询
-        onUpdate: (data) => {
-          console.log(`[任务恢复] 状态更新: ${data.status}`);
+      const pollingResult = await enhancedPollTaskStatus(taskId, {
+        maxAttempts: 180,         // 最多尝试180次 (约15分钟，视间隔而定)
+        initialInterval: 2000,    // 初始间隔2秒
+        maxInterval: 10000,       // 最大间隔10秒
+        exponentialFactor: 1.5,   // 指数增长因子
+        failureRetries: 0,        // 连续失败不重试
+        onProgress: (progress, stage) => {
+          console.log(`[任务恢复] 状态更新: ${progress}%, 阶段: ${stage}`);
           // 更新本地存储中的任务状态
-          updatePendingTaskStatus(task.taskId, data.status);
+          updatePendingTaskStatus(taskInfo.taskId, stage as string);
         }
       });
       
       // 处理轮询结果
-      handlePollingResult(pollingResult, task.taskId);
+      handlePollingResult(pollingResult, taskInfo.taskId);
       
       return true;
     } catch (error: any) {
@@ -749,14 +794,14 @@ export default function useImageGeneration(
       toast.error(error.message || t('recoveryFailed', { defaultValue: '恢复任务失败' }));
       
       // 错误时也标记任务状态
-      if (task.taskId) {
-        updatePendingTaskStatus(task.taskId, 'error', error.message);
+      if (taskInfo?.taskId) {
+        updatePendingTaskStatus(taskInfo.taskId, 'error', error.message);
       }
       return false;
     } finally {
       setIsGenerating(false);
     }
-  }, [handlePollingResult, t]);
+  }, [handlePollingResult, t, checkDuplicateSubmission]);
 
   // 放弃任务
   const discardTask = (taskId: string): void => {
