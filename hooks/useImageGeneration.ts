@@ -470,9 +470,10 @@ export default function useImageGeneration(
     
     console.log('[useImageGeneration] 开始生成图片流程');
     
-    // 检查用户是否已验证 - 提供更灵活的验证方式
-    if (!session || (!session.data?.user && session.status !== 'authenticated')) {
-      console.log('[useImageGeneration] 用户未登录，无法生成图片', session);
+    // 检查用户是否已验证 - 使用authService直接验证
+    const authState = authService.getAuthState();
+    if (!authState?.isAuthenticated) {
+      console.log('[useImageGeneration] 用户未登录，无法生成图片', authState);
       toast("需要登录才能生成图片", { icon: '⚠️' });
       return null;
     }
