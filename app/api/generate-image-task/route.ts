@@ -703,23 +703,26 @@ function getAspectRatioDescription(aspectRatio: string, standardAspectRatio?: st
   return description;
 }
 
-// 计算请求指纹，用于防止重复提交
+// 优化计算请求指纹函数
 function calculateRequestFingerprint(
   userId: string,
   prompt: string,
   style?: string | null,
   aspectRatio?: string | null,
+  imageHash?: string | null, // 添加图片哈希特征
 ): string {
+  // 缩短时间窗口为1分钟，使相同请求1分钟内被识别为重复请求
+  const timeWindow = Math.floor(Date.now() / (1 * 60 * 1000));
+  
   // 构建一个包含请求关键参数的对象
   const fingerprintData = {
     userId,
     prompt: prompt?.trim(),
     style: style || '',
     aspectRatio: aspectRatio || '',
-    // 图片内容可能很大，不纳入指纹计算，只考虑是否有图片
-    hasImage: !!prompt,
-    // 添加一个时间窗口标记(精确到5分钟)，使相同请求在一定时间后可以再次提交
-    timeWindow: Math.floor(Date.now() / (5 * 60 * 1000))
+    // 使用图片哈希特征而非是否存在图片
+    imageHash: imageHash || '',
+    timeWindow
   };
   
   // 计算MD5哈希作为指纹
@@ -729,23 +732,39 @@ function calculateRequestFingerprint(
     .digest('hex');
 }
 
-// 检查是否存在相同请求的处理中任务
+// 计算图片哈希特征，简化版的感知哈希
+function calculateImageHash(imageBase64: string): string {
+  try {
+    if (!imageBase64) return '';
+    
+    // 为了简化计算，我们只使用base64的前10000字符进行哈希计算
+    // 实际生产中可能需要更复杂的算法来比较图片相似性
+    const sample = imageBase64.substring(0, 10000);
+    return crypto.createHash('md5').update(sample).digest('hex');
+  } catch (error) {
+    // 修复参数数量问题
+    logger.error(`计算图片哈希失败: ${error instanceof Error ? error.message : String(error)}`);
+    return '';
+  }
+}
+
+// 修改检查重复请求函数
 async function checkDuplicateRequest(
   supabase: any,
   userId: string,
   fingerprint: string
 ): Promise<{isDuplicate: boolean, existingTaskId?: string}> {
   try {
-    // 查询最近10分钟内相同指纹的任务
-    const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+    // 仅查询最近3分钟内相同指纹的任务
+    const threeMinutesAgo = new Date(Date.now() - 3 * 60 * 1000).toISOString();
     
     const { data: existingTasks, error } = await supabase
       .from('image_tasks')
-      .select('id, task_id, status')
+      .select('id, task_id, status, created_at')
       .eq('user_id', userId)
       .eq('request_fingerprint', fingerprint)
       .in('status', ['pending', 'processing'])
-      .gt('created_at', tenMinutesAgo)
+      .gt('created_at', threeMinutesAgo)
       .order('created_at', { ascending: false })
       .limit(1);
     
@@ -755,7 +774,11 @@ async function checkDuplicateRequest(
     }
     
     if (existingTasks && existingTasks.length > 0) {
-      logger.info(`检测到重复请求，已存在处理中的任务: ${existingTasks[0].task_id}`);
+      const taskCreatedAt = new Date(existingTasks[0].created_at);
+      const elapsedSeconds = Math.floor((Date.now() - taskCreatedAt.getTime()) / 1000);
+      
+      logger.info(`检测到重复请求，已存在处理中的任务: ${existingTasks[0].task_id}，创建于${elapsedSeconds}秒前`);
+      
       return { 
         isDuplicate: true, 
         existingTaskId: existingTasks[0].task_id 
@@ -843,12 +866,16 @@ export async function POST(request: NextRequest) {
     
     logger.info(`用户 ${currentUser.id} 认证成功`);
     
+    // 计算图片哈希特征
+    const imageHash = image ? calculateImageHash(image) : '';
+    
     // 生成请求指纹并检查重复请求
     const requestFingerprint = calculateRequestFingerprint(
       currentUser.id, 
       prompt, 
       style, 
-      aspectRatio
+      aspectRatio,
+      imageHash
     );
     
     // 检查是否存在相同请求
@@ -861,6 +888,26 @@ export async function POST(request: NextRequest) {
     // 如果是重复请求，直接返回已存在的任务ID
     if (isDuplicate && existingTaskId) {
       logger.info(`检测到重复请求，返回已存在的任务ID: ${existingTaskId}`);
+      
+      // 创建Admin客户端
+      const supabaseAdmin = await createAdminClient();
+      
+      // 增加重复请求的日志记录
+      try {
+        // 记录重复请求
+        await supabaseAdmin
+          .from('duplicate_requests')
+          .insert({
+            user_id: currentUser.id,
+            original_task_id: existingTaskId,
+            fingerprint: requestFingerprint,
+            created_at: new Date().toISOString()
+          });
+      } catch (logError) {
+        // 记录失败不影响主流程
+        logger.warn(`记录重复请求失败: ${logError}`);
+      }
+      
       return NextResponse.json({
         taskId: existingTaskId,
         status: 'duplicate',

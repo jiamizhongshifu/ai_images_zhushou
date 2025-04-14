@@ -12,6 +12,17 @@ export interface PendingTask {
   errorMessage?: string;
 }
 
+// 添加预定义的状态类型
+export type TaskStatus = 
+  | 'pending'      // 初始状态
+  | 'created'      // 已创建
+  | 'processing'   // 处理中
+  | 'recovering'   // 恢复中
+  | 'completed'    // 完成
+  | 'failed'       // 失败
+  | 'cancelled'    // 取消
+  | 'error';       // 错误
+
 /**
  * 保存待处理任务到本地存储
  */
@@ -185,15 +196,64 @@ export function hasActivePendingTasks(): boolean {
 }
 
 /**
- * 判断两个请求是否相同
+ * 创建图片指纹，用于比较图片是否相同
+ * 简化版的图片特征提取，只取前5000个字符进行哈希计算
+ */
+function createImageFingerprint(imageBase64: string | null | undefined): string {
+  if (!imageBase64) return '';
+  const sampleLength = 5000; // 只取前5000个字符作为特征
+  return imageBase64.substring(0, Math.min(sampleLength, imageBase64.length));
+}
+
+/**
+ * 增强版 - 判断两个请求是否相同
+ * 考虑更多因素进行精确匹配
  */
 export function isSameRequest(task: PendingTask, params: any): boolean {
   if (!task.params || !params) return false;
   
-  // 比较关键参数
-  return (
-    task.params.prompt === params.prompt &&
-    task.params.style === params.style &&
-    (task.params.image === params.image || (!task.params.image && !params.image))
-  );
+  // 始终比较基本参数
+  const samePrompt = task.params.prompt === params.prompt;
+  const sameStyle = task.params.style === params.style;
+  
+  // 比较比例参数（如果存在）
+  const sameAspectRatio = 
+    (task.params.aspectRatio === params.aspectRatio) &&
+    (task.params.standardAspectRatio === params.standardAspectRatio);
+  
+  // 如果基本参数不同，则直接返回不相同
+  if (!samePrompt || !sameStyle || !sameAspectRatio) {
+    return false;
+  }
+  
+  // 图片比较策略:
+  // 1. 都没有图片 -> 相同请求
+  // 2. 一个有图片，一个没有 -> 不同请求
+  // 3. 都有图片，则比较图片特征
+  
+  const hasOriginalImage = !!task.params.image;
+  const hasNewImage = !!params.image;
+  
+  // 如果图片存在性不同，则直接返回不同
+  if (hasOriginalImage !== hasNewImage) {
+    return false;
+  }
+  
+  // 如果都没有图片，且前面的参数都相同，则是相同请求
+  if (!hasOriginalImage && !hasNewImage) {
+    return true;
+  }
+  
+  // 如果都有图片，比较图片特征
+  if (hasOriginalImage && hasNewImage) {
+    // 创建图片指纹
+    const originalImageFingerprint = createImageFingerprint(task.params.image);
+    const newImageFingerprint = createImageFingerprint(params.image);
+    
+    // 比较图片指纹，具有一定容忍度
+    return originalImageFingerprint === newImageFingerprint;
+  }
+  
+  // 默认返回不同
+  return false;
 } 

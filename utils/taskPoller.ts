@@ -58,6 +58,7 @@ export async function enhancedPollTaskStatus(
   let currentInterval = initialInterval;
   let consecutiveFailures = 0;
   let cancelled = false;
+  let networkErrorsCount = 0;    // 网络错误计数
   const startTime = Date.now();
   
   // 更新轮询状态
@@ -77,6 +78,33 @@ export async function enhancedPollTaskStatus(
     console.log(`[轮询] 任务${taskId}轮询已取消`);
   };
   
+  // 检查网络连接状态
+  const checkNetworkStatus = (): boolean => {
+    return navigator.onLine;
+  };
+  
+  // 等待网络恢复
+  const waitForNetworkReconnection = async (): Promise<void> => {
+    // 使用Promise等待网络连接恢复
+    return new Promise((resolve) => {
+      if (checkNetworkStatus()) {
+        resolve();
+        return;
+      }
+      
+      console.log('[轮询] 等待网络连接恢复...');
+      
+      // 监听网络恢复事件
+      const handleOnline = () => {
+        console.log('[轮询] 网络连接已恢复');
+        window.removeEventListener('online', handleOnline);
+        resolve();
+      };
+      
+      window.addEventListener('online', handleOnline);
+    });
+  };
+  
   return new Promise((resolve, reject) => {
     // 检查任务状态函数
     const checkStatus = async () => {
@@ -88,6 +116,16 @@ export async function enhancedPollTaskStatus(
           attempts,
           elapsedTime: Date.now() - startTime
         });
+        return;
+      }
+      
+      // 检查网络连接状态
+      if (!checkNetworkStatus()) {
+        console.log('[轮询] 检测到网络连接中断');
+        await waitForNetworkReconnection();
+        
+        // 网络恢复后立即检查任务状态
+        setTimeout(checkStatus, 1000);
         return;
       }
       
@@ -111,6 +149,9 @@ export async function enhancedPollTaskStatus(
         if (!response.ok) {
           throw new Error(`状态请求失败: ${response.status}`);
         }
+        
+        // 重置网络错误计数
+        networkErrorsCount = 0;
         
         // 解析响应数据
         const data = await response.json();
@@ -222,6 +263,31 @@ export async function enhancedPollTaskStatus(
         // 增加连续失败计数
         consecutiveFailures++;
         
+        // 检查是否是网络错误
+        const isNetworkError = error instanceof TypeError && 
+          (error.message.includes('network') || 
+           error.message.includes('fetch') || 
+           error.message.includes('aborted'));
+        
+        if (isNetworkError) {
+          networkErrorsCount++;
+          console.log(`[轮询] 检测到网络错误 (${networkErrorsCount}次)`);
+          
+          // 如果连续网络错误超过3次，尝试等待网络恢复
+          if (networkErrorsCount >= 3) {
+            console.log('[轮询] 连续网络错误，等待网络恢复...');
+            
+            // 尝试等待网络恢复
+            waitForNetworkReconnection().then(() => {
+              // 网络恢复后重置错误计数并立即尝试重新连接
+              networkErrorsCount = 0;
+              setTimeout(checkStatus, 1000);
+            });
+            
+            return;
+          }
+        }
+        
         // 如果连续失败次数超过阈值，使用保守策略
         if (consecutiveFailures > failureRetries) {
           // 连续多次失败，但不立即放弃，转为更保守的轮询策略
@@ -240,8 +306,9 @@ export async function enhancedPollTaskStatus(
             elapsedTime: Date.now() - startTime
           });
         } else {
-          // 继续轮询
-          setTimeout(checkStatus, currentInterval);
+          // 继续轮询，但使用更长的间隔
+          const retryInterval = Math.min(currentInterval * 2, maxInterval);
+          setTimeout(checkStatus, retryInterval);
         }
       }
     };

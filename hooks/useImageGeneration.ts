@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { generatePromptWithStyle } from '@/app/config/styles';
 import { cacheService, CACHE_PREFIXES } from '@/utils/cache-service';
 import { GenerationStage } from '@/components/ui/skeleton-generation';
@@ -16,6 +16,13 @@ import {
   PendingTask
 } from '@/utils/taskRecovery';
 import { enhancedPollTaskStatus } from '@/utils/taskPoller';
+import TaskSyncManager, { TaskStatus } from '@/utils/taskSync/taskSyncManager';
+import { useRouter } from 'next/navigation';
+import { useUser } from '@clerk/nextjs';
+import toast from 'react-hot-toast';
+import { useTranslation } from '@/i18n/client';
+import { notify } from '@/utils/notification';
+import { trackPromptUsage } from '@/utils/tracking';
 
 // 图片大小限制配置
 const MAX_IMAGE_SIZE_KB = 6144; // 6MB
@@ -25,6 +32,9 @@ const DEFAULT_QUALITY = 0.8;
 
 const USER_CREDITS_CACHE_KEY = CACHE_PREFIXES.USER_CREDITS + ':main';
 const HISTORY_CACHE_KEY = CACHE_PREFIXES.HISTORY + ':recent';
+
+// 添加常量配置
+const SUBMIT_LOCK_TIMEOUT = 5000; // 5秒内不允许重复提交
 
 export type GenerationStatus = 'idle' | 'loading' | 'success' | 'error';
 
@@ -74,6 +84,15 @@ export default function useImageGeneration(
   const pollingCancelRef = useRef<() => void>(() => {}); // 用于取消轮询
 
   const { triggerCreditRefresh } = useUserState();
+
+  // 添加提交锁定
+  const submissionLockRef = useRef<boolean>(false);
+  const lastSubmitTimeRef = useRef<number>(0);
+
+  const { t } = useTranslation('image');
+  const { user } = useUser();
+  const userId = user?.id;
+  const router = useRouter();
 
   // 页面加载时清理过期任务
   useEffect(() => {
@@ -199,6 +218,9 @@ export default function useImageGeneration(
       
       console.log(`[useImageGeneration] 任务${taskId}轮询完成，状态: 成功，尝试次数: ${result.attempts}，耗时: ${result.elapsedTime}ms`);
       
+      // 更新跨标签页任务状态
+      TaskSyncManager.updateTaskStatus(taskId, 'completed');
+      
       // 更新为完成阶段
       updateGenerationStage('finalizing', 95);
       
@@ -249,6 +271,9 @@ export default function useImageGeneration(
       
       console.error(`[useImageGeneration] 任务${taskId}轮询失败:`, error);
       
+      // 更新跨标签页任务状态
+      TaskSyncManager.updateTaskStatus(taskId, 'failed');
+      
       // 更新为失败状态
       updateGenerationStage('failed', 0);
       setError(error.error || '图像生成失败');
@@ -268,10 +293,180 @@ export default function useImageGeneration(
     });
   };
 
+  // 添加useEffect钩子来初始化任务同步监听器
+  useEffect(() => {
+    // 初始化任务状态同步监听
+    const cleanup = TaskSyncManager.initListener({
+      onTaskUpdate: (taskInfo) => {
+        // 处理任务状态更新事件
+        if (taskInfo.taskId === currentTaskId) {
+          console.log(`[useImageGeneration] 从其他标签页接收到任务更新: ${taskInfo.taskId}, 状态: ${taskInfo.status}`);
+          
+          // 如果状态是完成或失败，更新本地状态
+          if (taskInfo.status === 'completed') {
+            // 任务已完成，但需要查询详细信息
+            fetch(`/api/image-task-status/${taskInfo.taskId}`)
+              .then(resp => resp.json())
+              .then(data => {
+                if (data.imageUrl) {
+                  addGeneratedImage(data.imageUrl);
+                  setIsGenerating(false);
+                  setStatus('success');
+                  setCurrentTaskId(null);
+                  updateGenerationStage('completed', 100);
+                  clearPendingTask(taskInfo.taskId);
+                  notify('图片生成成功！', 'success');
+                }
+              })
+              .catch(err => console.error('获取完成任务详情失败:', err));
+          } else if (taskInfo.status === 'failed' || taskInfo.status === 'error') {
+            setIsGenerating(false);
+            setStatus('error');
+            setCurrentTaskId(null);
+            updateGenerationStage('failed', 0);
+            clearPendingTask(taskInfo.taskId);
+            notify('任务处理失败', 'error');
+          }
+        }
+      },
+      onSubmitLock: () => {
+        // 当其他标签页设置提交锁定时，同步本地锁定状态
+        submissionLockRef.current = true;
+        setTimeout(() => {
+          submissionLockRef.current = false;
+        }, 2000);
+      }
+    });
+    
+    // 组件卸载时清理监听器
+    return () => {
+      cleanup();
+    };
+  }, [currentTaskId]);
+
+  // 添加一个页面加载时自动检查和恢复任务的逻辑
+  useEffect(() => {
+    try {
+      // 在组件挂载时清理过期任务
+      cleanupExpiredTasks();
+      
+      // 检查是否有未完成的任务
+      const pendingTask = checkPendingTask();
+      if (pendingTask && !isGenerating) {
+        console.log(`[useImageGeneration] 页面加载时检测到未完成任务: ${pendingTask.taskId}`);
+        
+        // 询问用户是否要恢复任务
+        const shouldRecover = window.confirm(
+          `检测到您有一个未完成的图片生成任务 (${new Date(pendingTask.timestamp).toLocaleTimeString()})，是否要恢复？`
+        );
+        
+        if (shouldRecover) {
+          // 自动恢复任务
+          recoverTask(pendingTask.taskId).catch(err => {
+            console.error('[useImageGeneration] 自动恢复任务失败:', err);
+          });
+        } else {
+          // 用户选择不恢复，清除任务
+          clearPendingTask(pendingTask.taskId);
+        }
+      }
+    } catch (error) {
+      console.error('[useImageGeneration] 检查未完成任务失败:', error);
+    }
+  }, []); // 只在组件挂载时执行一次
+
+  // 页面加载时检查并恢复中断的任务
+  useEffect(() => {
+    const checkPendingTasks = () => {
+      try {
+        const pendingTasks = getAllPendingTasks();
+        
+        // 找出所有活跃中但未完成的任务
+        const activeTasks = pendingTasks.filter(task => 
+          ['pending', 'created', 'processing'].includes(task.status) &&
+          // 任务时间在12小时内
+          (Date.now() - task.timestamp < 12 * 60 * 60 * 1000)
+        );
+        
+        if (activeTasks.length > 0) {
+          console.log(`[任务恢复] 检测到 ${activeTasks.length} 个未完成的任务`);
+          
+          // 按时间排序，最新的任务优先恢复
+          const sortedTasks = activeTasks.sort((a, b) => b.timestamp - a.timestamp);
+          const latestTask = sortedTasks[0];
+          
+          // 提示用户是否恢复任务
+          const confirmed = window.confirm(
+            t('confirmRecoverTask', { defaultValue: '检测到有未完成的图像生成任务，是否恢复？' })
+          );
+          
+          if (confirmed) {
+            console.log(`[任务恢复] 用户确认恢复任务 ${latestTask.taskId}`);
+            recoverTask(latestTask.taskId);
+          } else {
+            console.log(`[任务恢复] 用户拒绝恢复任务`);
+            // 用户拒绝恢复，将任务标记为已取消
+            activeTasks.forEach(task => {
+              updatePendingTaskStatus(task.taskId, 'cancelled');
+            });
+          }
+        }
+      } catch (error) {
+        console.error('[任务恢复] 检查待处理任务时出错:', error);
+      }
+    };
+    
+    // 延迟几秒执行，避免与应用初始化冲突
+    const timer = setTimeout(checkPendingTasks, 3000);
+    return () => clearTimeout(timer);
+  }, [userId]);
+
   // 生成图片 - 调用异步API
-  const generateImage = async (options: GenerationOptions): Promise<{taskId: string} | null> => {
+  const generateImage = useCallback(async (options: GenerationOptions): Promise<{taskId: string} | null> => {
     const { prompt, image, style, aspectRatio, standardAspectRatio } = options;
     
+    // 防止未登录用户提交请求
+    if (!userId) {
+      toast.error(t('loginRequired', { defaultValue: '请先登录' }));
+      router.push('/login');
+      return null;
+    }
+    
+    // 检查是否有提交锁，防止多标签页重复提交
+    if (TaskSyncManager.hasSubmissionLock('imageGeneration')) {
+      toast.error(t('alreadySubmitting', { defaultValue: '已有图像生成任务正在提交中，请稍后再试' }));
+      return null;
+    }
+    
+    // 检查是否与已有任务重复
+    if (checkDuplicateSubmission(options)) {
+      toast.error(t('duplicateSubmission', { defaultValue: '相同参数的图像生成任务已经在处理中，请勿重复提交' }));
+      return null;
+    }
+    
+    // 获取提交锁
+    TaskSyncManager.setSubmissionLock('imageGeneration');
+    
+    // 检查提交锁定状态
+    if (submissionLockRef.current) {
+      notify("请求处理中，请勿重复提交", 'info');
+      return null;
+    }
+    
+    // 检查提交时间间隔
+    const now = Date.now();
+    if (now - lastSubmitTimeRef.current < SUBMIT_LOCK_TIMEOUT) {
+      notify(`操作太频繁，请等待${Math.ceil(SUBMIT_LOCK_TIMEOUT/1000)}秒后再试`, 'info');
+      return null;
+    }
+    
+    // 检查跨标签页任务状态
+    if (!TaskSyncManager.canSubmitTask()) {
+      notify("有任务正在其他标签页中处理，请稍后再试", 'info');
+      return null;
+    }
+    
+    // 验证参数
     if (!prompt.trim() && !image && (!style || style === '自定义')) {
       setError("请输入提示词，或上传图片并选择艺术风格");
       return null;
@@ -282,6 +477,10 @@ export default function useImageGeneration(
     if (pendingTask && isSameRequest(pendingTask, options)) {
       console.log(`[useImageGeneration] 检测到未完成的相同任务: ${pendingTask.taskId}`);
       notify("继续处理之前的相同请求...", 'info');
+      
+      // 设置提交锁定和时间戳
+      submissionLockRef.current = true;
+      lastSubmitTimeRef.current = now;
       
       // 更新状态
       setError(null);
@@ -298,8 +497,17 @@ export default function useImageGeneration(
       // 开始恢复轮询
       startEnhancedPollingTaskStatus(pendingTask.taskId);
       
+      // 延迟释放提交锁定
+      setTimeout(() => {
+        submissionLockRef.current = false;
+      }, 2000);
+      
       return { taskId: pendingTask.taskId };
     }
+    
+    // 设置提交锁定和时间戳
+    submissionLockRef.current = true;
+    lastSubmitTimeRef.current = now;
     
     // 开始新的任务生成流程
     setError(null);
@@ -443,6 +651,17 @@ export default function useImageGeneration(
       updateGenerationStage('processing', 30);
       startEnhancedPollingTaskStatus(taskId);
       
+      // 记录到跨标签页同步管理器
+      TaskSyncManager.recordTask({
+        taskId,
+        timestamp: Date.now(),
+        status: 'processing',
+        params: options
+      });
+      
+      // 设置提交锁定并广播
+      TaskSyncManager.setSubmitLock();
+      
       return { taskId }; // 返回任务ID以支持外部状态监听
     } catch (err) {
       // 处理错误
@@ -459,11 +678,16 @@ export default function useImageGeneration(
       notify(`生成失败: ${errorMessage}`, 'error');
       
       return null;
+    } finally {
+      // 延迟释放锁定
+      setTimeout(() => {
+        submissionLockRef.current = false;
+      }, 2000);
     }
-  };
+  }, [userId, router, t]);
 
-  // 恢复任务处理
-  const recoverTask = async (taskId: string): Promise<boolean> => {
+  // 增强版的恢复任务函数，添加网络故障处理
+  const recoverTask = useCallback(async (taskId: string): Promise<boolean> => {
     try {
       const task = getPendingTask(taskId);
       if (!task) {
@@ -471,111 +695,103 @@ export default function useImageGeneration(
         return false;
       }
       
-      // 更新状态
-      setError(null);
-      setIsGenerating(true);
-      setStatus('loading');
-      setCurrentTaskId(task.taskId);
-      startTimeRef.current = task.timestamp;
+      // 检查是否与已有任务重复
+      if (checkDuplicateSubmission(task.params)) {
+        toast.error(t('duplicateTaskRecovery', { defaultValue: '相同参数的任务已经在处理中，无需重复恢复' }));
+        return false;
+      }
       
-      // 更新任务状态
+      console.log(`[任务恢复] 开始恢复任务 ${taskId}`);
+      
+      setIsGenerating(true);
+      setCurrentTaskId(task.taskId);
+      setError(null);
+      
+      // 更新状态为恢复中
       updatePendingTaskStatus(task.taskId, 'recovering');
       
-      // 显示通知
-      notify(`恢复任务 ${task.taskId}...`, 'info');
+      // 查询当前任务状态
+      const statusResponse = await fetch(`/api/image-task-status/${task.taskId}`);
+      console.log(`[任务恢复] 当前任务状态:`, statusResponse);
       
-      // 检查任务状态
-      const response = await fetch(`/api/image-task-status/${task.taskId}`);
-      
-      if (!response.ok) {
-        throw new Error(`检查任务状态失败: ${response.status}`);
+      // 如果任务已完成或失败，直接处理结果
+      if (['completed', 'failed'].includes(statusResponse.status)) {
+        console.log(`[任务恢复] 任务已${statusResponse.status === 'completed' ? '完成' : '失败'}`);
+        
+        // 使用前面定义的轮询结果处理函数
+        handlePollingResult({
+          status: statusResponse.status,
+          data: statusResponse.data,
+          error: statusResponse.error
+        } as PollingResult, task.taskId);
+        
+        setIsGenerating(false);
+        return true;
       }
       
-      const data = await response.json();
+      // 如果任务仍在进行中，开始轮询状态
+      console.log(`[任务恢复] 任务仍在进行中，开始轮询状态`);
+      toast.success(t('taskRecovering', { defaultValue: '正在恢复任务...' }));
       
-      // 根据任务状态处理
-      switch (data.status) {
-        case 'completed':
-          // 任务已完成，直接显示结果
-          updateGenerationStage('completed', 100);
-          setIsGenerating(false);
-          setStatus('success');
-          setCurrentTaskId(null);
-          
-          if (data.imageUrl) {
-            addGeneratedImage(data.imageUrl);
-            if (onSuccess) onSuccess(data.imageUrl);
-          }
-          
-          clearPendingTask(task.taskId);
-          notify('任务已完成', 'success');
-          return true;
-          
-        case 'failed':
-          // 任务失败，显示错误
-          updateGenerationStage('failed', 0);
-          setIsGenerating(false);
-          setStatus('error');
-          setCurrentTaskId(null);
-          setError(data.error || '任务处理失败');
-          
-          clearPendingTask(task.taskId);
-          notify(`任务处理失败: ${data.error || '未知错误'}`, 'error');
-          return false;
-          
-        case 'cancelled':
-          // 任务已取消
-          updateGenerationStage('failed', 0);
-          setIsGenerating(false);
-          setStatus('error');
-          setCurrentTaskId(null);
-          setError('任务已被取消');
-          
-          clearPendingTask(task.taskId);
-          notify('任务已被取消', 'info');
-          return false;
-          
-        case 'pending':
-        case 'processing':
-          // 任务仍在进行中，恢复轮询
-          const waitTime = Math.floor((Date.now() - task.timestamp) / 1000);
-          const [stage, percentage] = calculateStageFromWaitTime(waitTime);
-          updateGenerationStage(stage, percentage);
-          
-          notify(`继续轮询任务状态，当前状态: ${data.status}`, 'info');
-          startEnhancedPollingTaskStatus(task.taskId);
-          return true;
-          
-        default:
-          // 未知状态，视为错误
-          setError(`未知任务状态: ${data.status}`);
-          setIsGenerating(false);
-          setStatus('error');
-          setCurrentTaskId(null);
-          
-          updatePendingTaskStatus(task.taskId, 'error', `未知任务状态: ${data.status}`);
-          notify(`未知任务状态: ${data.status}`, 'error');
-          return false;
+      // 开始轮询任务状态
+      const pollingResult = await enhancedPollTaskStatus({
+        taskId,
+        initialDelay: 1000, // 恢复任务立即开始轮询
+        onUpdate: (data) => {
+          console.log(`[任务恢复] 状态更新: ${data.status}`);
+          // 更新本地存储中的任务状态
+          updatePendingTaskStatus(task.taskId, data.status);
+        }
+      });
+      
+      // 处理轮询结果
+      handlePollingResult(pollingResult, task.taskId);
+      
+      return true;
+    } catch (error: any) {
+      console.error('[任务恢复] 恢复任务时出错:', error);
+      setError(error.message || t('recoveryFailed', { defaultValue: '恢复任务失败' }));
+      toast.error(error.message || t('recoveryFailed', { defaultValue: '恢复任务失败' }));
+      
+      // 错误时也标记任务状态
+      if (task.taskId) {
+        updatePendingTaskStatus(task.taskId, 'error', error.message);
       }
-    } catch (error) {
-      // 处理错误
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      console.error('恢复任务失败:', errorMessage);
-      
-      setError(errorMessage);
-      setIsGenerating(false);
-      setStatus('error');
-      setCurrentTaskId(null);
-      
-      notify(`恢复任务失败: ${errorMessage}`, 'error');
       return false;
+    } finally {
+      setIsGenerating(false);
     }
-  };
+  }, [handlePollingResult, t]);
 
   // 放弃任务
   const discardTask = (taskId: string): void => {
     clearPendingTask(taskId);
     notify('已放弃任务', 'info');
+  };
+
+  /**
+   * 检查当前提交是否与已有的任务重复
+   * @param params 当前请求参数
+   * @returns true 如果是重复提交，false 如果不是重复提交
+   */
+  const checkDuplicateSubmission = (params: any): boolean => {
+    const pendingTasks = getAllPendingTasks();
+    
+    // 检查是否有相同参数的任务正在进行中
+    const duplicateTask = pendingTasks.find(task => {
+      // 只检查正在进行中的任务
+      const isActiveTask = ['pending', 'created', 'processing'].includes(task.status);
+      if (!isActiveTask) return false;
+      
+      // 任务开始时间在30分钟内，否则认为是过期任务
+      const isRecentTask = Date.now() - task.timestamp < 30 * 60 * 1000;
+      if (!isRecentTask) return false;
+      
+      // 检查请求参数是否相同
+      return isSameRequest(task, params);
+    });
+    
+    return !!duplicateTask;
   };
 
   return {
