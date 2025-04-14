@@ -16,13 +16,18 @@ import {
   PendingTask
 } from '@/utils/taskRecovery';
 import { enhancedPollTaskStatus } from '@/utils/taskPoller';
-import TaskSyncManager, { TaskStatus } from '@/utils/taskSync/taskSyncManager';
+import { TaskSyncManager } from '@/utils/taskSync/taskSyncManager';
 import { useRouter } from 'next/navigation';
 import toast from 'react-hot-toast';
 import { useTranslation } from '@/i18n/client';
 import { notify } from '@/utils/notification';
 import { trackPromptUsage } from '@/utils/tracking';
 import { authService } from '@/utils/auth-service';
+import logger from '@/utils/logger';
+import { useSession } from 'next-auth/react';
+import { v4 as uuidv4 } from 'uuid';
+import { trackEvent } from '@/utils/tracking';
+import { showNotification } from '@/utils/notification';
 
 // 图片大小限制配置
 const MAX_IMAGE_SIZE_KB = 6144; // 6MB
@@ -92,6 +97,8 @@ export default function useImageGeneration(
 
   const { t } = useTranslation('image');
   const router = useRouter();
+
+  const session = useSession();
 
   // 页面加载时清理过期任务
   useEffect(() => {
@@ -463,32 +470,52 @@ export default function useImageGeneration(
     
     console.log('[useImageGeneration] 开始生成图片流程');
     
-    // 防止未登录用户提交请求
-    if (!authService.isAuthenticated()) {
-      console.log('[useImageGeneration] 用户未登录，拒绝请求');
-      toast.error(t('loginRequired', { defaultValue: '请先登录' }));
-      router.push('/login');
+    // 检查用户是否已验证
+    if (!session?.user?.id) {
+      logger.warn("生成图片失败：用户未登录");
       return null;
     }
-    
-    // 检查是否有提交锁，防止多标签页重复提交
-    if (!TaskSyncManager.canSubmitTask()) {
-      console.log('[useImageGeneration] 检测到任务锁或活跃任务，拒绝请求');
-      toast.error(t('alreadySubmitting', { defaultValue: '已有图像生成任务正在提交中，请稍后再试' }));
+
+    // 检查任务同步服务是否锁定了提交
+    if (TaskSyncManager.hasSubmissionLock()) {
+      logger.warn(`[任务重复] 全局提交锁已激活，无法提交新任务`);
+      console.log(`[任务重复] 全局提交锁已激活，无法提交新任务`);
+      toast.warning("请等待当前任务完成");
       return null;
     }
-    
-    // 检查是否与已有任务重复
-    if (checkDuplicateSubmission(options)) {
-      console.log('[useImageGeneration] 检测到重复提交的任务，拒绝请求');
-      toast.error(t('duplicateSubmission', { defaultValue: '相同参数的图像生成任务已经在处理中，请勿重复提交' }));
-      return null;
+
+    // 检查是否有重复任务
+    const tasks = getAllPendingTasks();
+    if (tasks.length > 0 && !options.forced) {
+      const duplicateTask = tasks.find(task => {
+        return isSameRequest(task.params, options);
+      });
+
+      if (duplicateTask) {
+        logger.warn(`[任务重复] 发现重复任务，当前已有${tasks.length}个活跃任务`);
+        console.log(`[任务重复] 检测到重复参数：${JSON.stringify(options)}, 当前已有${tasks.length}个任务`);
+        toast.warning("相似任务正在处理中");
+        return null;
+      }
+    }
+
+    // 检查提交频率
+    if (!options.forced && lastSubmitTimeRef.current) {
+      const now = Date.now();
+      const diff = now - lastSubmitTimeRef.current;
+      if (diff < 1000) { // 1秒内不能重复提交
+        logger.warn(`[任务重复] 提交过于频繁，间隔 ${diff}ms`);
+        console.log(`[任务重复] 提交过于频繁：上次 ${lastSubmitTimeRef.current}, 当前 ${now}, 间隔 ${diff}ms`);
+        toast.warning("请勿频繁提交");
+        return null;
+      }
     }
     
     // 检查提交时间间隔
     const now = Date.now();
     if (now - lastSubmitTimeRef.current < SUBMIT_LOCK_TIMEOUT) {
       console.log('[useImageGeneration] 提交过于频繁，拒绝请求');
+      console.log(`[useImageGeneration] 上次提交时间: ${new Date(lastSubmitTimeRef.current).toISOString()}, 当前时间: ${new Date(now).toISOString()}`);
       notify(`操作太频繁，请等待${Math.ceil(SUBMIT_LOCK_TIMEOUT/1000)}秒后再试`, 'info');
       return null;
     }
@@ -529,7 +556,13 @@ export default function useImageGeneration(
       // 开始恢复轮询
       startEnhancedPollingTaskStatus(pendingTask.taskId);
       
-      // 延迟释放提交锁定（不需要手动释放，TaskSyncManager 会自动处理锁超时）
+      // 记录到跨标签页同步管理器
+      TaskSyncManager.recordTask({
+        taskId: pendingTask.taskId,
+        timestamp: Date.now(),
+        status: 'processing',
+        params: options
+      });
       
       return { taskId: pendingTask.taskId };
     }
@@ -684,9 +717,6 @@ export default function useImageGeneration(
         params: options
       });
       
-      // 设置提交锁定并广播
-      TaskSyncManager.setSubmitLock();
-      
       return { taskId }; // 返回任务ID以支持外部状态监听
     } catch (err) {
       // 处理错误
@@ -706,7 +736,7 @@ export default function useImageGeneration(
     } finally {
       // 不需要手动释放锁定，TaskSyncManager会自动处理锁超时
     }
-  }, [router, t]);
+  }, [router, t, session]);
 
   // 增强版的恢复任务函数，添加网络故障处理
   const recoverTask = useCallback(async (taskId: string): Promise<boolean> => {
