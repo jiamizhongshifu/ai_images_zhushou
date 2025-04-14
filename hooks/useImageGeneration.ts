@@ -470,7 +470,7 @@ export default function useImageGeneration(
     console.log('[useImageGeneration] 开始生成图片流程');
     
     // 检查用户是否已验证
-    if (!session?.user?.id) {
+    if (!session || session.status !== 'authenticated') {
       logger.warn("生成图片失败：用户未登录");
       return null;
     }
