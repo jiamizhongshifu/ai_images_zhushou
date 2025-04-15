@@ -45,4 +45,37 @@ else
   echo "1. 使用不同的网络连接"
   echo "2. 检查防火墙设置"
   echo "3. 使用VPN或其他代理服务"
-fi 
+fi
+
+# 图片生成任务优化部署脚本
+
+# 显示执行的命令
+set -x
+
+# 确保git状态干净
+git status
+
+# 添加修改的文件
+git add app/api/last-task-for-user/route.ts
+git add app/api/task-final-check/\[taskId\]/route.ts
+git add utils/taskRecovery.ts
+git add utils/taskPoller.ts
+git add hooks/useImageGeneration.ts
+git add app/components/TaskRecoveryDialog.tsx
+
+# 添加配置文件和部署指南
+mkdir -p deployment
+cp tmp/nginx.conf deployment/
+cp tmp/README.md deployment/
+git add deployment/
+
+# 提交修改
+git commit -m "修复：增强前端图片生成任务可靠性，添加网络故障恢复，减少本地存储大小，实现临时ID映射"
+
+# 推送到远程仓库
+git push origin main
+
+# 提示下一步操作
+echo "代码已推送至远程仓库，请登录Vercel检查部署状态"
+echo "如果部署继续失败，请手动运行以下命令修复类型错误:"
+echo "pnpm type-check" 
