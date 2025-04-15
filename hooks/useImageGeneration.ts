@@ -813,7 +813,7 @@ export default function useImageGeneration(
         clearTimeout(timeoutId);
         
         // 特殊处理AbortError（超时）
-        if (fetchError.name === 'AbortError') {
+        if (fetchError instanceof Error && fetchError.name === 'AbortError') {
           console.error('[useImageGeneration] 请求超时:', fetchError);
           throw new Error('请求超时，请稍后重试');
         }
