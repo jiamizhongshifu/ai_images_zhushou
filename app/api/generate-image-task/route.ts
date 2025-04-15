@@ -1031,19 +1031,19 @@ export async function POST(request: NextRequest) {
           // 根据实际图片比例决定输出尺寸
           logger.info(`检测到图片比例: ${aspectRatio}`);
           
-          if (standardAspectRatio) {
-            logger.info(`标准化比例: ${standardAspectRatio}`);
-            
-            // 根据标准化比例选择合适的DALL-E尺寸
-            if (standardAspectRatio.includes('16:9') || standardAspectRatio.includes('4:3') || standardAspectRatio.includes('3:2')) {
-              size = "1792x1024"; // 宽屏比例
-              logger.info(`根据图片比例选择宽屏尺寸: ${size}`);
-            } else if (standardAspectRatio.includes('9:16') || standardAspectRatio.includes('3:4') || standardAspectRatio.includes('2:3')) {
-              size = "1024x1792"; // 高屏比例
-              logger.info(`根据图片比例选择竖屏尺寸: ${size}`);
-            } else {
-              logger.info(`根据图片比例选择标准尺寸: ${size}`);
-            }
+          // 从aspectRatio中提取宽高比例
+          const [width, height] = aspectRatio.split(':').map(Number);
+          const ratio = width / height;
+          
+          // 确保始终基于实际比例选择合适的输出尺寸
+          if (ratio > 1) { // 宽大于高
+            size = "1792x1024"; // 宽屏比例
+            logger.info(`根据宽高比(${ratio.toFixed(2)})选择宽屏尺寸: ${size}`);
+          } else if (ratio < 1) { // 高大于宽
+            size = "1024x1792"; // 竖屏比例
+            logger.info(`根据宽高比(${ratio.toFixed(2)})选择竖屏尺寸: ${size}`);
+          } else {
+            logger.info(`根据宽高比(${ratio.toFixed(2)})选择正方形尺寸: ${size}`);
           }
         }
         // 记录比例信息
@@ -1062,11 +1062,26 @@ export async function POST(request: NextRequest) {
         if (image) {
           // 构建针对图片转换的标准化提示词，自然表达比例需求
           const styleText = style ? `使用${style}风格` : "";
-          const aspectText = aspectRatio ? `，保持${aspectRatio}比例` : "";
-          const sizeHint = size.includes("1792x1024") ? "横向图片" : (size.includes("1024x1792") ? "竖向图片" : "正方形图片");
           
-          // 更自然地表达比例需求，不使用技术参数
-          finalPrompt = `${promptText}，${styleText}${aspectText}。请生成${sizeHint}，保留原图中的关键内容和元素。`;
+          // 根据图片比例动态构建提示词，避免矛盾的尺寸指令
+          let sizeInstruction = "";
+          if (aspectRatio) {
+            // 当有明确的比例要求时，强调保持原始比例
+            const [width, height] = aspectRatio.split(':').map(Number);
+            if (width > height) {
+              sizeInstruction = "请生成符合原图宽高比的横向图片";
+            } else if (height > width) {
+              sizeInstruction = "请生成符合原图宽高比的竖向图片";
+            } else {
+              sizeInstruction = "请生成符合原图宽高比的正方形图片";
+            }
+          } else {
+            // 没有明确比例要求时，默认使用正方形
+            sizeInstruction = "请保持原图的主要内容和构图";
+          }
+          
+          // 更自然地表达比例需求，避免矛盾的指令
+          finalPrompt = `${promptText}，${styleText}${aspectRatio ? `，保持${aspectRatio}比例` : ""}。${sizeInstruction}，保留原图中的关键内容和元素。`;
           
           // 处理图片数据...
           let imageData;
@@ -1101,11 +1116,25 @@ export async function POST(request: NextRequest) {
         } else {
           // 没有图片时的简化提示词
           const styleText = style ? `使用${style}风格` : "";
-          // 简化比例表达，采用更自然的表述
-          const sizeHint = size.includes("1792x1024") ? "横向图片" : (size.includes("1024x1792") ? "竖向图片" : "正方形图片");
           
-          // 更简洁自然的提示词，避免技术参数
-          finalPrompt = `${promptText}${styleText ? '，' + styleText : ''}。请生成${sizeHint}。`;
+          // 根据比例参数确定输出格式指令
+          let sizeInstruction = "";
+          if (aspectRatio) {
+            const [width, height] = aspectRatio.split(':').map(Number);
+            if (width > height) {
+              sizeInstruction = "横向图片";
+            } else if (height > width) {
+              sizeInstruction = "竖向图片";
+            } else {
+              sizeInstruction = "正方形图片";
+            }
+          } else {
+            // 没有比例参数时，根据size变量决定
+            sizeInstruction = size.includes("1792x1024") ? "横向图片" : (size.includes("1024x1792") ? "竖向图片" : "正方形图片");
+          }
+          
+          // 更简洁自然的提示词，避免技术参数和矛盾指令
+          finalPrompt = `${promptText}${styleText ? '，' + styleText : ''}。请生成${sizeInstruction}${aspectRatio ? `，比例为${aspectRatio}` : ""}。`;
           
           // 没有图片时，只添加文本内容
           userMessageContent.push({
