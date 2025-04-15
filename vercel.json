@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "buildCommand": "SHARP_IGNORE_GLOBAL=true pnpm install && pnpm run build",
+  "buildCommand": "SHARP_IGNORE_GLOBAL=true pnpm install && chmod +x ./scripts/update-route-params.sh && ./scripts/update-route-params.sh && next build",
   "installCommand": "SHARP_IGNORE_GLOBAL=true pnpm install",
   "framework": "nextjs",
   "env": {
@@ -28,10 +28,50 @@
       "maxDuration": 300
     }
   },
+  "outputDirectory": ".next",
+  "regions": ["iad1"],
+  "ignoreCommand": "echo Skipping ignored files...",
+  "git": {
+    "deploymentEnabled": {
+      "main": true
+    }
+  },
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        {
+          "key": "X-Content-Type-Options",
+          "value": "nosniff"
+        },
+        {
+          "key": "X-Frame-Options",
+          "value": "DENY"
+        },
+        {
+          "key": "X-XSS-Protection",
+          "value": "1; mode=block"
+        }
+      ]
+    },
+    {
+      "source": "/api/(.*)",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-store, max-age=0"
+        }
+      ]
+    }
+  ],
   "crons": [
     {
       "path": "/api/cron/cleanup-tasks",
-      "schedule": "0 0 * * *"
+      "schedule": "0 */2 * * *"
+    },
+    {
+      "path": "/api/cron/fix-pending-orders",
+      "schedule": "*/15 * * * *"
     }
   ]
 }
