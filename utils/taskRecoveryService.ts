@@ -1,6 +1,6 @@
 "use client";
 
-import { PendingTask, getPendingTask, updatePendingTaskStatus, clearPendingTask } from './taskRecovery';
+import { PendingTask, getPendingTask, updateTaskStatus, clearPendingTask } from './taskRecovery';
 import useNotification from '@/hooks/useNotification';
 
 interface RecoveryOptions {
@@ -46,7 +46,7 @@ export default class TaskRecoveryService {
       }
       
       // 更新任务状态
-      updatePendingTaskStatus(task.taskId, 'recovering');
+      updateTaskStatus(task.taskId, 'recovering');
       
       // 检查任务状态
       const response = await fetch(`/api/image-task-status/${task.taskId}`);
@@ -108,7 +108,7 @@ export default class TaskRecoveryService {
           if (onError) {
             onError(`未知任务状态: ${data.status}`);
           }
-          updatePendingTaskStatus(task.taskId, 'error', `未知任务状态: ${data.status}`);
+          updateTaskStatus(task.taskId, 'error', `未知任务状态: ${data.status}`);
           this.showNotification(`未知任务状态: ${data.status}`, 'error');
           break;
       }
@@ -121,7 +121,7 @@ export default class TaskRecoveryService {
         onError(errorMessage);
       }
       
-      updatePendingTaskStatus(task.taskId, 'error', errorMessage);
+      updateTaskStatus(task.taskId, 'error', errorMessage);
       this.showNotification(`恢复任务失败: ${errorMessage}`, 'error');
     }
   }
