@@ -10,9 +10,9 @@ const STATUS_TIMEOUT_SEC = 360; // 6分钟超时
  */
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ taskId: string }> }
+  { params }: { params: { taskId: string } }
 ) {
-  const { taskId } = await params;
+  const { taskId } = params;
   
   if (!taskId) {
     logger.warn('[任务状态API] 缺少任务ID参数');

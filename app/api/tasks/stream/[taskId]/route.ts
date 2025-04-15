@@ -10,9 +10,9 @@ const encoder = new TextEncoder();
  */
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ taskId: string }> }
+  { params }: { params: { taskId: string } }
 ) {
-  const { taskId } = await params;
+  const { taskId } = params;
   console.log(`[任务状态流] 建立连接: ${taskId}`);
 
   // 创建Supabase客户端
