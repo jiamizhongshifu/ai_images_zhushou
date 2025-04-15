@@ -58,7 +58,7 @@ export async function GET(
           const { data, error } = await supabase
             .from('image_tasks')
             .select('*')
-            .eq('task_id', taskId)
+            .eq('id', taskId)  // 使用id而不是task_id
             .eq('user_id', user.id)
             .single();
           
@@ -83,18 +83,18 @@ export async function GET(
           // 构建状态消息
           const statusMessage = {
             status: data.status,
-            taskId: data.task_id,
+            taskId: data.id,  // 返回id作为taskId
             created_at: data.created_at,
             updated_at: data.updated_at
           };
           
           // 根据任务状态添加额外信息
-          if (data.status === TaskStatus.COMPLETED) {
+          if (data.status === 'completed') {
             Object.assign(statusMessage, {
               imageUrl: data.image_url,
               completed_at: data.completed_at
             });
-          } else if (data.status === TaskStatus.FAILED || data.status === TaskStatus.CANCELLED) {
+          } else if (data.status === 'failed' || data.status === 'cancelled') {
             Object.assign(statusMessage, {
               error: data.error_message
             });
@@ -115,7 +115,7 @@ export async function GET(
           controller.enqueue(encoder.encode(formatSSE('message', statusMessage)));
           
           // 如果任务已完成或失败，停止轮询
-          if ([TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED].includes(data.status as TaskStatus)) {
+          if (['completed', 'failed', 'cancelled'].includes(data.status)) {
             console.log(`[任务状态流] 任务${taskId}已${data.status}，关闭连接`);
             isClosed = true;
             controller.close();
