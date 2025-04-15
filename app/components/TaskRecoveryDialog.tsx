@@ -10,15 +10,15 @@ import { toast } from 'react-hot-toast';
 import { Loader2, AlertTriangle, Trash, RefreshCw } from 'lucide-react';
 
 export interface TaskRecoveryDialogProps {
-  onRecovered: (taskId: string) => void;
-  onDiscarded: () => void;
+  onRecover: (taskId: string) => void;
+  onDiscard: () => void;
 }
 
 /**
  * 任务恢复对话框组件
  * 自动检测浏览器本地存储中的待处理任务，并提供恢复或丢弃选项
  */
-export default function TaskRecoveryDialog({ onRecovered, onDiscarded }: TaskRecoveryDialogProps) {
+export default function TaskRecoveryDialog({ onRecover, onDiscard }: TaskRecoveryDialogProps) {
   const [open, setOpen] = useState(false);
   const [pendingTasks, setPendingTasks] = useState<PendingTask[]>([]);
   const [selectedTask, setSelectedTask] = useState<PendingTask | null>(null);
@@ -89,7 +89,7 @@ export default function TaskRecoveryDialog({ onRecovered, onDiscarded }: TaskRec
       if (success) {
         console.log(`[任务恢复] 任务恢复成功: ${selectedTask.taskId}`);
         toast.success('正在恢复之前的任务');
-        onRecovered(selectedTask.taskId);
+        onRecover(selectedTask.taskId);
         setOpen(false);
       } else {
         console.error(`[任务恢复] 任务恢复失败: ${selectedTask.taskId}`);
@@ -118,7 +118,7 @@ export default function TaskRecoveryDialog({ onRecovered, onDiscarded }: TaskRec
       if (newTaskId) {
         console.log(`[任务恢复] 任务重试成功，新任务ID: ${newTaskId}`);
         toast.success('正在重新创建任务');
-        onRecovered(newTaskId);
+        onRecover(newTaskId);
         setOpen(false);
       } else {
         console.error(`[任务恢复] 任务重试失败`);
@@ -148,7 +148,7 @@ export default function TaskRecoveryDialog({ onRecovered, onDiscarded }: TaskRec
       setSelectedTask(remainingTasks[0]);
     } else {
       setOpen(false);
-      onDiscarded();
+      onDiscard();
     }
   };
 

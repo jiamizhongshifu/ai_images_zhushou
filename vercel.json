@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "buildCommand": "SHARP_IGNORE_GLOBAL=true pnpm install && chmod +x ./scripts/update-route-params.sh && ./scripts/update-route-params.sh && next build",
+  "buildCommand": "SHARP_IGNORE_GLOBAL=true pnpm install && chmod +x ./scripts/fix-next15-params.sh && ./scripts/fix-next15-params.sh && next build",
   "installCommand": "SHARP_IGNORE_GLOBAL=true pnpm install",
   "framework": "nextjs",
   "env": {
