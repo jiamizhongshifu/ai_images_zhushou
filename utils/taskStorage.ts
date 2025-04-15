@@ -3,25 +3,18 @@
  * 用于在localStorage中存储、检索和管理图像生成任务信息
  */
 
+import { PendingTask } from '@/types/task';
+import { TaskStatus } from '@/types/task';
+
 // 存储键前缀和过期时间
 const TASK_STORAGE_KEY = 'img_task_';
 const TASK_LIST_KEY = 'img_task_list';
 const TASK_EXPIRATION = 24 * 60 * 60 * 1000; // 24小时过期时间
 
-// 任务信息接口
-export interface StoredTaskInfo {
-  taskId: string;
-  params: any;
-  timestamp: number;
-  status?: string;
-  lastChecked?: number;
-  errorMessage?: string;
-}
-
 /**
  * 保存任务信息到本地存储
  */
-export function savePendingTask(taskInfo: StoredTaskInfo): void {
+export function savePendingTask(taskInfo: PendingTask): void {
   try {
     if (!taskInfo.taskId) {
       console.error('[任务存储] 无法保存任务，缺少taskId');
@@ -55,8 +48,8 @@ export function savePendingTask(taskInfo: StoredTaskInfo): void {
  * 更新任务状态
  */
 export function updatePendingTaskStatus(
-  taskId: string, 
-  status: string, 
+  taskId: string,
+  status: TaskStatus,
   errorMessage?: string
 ): void {
   try {
@@ -64,31 +57,38 @@ export function updatePendingTaskStatus(
     const rawTask = localStorage.getItem(taskKey);
     
     if (!rawTask) {
-      console.warn(`[任务存储] 未找到任务 ${taskId}，无法更新状态`);
+      console.warn(`[存储] 未找到任务${taskId}的信息`);
       return;
     }
     
-    const task = JSON.parse(rawTask) as StoredTaskInfo;
+    const task = JSON.parse(rawTask) as PendingTask;
     
     // 更新任务状态
-    const updatedTask = {
-      ...task,
-      status,
-      lastChecked: Date.now(),
-      errorMessage: errorMessage || task.errorMessage
-    };
+    task.status = status;
+    task.lastUpdated = Date.now();
     
-    localStorage.setItem(taskKey, JSON.stringify(updatedTask));
-    console.log(`[任务存储] 已更新任务 ${taskId} 状态为 ${status}`);
+    if (errorMessage) {
+      task.errorMessage = errorMessage;
+    }
+    
+    // 保存更新后的任务信息
+    localStorage.setItem(taskKey, JSON.stringify(task));
+    
+    // 如果任务已完成或失败，从任务列表中移除
+    if (status === TaskStatus.COMPLETED || status === TaskStatus.FAILED || status === TaskStatus.CANCELLED) {
+      removeTaskFromList(taskId);
+    }
+    
+    console.log(`[存储] 已更新任务${taskId}状态为${status}`);
   } catch (error) {
-    console.error(`[任务存储] 更新任务 ${taskId} 状态失败:`, error);
+    console.error(`[存储] 更新任务${taskId}状态失败:`, error);
   }
 }
 
 /**
  * 获取指定任务信息
  */
-export function getPendingTask(taskId: string): StoredTaskInfo | null {
+export function getPendingTask(taskId: string): PendingTask | null {
   try {
     const taskKey = `${TASK_STORAGE_KEY}${taskId}`;
     const rawTask = localStorage.getItem(taskKey);
@@ -97,7 +97,7 @@ export function getPendingTask(taskId: string): StoredTaskInfo | null {
       return null;
     }
     
-    const task = JSON.parse(rawTask) as StoredTaskInfo;
+    const task = JSON.parse(rawTask) as PendingTask;
     
     // 检查任务是否过期
     if (Date.now() - task.timestamp > TASK_EXPIRATION) {
@@ -131,6 +131,20 @@ export function clearPendingTask(taskId: string): void {
 }
 
 /**
+ * 从任务列表中移除指定任务
+ */
+function removeTaskFromList(taskId: string): void {
+  try {
+    const taskList = getTaskList();
+    const updatedList = taskList.filter(id => id !== taskId);
+    localStorage.setItem(TASK_LIST_KEY, JSON.stringify(updatedList));
+    console.log(`[存储] 已从任务列表中移除任务${taskId}`);
+  } catch (error) {
+    console.error(`[存储] 从任务列表移除任务${taskId}失败:`, error);
+  }
+}
+
+/**
  * 获取任务列表
  */
 function getTaskList(): string[] {
@@ -138,7 +152,7 @@ function getTaskList(): string[] {
     const rawList = localStorage.getItem(TASK_LIST_KEY);
     return rawList ? JSON.parse(rawList) : [];
   } catch (error) {
-    console.error('[任务存储] 获取任务列表失败:', error);
+    console.error('[存储] 获取任务列表失败:', error);
     return [];
   }
 }
@@ -146,7 +160,7 @@ function getTaskList(): string[] {
 /**
  * 检查是否有未完成的任务
  */
-export function checkPendingTasks(): StoredTaskInfo | null {
+export function checkPendingTasks(): PendingTask | null {
   try {
     // 获取所有任务ID
     const taskIds = getTaskList();
@@ -157,7 +171,7 @@ export function checkPendingTasks(): StoredTaskInfo | null {
     }
     
     const now = Date.now();
-    let mostRecentTask: StoredTaskInfo | null = null;
+    let mostRecentTask: PendingTask | null = null;
     
     // 遍历所有任务，找出最近的任务并清理过期任务
     for (const taskId of taskIds) {
@@ -193,10 +207,10 @@ export function checkPendingTasks(): StoredTaskInfo | null {
 /**
  * 获取所有未完成的任务
  */
-export function getAllPendingTasks(): StoredTaskInfo[] {
+export function getAllPendingTasks(): PendingTask[] {
   try {
     const taskIds = getTaskList();
-    const pendingTasks: StoredTaskInfo[] = [];
+    const pendingTasks: PendingTask[] = [];
     const now = Date.now();
     
     for (const taskId of taskIds) {
@@ -229,7 +243,7 @@ export function getAllPendingTasks(): StoredTaskInfo[] {
 /**
  * 比较两个任务请求是否相同
  */
-export function isSameRequest(task: StoredTaskInfo, newParams: any): boolean {
+export function isSameRequest(task: PendingTask, newParams: any): boolean {
   if (!task || !task.params || !newParams) return false;
   
   // 比较基本参数
@@ -262,7 +276,7 @@ export function cleanupExpiredTasks(): void {
         continue;
       }
       
-      const task = JSON.parse(rawTask) as StoredTaskInfo;
+      const task = JSON.parse(rawTask) as PendingTask;
       
       // 检查是否过期或已完成
       if (

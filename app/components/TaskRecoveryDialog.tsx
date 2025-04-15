@@ -11,16 +11,10 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Clock, RefreshCw, AlertCircle } from "lucide-react";
-
-interface PendingTask {
-  taskId: string;
-  status: string;
-  timestamp: number;
-  lastUpdated?: number;
-  params: any;
-  error?: string;
-  errorMessage?: string;
-}
+import { formatDistanceToNow } from 'date-fns';
+import { zhCN } from 'date-fns/locale';
+import { getAllPendingTasks } from '@/utils/taskStorage';
+import { PendingTask } from '@/types/task';
 
 interface TaskRecoveryDialogProps {
   onRecover: (task: PendingTask) => void;

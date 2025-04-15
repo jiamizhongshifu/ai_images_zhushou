@@ -5,6 +5,7 @@
 
 import { updatePendingTaskStatus } from './taskStorage';
 import { TASK_CONFIG } from '@/constants/taskConfig';
+import { TaskStatus } from '@/types/task';
 
 // 轮询配置选项接口
 export interface PollOptions {
@@ -14,21 +15,15 @@ export interface PollOptions {
   exponentialFactor?: number;
   failureRetries?: number;
   onProgress?: (progress: number, stage: string) => void;
-  onStateChange?: (state: string) => void;
+  onStateChange?: (state: TaskStatus) => void;
 }
 
 // 轮询状态
-export type PollingState = 
-  | 'idle'
-  | 'polling'
-  | 'completed'
-  | 'failed'
-  | 'timeout'
-  | 'cancelled';
+export type PollingState = TaskStatus;
 
 // 轮询结果
 export interface PollingResult {
-  status: PollingState;
+  status: TaskStatus;
   data?: any;
   error?: string;
   attempts: number;
@@ -61,19 +56,19 @@ export async function enhancedPollTaskStatus(
   const startTime = Date.now();
   
   // 更新轮询状态
-  const updateState = (state: PollingState) => {
+  const updateState = (state: TaskStatus) => {
     if (onStateChange) {
       onStateChange(state);
     }
   };
   
   // 初始化状态
-  updateState('polling');
+  updateState(TaskStatus.PROCESSING);
   
   // 取消轮询函数
   const cancel = () => {
     cancelled = true;
-    updateState('cancelled');
+    updateState(TaskStatus.CANCELLED);
     console.log(`[轮询] 任务${taskId}轮询已取消`);
   };
   
@@ -110,7 +105,7 @@ export async function enhancedPollTaskStatus(
       // 如果已取消，停止轮询
       if (cancelled) {
         reject({
-          status: 'cancelled',
+          status: TaskStatus.CANCELLED,
           error: '轮询已取消',
           attempts,
           elapsedTime: Date.now() - startTime
@@ -161,9 +156,9 @@ export async function enhancedPollTaskStatus(
         // 检查任务是否完成
         if (result.status === TASK_CONFIG.TASK_STATUS.COMPLETED) {
           console.log(`[轮询] 任务${taskId}已完成`);
-          updateState('completed');
+          updateState(TaskStatus.COMPLETED);
           resolve({
-            status: 'completed',
+            status: TaskStatus.COMPLETED,
             data: result,
             attempts,
             elapsedTime: Date.now() - startTime
@@ -174,17 +169,17 @@ export async function enhancedPollTaskStatus(
         // 检查任务是否失败
         if (result.status === TASK_CONFIG.TASK_STATUS.FAILED) {
           console.log(`[轮询] 任务${taskId}失败: ${result.error || '未知错误'}`);
-          updateState('failed');
+          updateState(TaskStatus.FAILED);
           
           // 更新任务本地存储状态
           updatePendingTaskStatus(
             taskId, 
-            'failed', 
+            TaskStatus.FAILED,
             result.error || '图片生成失败'
           );
           
           reject({
-            status: 'failed',
+            status: TaskStatus.FAILED,
             error: result.error || '图片生成失败',
             attempts,
             elapsedTime: Date.now() - startTime
@@ -195,44 +190,21 @@ export async function enhancedPollTaskStatus(
         // 检查是否达到最大尝试次数
         if (attempts >= maxAttempts) {
           console.log(`[轮询] 任务${taskId}超过最大尝试次数`);
-          updateState('timeout');
+          updateState(TaskStatus.FAILED);
           
           // 更新任务本地存储状态
           updatePendingTaskStatus(
             taskId, 
-            'timeout', 
-            '轮询超时，请刷新页面查看结果'
+            TaskStatus.FAILED,
+            '任务处理超时'
           );
           
-          // 超过最大尝试次数，但不立即失败，先检查一下任务是否还在进行
-          try {
-            const finalCheckResponse = await fetch(`/api/task-final-check/${taskId}`);
-            const finalStatus = await finalCheckResponse.json();
-            
-            if (finalStatus.status === 'completed') {
-              updateState('completed');
-              resolve({
-                status: 'completed',
-                data: finalStatus,
-                attempts,
-                elapsedTime: Date.now() - startTime
-              });
-            } else {
-              reject({
-                status: 'timeout',
-                error: '任务超时，但后台处理可能仍在继续',
-                attempts,
-                elapsedTime: Date.now() - startTime
-              });
-            }
-          } catch (finalCheckError) {
-            reject({
-              status: 'timeout',
-              error: '轮询超时，无法获取最终状态',
-              attempts,
-              elapsedTime: Date.now() - startTime
-            });
-          }
+          reject({
+            status: TaskStatus.FAILED,
+            error: '任务处理超时',
+            attempts,
+            elapsedTime: Date.now() - startTime
+          });
           return;
         }
         
