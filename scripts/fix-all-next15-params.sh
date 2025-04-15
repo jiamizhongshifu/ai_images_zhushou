@@ -25,18 +25,27 @@ FIXED_COUNT=0
 for file in $ROUTE_FILES; do
   echo -e "检查文件: $file"
   
-  # 检查文件是否包含Promise<{ 类型的参数
-  if grep -q "params: Promise<{" "$file"; then
+  # 检查文件是否包含需要修复的参数模式
+  if grep -q "params: Promise<{" "$file" || grep -q "{ params }: { params:" "$file"; then
     echo -e "${YELLOW}修复文件: $file${NC}"
     
     # 备份原始文件
     cp "$file" "${file}.bak"
     
-    # 使用sed替换Promise<{ 为 {
+    # 修复 Promise<{ 格式
     sed -i.temp 's/params: Promise<{ \([^}]*\)}/params: { \1}/g' "$file"
     
-    # 使用sed替换await params 为 params
+    # 修复 await params 
     sed -i.temp 's/= await params/= params/g' "$file"
+    
+    # 修复 { params }: { params: { 格式为 context: { params: {
+    sed -i.temp 's/{ params }: { params: { \([^}]*\) }/context: { params: { \1 } }/g' "$file"
+    
+    # 修复 params.taskId 为 context.params.taskId
+    sed -i.temp 's/params\.\([a-zA-Z0-9_]*\)/context.params.\1/g' "$file"
+    
+    # 修复 const { taskId } = params 为 const { taskId } = context.params
+    sed -i.temp 's/const { \([^}]*\) } = params/const { \1 } = context.params/g' "$file"
     
     # 删除临时文件
     rm -f "${file}.temp"
