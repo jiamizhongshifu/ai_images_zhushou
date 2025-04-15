@@ -252,7 +252,8 @@ export async function enhancedPollTaskStatus(
         
         // 如果连续失败次数超过限制，抛出错误
         if (consecutiveFailures > failureRetries) {
-          reject(new Error(`轮询失败: ${error.message}`));
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          reject(new Error(`轮询失败: ${errorMessage}`));
           return;
         }
         
