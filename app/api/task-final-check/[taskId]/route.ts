@@ -22,120 +22,143 @@ const logger = {
 };
 
 /**
- * 任务最终状态查询API
- * 此端点绕过缓存和中间状态，直接查询数据库中的实际任务状态
- * 主要用于在网络错误或其他前端问题时，获取任务的真实状态
+ * 任务最终状态检查API
+ * 直接从数据库获取任务状态，作为备用方案
  */
 export async function GET(
   request: NextRequest,
   context: { params: Promise<{ taskId: string }> }
 ) {
   try {
-    // 生成请求ID，用于跟踪日志
+    // 生成请求ID
     const requestId = Math.random().toString(36).substring(2, 10);
     
-    // 获取任务ID - 注意Next.js 15需要await params
+    // 获取任务ID
     const params = await context.params;
     const { taskId } = params;
     
-    logger.info(`[${requestId}] 最终状态检查: ${taskId}`);
+    logger.info(`[${requestId}] 获取任务${taskId}的最终状态`);
     
     if (!taskId) {
-      logger.warn(`[${requestId}] 缺少任务ID`);
+      logger.warn(`[${requestId}] 缺少任务ID参数`);
       return NextResponse.json(
-        { error: '缺少任务ID', code: 'missing_task_id' },
+        { success: false, error: '缺少任务ID' },
         { status: 400 }
       );
     }
     
-    // 创建Supabase客户端
+    // 检查是否是内部调用
+    const isInternalCall = request.headers.get('authorization') === `Bearer ${process.env.TASK_PROCESS_SECRET_KEY}`;
+    
+    // 获取Supabase客户端
     const supabase = await createClient();
     
-    // 尝试获取用户信息
-    const { data: { user }, error: authError } = await supabase.auth.getUser();
-    
-    // 如果没有用户认证，返回错误
-    if (authError || !user) {
-      logger.warn(`[${requestId}] 用户未认证，无法执行最终状态检查`);
-      return NextResponse.json(
-        { error: '未授权访问', code: 'unauthorized' },
-        { status: 401 }
-      );
-    }
-    
-    logger.info(`[${requestId}] 用户已认证: ${user.id}, 最终状态检查: ${taskId}`);
-    
-    // 直接查询数据库，跳过缓存和缓存验证
-    const { data, error } = await supabase
-      .from('image_tasks')
-      .select('*')
-      .eq('task_id', taskId)
-      .eq('user_id', user.id)
-      .single();
-    
-    if (error) {
-      logger.error(`[${requestId}] 最终状态检查失败: ${error.message}`);
+    // 验证权限
+    if (!isInternalCall) {
+      // 非内部调用需要验证用户身份
+      const { data: { user }, error: authError } = await supabase.auth.getUser();
       
-      // 任务不存在的情况
-      if (error.code === 'PGRST116') {
+      if (authError || !user) {
+        logger.warn(`[${requestId}] 用户未认证，拒绝访问`);
         return NextResponse.json(
-          { 
-            status: 'unknown',
-            error: '任务不存在或无权访问', 
-            code: 'task_not_found' 
-          },
+          { success: false, error: '未授权访问' },
+          { status: 401 }
+        );
+      }
+      
+      // 检查用户是否有权限访问该任务
+      const { data: taskData, error: taskError } = await supabase
+        .from('image_tasks')
+        .select('user_id, status, image_url, error_message, created_at, updated_at, completed_at')
+        .eq('task_id', taskId)
+        .single();
+      
+      if (taskError) {
+        if (taskError.code === 'PGRST116') {
+          logger.warn(`[${requestId}] 任务${taskId}不存在`);
+          return NextResponse.json(
+            { success: false, error: '任务不存在' },
+            { status: 404 }
+          );
+        }
+        
+        logger.error(`[${requestId}] 查询任务时出错: ${taskError.message}`);
+        return NextResponse.json(
+          { success: false, error: `查询失败: ${taskError.message}` },
+          { status: 500 }
+        );
+      }
+      
+      if (!taskData) {
+        logger.warn(`[${requestId}] 任务${taskId}不存在`);
+        return NextResponse.json(
+          { success: false, error: '任务不存在' },
           { status: 404 }
         );
       }
       
-      return NextResponse.json(
-        { 
-          status: 'unknown',
-          error: '查询任务状态失败', 
-          details: error.message, 
-          code: 'query_error' 
-        },
-        { status: 500 }
-      );
+      if (taskData.user_id !== user.id) {
+        logger.warn(`[${requestId}] 用户${user.id}无权访问任务${taskId}`);
+        return NextResponse.json(
+          { success: false, error: '无权访问该任务' },
+          { status: 403 }
+        );
+      }
+      
+      // 计算等待时间
+      const waitTime = Math.floor((Date.now() - new Date(taskData.created_at).getTime()) / 1000);
+      
+      // 返回任务状态
+      return NextResponse.json({
+        success: true,
+        taskId,
+        status: taskData.status,
+        imageUrl: taskData.image_url,
+        error: taskData.error_message,
+        waitTime,
+        created_at: taskData.created_at,
+        updated_at: taskData.updated_at,
+        completed_at: taskData.completed_at
+      });
+    } else {
+      // 内部调用可以直接访问所有任务
+      logger.info(`[${requestId}] 内部调用，查询任务${taskId}`);
+      
+      const { data: taskData, error: taskError } = await supabase
+        .from('image_tasks')
+        .select('*')
+        .eq('task_id', taskId)
+        .single();
+      
+      if (taskError) {
+        logger.error(`[${requestId}] 内部调用查询任务失败: ${taskError.message}`);
+        return NextResponse.json(
+          { success: false, error: `查询失败: ${taskError.message}` },
+          { status: 500 }
+        );
+      }
+      
+      if (!taskData) {
+        logger.warn(`[${requestId}] 任务${taskId}不存在`);
+        return NextResponse.json(
+          { success: false, error: '任务不存在' },
+          { status: 404 }
+        );
+      }
+      
+      const waitTime = Math.floor((Date.now() - new Date(taskData.created_at).getTime()) / 1000);
+      
+      // 返回完整任务信息
+      return NextResponse.json({
+        success: true,
+        task: taskData,
+        waitTime
+      });
     }
-    
-    if (!data) {
-      logger.warn(`[${requestId}] 最终状态检查: 任务不存在或无权访问: ${taskId}`);
-      return NextResponse.json(
-        { 
-          status: 'unknown',
-          error: '任务不存在或无权访问', 
-          code: 'task_not_found' 
-        },
-        { status: 404 }
-      );
-    }
-    
-    // 构建结果
-    const result = {
-      taskId: data.task_id,
-      status: data.status || 'pending',
-      imageUrl: data.image_url || null,
-      error: data.error_message || null,
-      created_at: data.created_at || new Date().toISOString(),
-      updated_at: data.updated_at || new Date().toISOString(),
-      completed_at: data.completed_at || null
-    };
-    
-    logger.info(`[${requestId}] 最终状态检查成功，任务 ${taskId} 实际状态为: ${result.status}`);
-    
-    // 返回详细信息
-    return NextResponse.json(result);
-    
   } catch (error) {
-    logger.error(`最终状态检查失败: ${error instanceof Error ? error.message : String(error)}`);
+    logger.error(`处理任务最终检查请求失败: ${error instanceof Error ? error.message : String(error)}`);
     return NextResponse.json(
-      { 
-        status: 'unknown',
-        error: '最终状态检查失败', 
-        details: error instanceof Error ? error.message : String(error),
-        code: 'server_error' 
-      },
+      { success: false, error: '处理请求失败' },
       { status: 500 }
     );
   }

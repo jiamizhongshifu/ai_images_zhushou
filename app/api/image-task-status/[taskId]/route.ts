@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/utils/supabase/server';
+import { isOpenAIUrl, isTemporaryUrl } from '@/utils/image/persistImage';
 
 // 日志工具函数
 const logger = {
@@ -95,6 +96,38 @@ export async function GET(
         );
       }
       
+      // 检查如果任务已完成并且有图片URL，尝试启动持久化处理
+      if (data.status === 'completed' && data.image_url) {
+        // 检查图片URL是否需要持久化处理
+        const needsPersistence = isOpenAIUrl(data.image_url) || isTemporaryUrl(data.image_url);
+        
+        if (needsPersistence && !data.is_persisting && !data.original_image_url) {
+          logger.info(`[${requestId}] 检测到需要持久化的图片URL: ${data.image_url.substring(0, 50)}...`);
+          
+          // 标记图片正在进行持久化处理
+          await supabase
+            .from('image_tasks')
+            .update({
+              is_persisting: true,
+              updated_at: new Date().toISOString()
+            })
+            .eq('task_id', taskId);
+          
+          // 异步触发持久化处理，不等待结果
+          fetch(`${request.nextUrl.origin}/api/persist-image/${taskId}`, {
+            method: 'GET',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${process.env.TASK_PROCESS_SECRET_KEY || ''}`
+            }
+          }).catch(err => {
+            logger.error(`[${requestId}] 触发图片持久化失败: ${err.message}`);
+          });
+          
+          logger.info(`[${requestId}] 已触发图片持久化处理`);
+        }
+      }
+      
       // 构建响应数据，确保包含必要的字段，并处理可能不存在的字段
       const responseData = {
         taskId: data.task_id,
@@ -182,6 +215,38 @@ export async function GET(
           { error: '任务不存在', code: 'task_not_found' },
           { status: 404 }
         );
+      }
+      
+      // 内部调用也检查并触发图片持久化
+      if (data.status === 'completed' && data.image_url) {
+        // 检查图片URL是否需要持久化处理
+        const needsPersistence = isOpenAIUrl(data.image_url) || isTemporaryUrl(data.image_url);
+        
+        if (needsPersistence && !data.is_persisting && !data.original_image_url) {
+          logger.info(`[${requestId}] 内部调用-检测到需要持久化的图片URL: ${data.image_url.substring(0, 50)}...`);
+          
+          // 标记图片正在进行持久化处理
+          await supabase
+            .from('image_tasks')
+            .update({
+              is_persisting: true,
+              updated_at: new Date().toISOString()
+            })
+            .eq('task_id', taskId);
+          
+          // 异步触发持久化处理，不等待结果
+          fetch(`${request.nextUrl.origin}/api/persist-image/${taskId}`, {
+            method: 'GET',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${process.env.TASK_PROCESS_SECRET_KEY || ''}`
+            }
+          }).catch(err => {
+            logger.error(`[${requestId}] 内部调用-触发图片持久化失败: ${err.message}`);
+          });
+          
+          logger.info(`[${requestId}] 内部调用-已触发图片持久化处理`);
+        }
       }
       
       const waitTime = Math.floor((Date.now() - new Date(data.created_at).getTime()) / 1000);
