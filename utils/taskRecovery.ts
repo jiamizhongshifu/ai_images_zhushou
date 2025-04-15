@@ -2,68 +2,107 @@
  * 任务恢复管理工具 - 用于管理浏览器本地存储中的任务状态
  */
 
-import { TASK_CONFIG } from '@/constants/taskConfig';
+import { v4 as uuid } from 'uuid';
 
-const PENDING_TASKS_KEY = 'pendingImageTasks';
+// 常量
+const TASKS_STORAGE_KEY = 'pending_image_tasks';
+const TASK_EXPIRATION_TIME = 24 * 60 * 60 * 1000; // 24小时
 
+// 任务状态类型
+export type TaskStatus = 
+  | 'created'
+  | 'pending' 
+  | 'processing' 
+  | 'completed' 
+  | 'failed'
+  | 'timeout'
+  | 'cancelled'
+  | 'recovering'
+  | 'error';
+
+// 任务结构接口
 export interface PendingTask {
   taskId: string;
-  params: any;
+  params: {
+    prompt: string;
+    style?: string;
+    aspectRatio?: string | null;
+    standardAspectRatio?: string | null;
+    // 不再存储image数据，减少本地存储大小
+    hasImage?: boolean; // 只记录是否有图片，不存储图片数据
+  };
   timestamp: number;
-  status: string;
   lastUpdated?: number;
+  status: TaskStatus;
   error?: string;
   errorMessage?: string;
 }
-
-// 添加预定义的状态类型
-export type TaskStatus = 
-  | 'pending'      // 初始状态
-  | 'created'      // 已创建
-  | 'processing'   // 处理中
-  | 'recovering'   // 恢复中
-  | 'completed'    // 完成
-  | 'failed'       // 失败
-  | 'cancelled'    // 取消
-  | 'error';       // 错误
 
 /**
  * 保存待处理任务到本地存储
  */
 export function savePendingTask(task: PendingTask): void {
   try {
-    // 获取现有任务列表
-    const existingTasksJson = localStorage.getItem(PENDING_TASKS_KEY);
-    let tasks: PendingTask[] = [];
-    
-    if (existingTasksJson) {
-      tasks = JSON.parse(existingTasksJson);
-      
-      // 如果任务已存在，更新它
-      const existingIndex = tasks.findIndex(t => t.taskId === task.taskId);
-      if (existingIndex >= 0) {
-        tasks[existingIndex] = { ...tasks[existingIndex], ...task };
-      } else {
-        // 添加新任务
-        tasks.push(task);
+    // 清理可能存在的大数据
+    if (task.params) {
+      // 记录是否有图片但不存储图片数据
+      const hasImage = !!(task.params as any).image;
+      if (hasImage) {
+        // 创建新对象，避免修改原始对象
+        let cleanParams = { ...task.params };
+        // 使用类型断言来访问和删除image属性
+        delete (cleanParams as any).image;
+        // 设置hasImage标志
+        cleanParams.hasImage = true;
+        // 更新task对象中的params
+        task = { ...task, params: cleanParams };
       }
+    }
+    
+    const existingTasks = getAllPendingTasks();
+    const taskIndex = existingTasks.findIndex(t => t.taskId === task.taskId);
+    
+    if (taskIndex >= 0) {
+      // 更新现有任务
+      existingTasks[taskIndex] = {
+        ...existingTasks[taskIndex],
+        ...task,
+        lastUpdated: Date.now()
+      };
     } else {
-      // 第一个任务
-      tasks = [task];
+      // 添加新任务
+      existingTasks.push({
+        ...task,
+        lastUpdated: Date.now()
+      });
     }
     
-    // 限制最多保存10个任务
-    if (tasks.length > 10) {
-      // 按时间排序，保留最近的10个
-      tasks.sort((a, b) => b.timestamp - a.timestamp);
-      tasks = tasks.slice(0, 10);
-    }
-    
-    // 保存到本地存储
-    localStorage.setItem(PENDING_TASKS_KEY, JSON.stringify(tasks));
+    // 保存回本地存储
+    localStorage.setItem(TASKS_STORAGE_KEY, JSON.stringify(existingTasks));
     console.log(`[任务恢复] 已保存任务 ${task.taskId} 到本地存储`);
+    
   } catch (error) {
-    console.error('[任务恢复] 保存任务到本地存储失败:', error);
+    console.error('[任务恢复] 保存任务失败:', error);
+    
+    // 如果是存储配额问题，尝试清理旧任务再保存
+    if (error instanceof DOMException && error.name === 'QuotaExceededError') {
+      try {
+        console.warn('[任务恢复] 存储配额已满，尝试清理旧任务');
+        const existingTasks = getAllPendingTasks();
+        
+        // 只保留最新的5个任务
+        const recentTasks = existingTasks
+          .sort((a, b) => b.timestamp - a.timestamp)
+          .slice(0, 5);
+        
+        localStorage.setItem(TASKS_STORAGE_KEY, JSON.stringify(recentTasks));
+        
+        // 再次尝试保存当前任务
+        savePendingTask(task);
+      } catch (retryError) {
+        console.error('[任务恢复] 清理后再次保存任务失败:', retryError);
+      }
+    }
   }
 }
 
@@ -72,12 +111,12 @@ export function savePendingTask(task: PendingTask): void {
  */
 export function getAllPendingTasks(): PendingTask[] {
   try {
-    const tasksJson = localStorage.getItem(PENDING_TASKS_KEY);
-    if (!tasksJson) return [];
+    const taskData = localStorage.getItem(TASKS_STORAGE_KEY);
+    if (!taskData) return [];
     
-    return JSON.parse(tasksJson);
+    return JSON.parse(taskData);
   } catch (error) {
-    console.error('[任务恢复] 获取待处理任务失败:', error);
+    console.error('[任务恢复] 获取所有任务失败:', error);
     return [];
   }
 }
@@ -87,10 +126,10 @@ export function getAllPendingTasks(): PendingTask[] {
  */
 export function getPendingTask(taskId: string): PendingTask | null {
   try {
-    const tasks = getAllPendingTasks();
-    return tasks.find(task => task.taskId === taskId) || null;
+    const existingTasks = getAllPendingTasks();
+    return existingTasks.find(task => task.taskId === taskId) || null;
   } catch (error) {
-    console.error(`[任务恢复] 获取任务 ${taskId} 失败:`, error);
+    console.error('[任务恢复] 获取任务失败:', error);
     return null;
   }
 }
@@ -99,33 +138,30 @@ export function getPendingTask(taskId: string): PendingTask | null {
  * 检查任务是否过期
  */
 export function isTaskExpired(task: PendingTask): boolean {
-  const now = Date.now();
-  const taskAge = now - task.timestamp;
-  return taskAge > TASK_CONFIG.BACKEND_TIMEOUT;
+  return Date.now() - task.timestamp > TASK_EXPIRATION_TIME;
 }
 
 /**
  * 检查任务是否活跃
  */
 export function isTaskActive(task: PendingTask): boolean {
-  return ['pending', 'processing', 'created'].includes(task.status) && !isTaskExpired(task);
+  return ['pending', 'processing', 'created', 'recovering'].includes(task.status);
 }
 
 /**
  * 增强的任务恢复检查
  */
 export function shouldRecoverTask(task: PendingTask): boolean {
-  if (!task) return false;
+  // 只有pending或processing状态的任务才应该被恢复
+  if (!['pending', 'processing', 'created'].includes(task.status)) {
+    return false;
+  }
   
-  // 检查任务状态
-  const isValidStatus = ['pending', 'processing', 'created'].includes(task.status);
-  if (!isValidStatus) return false;
-  
-  // 检查任务年龄
-  if (isTaskExpired(task)) return false;
-  
-  // 检查是否有必要的任务参数
-  if (!task.params || typeof task.params !== 'object') return false;
+  // 任务不应该太旧
+  const taskAge = Date.now() - task.timestamp;
+  if (taskAge > 12 * 60 * 60 * 1000) { // 12小时
+    return false;
+  }
   
   return true;
 }
@@ -133,28 +169,25 @@ export function shouldRecoverTask(task: PendingTask): boolean {
 /**
  * 增强的任务状态更新
  */
-export async function updateTaskStatus(
-  taskId: string,
-  status: string,
-  error?: string
-): Promise<void> {
+export function updateTaskStatus(
+  taskId: string, 
+  status: TaskStatus, 
+  errorMessage?: string
+): void {
   try {
-    const task = getPendingTask(taskId);
-    if (!task) return;
-
-    // 更新状态
-    task.status = status;
-    if (error) task.errorMessage = error;
-    task.lastUpdated = Date.now();
-
-    // 保存更新后的任务
-    savePendingTask(task);
-
-    // 如果任务完成或失败，执行清理
-    if (['completed', 'failed', 'cancelled'].includes(status)) {
-      setTimeout(() => {
-        clearPendingTask(taskId);
-      }, 5000); // 5秒后清理
+    const existingTasks = getAllPendingTasks();
+    const taskIndex = existingTasks.findIndex(t => t.taskId === taskId);
+    
+    if (taskIndex >= 0) {
+      existingTasks[taskIndex] = {
+        ...existingTasks[taskIndex],
+        status,
+        lastUpdated: Date.now(),
+        ...(errorMessage ? { errorMessage } : {})
+      };
+      
+      localStorage.setItem(TASKS_STORAGE_KEY, JSON.stringify(existingTasks));
+      console.log(`[任务恢复] 已更新任务 ${taskId} 状态为 ${status}`);
     }
   } catch (error) {
     console.error('[任务恢复] 更新任务状态失败:', error);
@@ -166,18 +199,13 @@ export async function updateTaskStatus(
  */
 export function clearPendingTask(taskId: string): void {
   try {
-    const tasks = getAllPendingTasks();
-    const filteredTasks = tasks.filter(task => task.taskId !== taskId);
+    const existingTasks = getAllPendingTasks();
+    const updatedTasks = existingTasks.filter(task => task.taskId !== taskId);
     
-    if (filteredTasks.length === tasks.length) {
-      console.warn(`[任务恢复] 任务 ${taskId} 不存在，无需清除`);
-      return;
-    }
-    
-    localStorage.setItem(PENDING_TASKS_KEY, JSON.stringify(filteredTasks));
+    localStorage.setItem(TASKS_STORAGE_KEY, JSON.stringify(updatedTasks));
     console.log(`[任务恢复] 已清除任务 ${taskId}`);
   } catch (error) {
-    console.error(`[任务恢复] 清除任务 ${taskId} 失败:`, error);
+    console.error('[任务恢复] 清除任务失败:', error);
   }
 }
 
@@ -186,7 +214,7 @@ export function clearPendingTask(taskId: string): void {
  */
 export function clearAllPendingTasks(): void {
   try {
-    localStorage.removeItem(PENDING_TASKS_KEY);
+    localStorage.removeItem(TASKS_STORAGE_KEY);
     console.log('[任务恢复] 已清除所有待处理任务');
   } catch (error) {
     console.error('[任务恢复] 清除所有待处理任务失败:', error);
@@ -198,17 +226,23 @@ export function clearAllPendingTasks(): void {
  */
 export function cleanupExpiredTasks(): void {
   try {
-    const tasks = getAllPendingTasks();
+    const existingTasks = getAllPendingTasks();
     const now = Date.now();
-    const EXPIRE_TIME = 24 * 60 * 60 * 1000; // 24小时
     
-    const validTasks = tasks.filter(task => {
-      return now - task.timestamp < EXPIRE_TIME;
+    // 过滤掉过期的任务
+    const validTasks = existingTasks.filter(task => {
+      const isExpired = now - task.timestamp > TASK_EXPIRATION_TIME;
+      // 已完成或失败的任务保留12小时
+      const completedExpiry = 12 * 60 * 60 * 1000;
+      const isCompletedExpired = ['completed', 'failed', 'cancelled'].includes(task.status) && 
+        now - task.timestamp > completedExpiry;
+      
+      return !isExpired && !isCompletedExpired;
     });
     
-    if (validTasks.length < tasks.length) {
-      localStorage.setItem(PENDING_TASKS_KEY, JSON.stringify(validTasks));
-      console.log(`[任务恢复] 已清理 ${tasks.length - validTasks.length} 个过期任务`);
+    if (validTasks.length !== existingTasks.length) {
+      localStorage.setItem(TASKS_STORAGE_KEY, JSON.stringify(validTasks));
+      console.log(`[任务恢复] 已清理 ${existingTasks.length - validTasks.length} 个过期任务`);
     }
   } catch (error) {
     console.error('[任务恢复] 清理过期任务失败:', error);
@@ -250,51 +284,26 @@ function createImageFingerprint(imageBase64: string | null | undefined): string 
  * 增强版 - 判断两个请求是否相同
  * 考虑更多因素进行精确匹配
  */
-export function isSameRequest(task: PendingTask, params: any): boolean {
-  if (!task.params || !params) return false;
+export function isSameRequest(
+  taskOrParams: any, 
+  newParams: any
+): boolean {
+  // 获取参数对象，无论是从任务中还是直接参数
+  const oldParams = taskOrParams.params || taskOrParams;
   
-  // 始终比较基本参数
-  const samePrompt = task.params.prompt === params.prompt;
-  const sameStyle = task.params.style === params.style;
+  // 处理null和undefined情况
+  if (!oldParams || !newParams) return false;
   
-  // 比较比例参数（如果存在）
-  const sameAspectRatio = 
-    (task.params.aspectRatio === params.aspectRatio) &&
-    (task.params.standardAspectRatio === params.standardAspectRatio);
+  // 检查提示词、风格和比例是否相同
+  const isSamePrompt = oldParams.prompt?.trim() === newParams.prompt?.trim();
+  const isSameStyle = oldParams.style === newParams.style;
+  const isSameRatio = oldParams.aspectRatio === newParams.aspectRatio;
   
-  // 如果基本参数不同，则直接返回不相同
-  if (!samePrompt || !sameStyle || !sameAspectRatio) {
-    return false;
-  }
+  // 图片检查 - 只比较是否都有或都没有图片，不比较图片内容
+  const oldHasImage = !!(oldParams.hasImage || (oldParams as any).image);
+  const newHasImage = !!(newParams.hasImage || newParams.image);
+  const isSameImageState = oldHasImage === newHasImage;
   
-  // 图片比较策略:
-  // 1. 都没有图片 -> 相同请求
-  // 2. 一个有图片，一个没有 -> 不同请求
-  // 3. 都有图片，则比较图片特征
-  
-  const hasOriginalImage = !!task.params.image;
-  const hasNewImage = !!params.image;
-  
-  // 如果图片存在性不同，则直接返回不同
-  if (hasOriginalImage !== hasNewImage) {
-    return false;
-  }
-  
-  // 如果都没有图片，且前面的参数都相同，则是相同请求
-  if (!hasOriginalImage && !hasNewImage) {
-    return true;
-  }
-  
-  // 如果都有图片，比较图片特征
-  if (hasOriginalImage && hasNewImage) {
-    // 创建图片指纹
-    const originalImageFingerprint = createImageFingerprint(task.params.image);
-    const newImageFingerprint = createImageFingerprint(params.image);
-    
-    // 比较图片指纹，具有一定容忍度
-    return originalImageFingerprint === newImageFingerprint;
-  }
-  
-  // 默认返回不同
-  return false;
+  // 至少有一个不同才返回false
+  return isSamePrompt && isSameStyle && isSameRatio && isSameImageState;
 } 

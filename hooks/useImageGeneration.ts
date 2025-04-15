@@ -744,29 +744,78 @@ export default function useImageGeneration(
           updateGenerationStage('processing', 30);
           
           // 尝试获取实际任务状态
-          setTimeout(() => {
-            fetch(`/api/last-task-for-user`)
-              .then(resp => resp.json())
-              .then(data => {
-                if (data && data.taskId) {
-                  console.log(`[useImageGeneration] 恢复到真实任务ID: ${data.taskId}`);
-                  setCurrentTaskId(data.taskId);
+          setTimeout(async () => {
+            try {
+              // 先尝试从最近任务API获取真实任务ID
+              const lastTaskResp = await fetch(`/api/last-task-for-user`);
+              if (!lastTaskResp.ok) {
+                throw new Error(`获取最近任务失败: ${lastTaskResp.statusText}`);
+              }
+              
+              const lastTaskData = await lastTaskResp.json();
+              
+              if (lastTaskData && lastTaskData.taskId) {
+                console.log(`[useImageGeneration] 恢复到真实任务ID: ${lastTaskData.taskId}`);
+                setCurrentTaskId(lastTaskData.taskId);
+                
+                // 更新任务本地存储
+                const task = getPendingTask(temporaryTaskId);
+                if (task) {
+                  clearPendingTask(temporaryTaskId);
+                  savePendingTask({
+                    ...task,
+                    taskId: lastTaskData.taskId
+                  });
                   
-                  // 更新任务本地存储
-                  const task = getPendingTask(temporaryTaskId);
-                  if (task) {
-                    clearPendingTask(temporaryTaskId);
-                    savePendingTask({
-                      ...task,
-                      taskId: data.taskId
-                    });
+                  // 启动轮询
+                  startEnhancedPollingTaskStatus(lastTaskData.taskId);
+                }
+                return; // 成功找到任务，结束流程
+              }
+            } catch (err) {
+              console.error('[useImageGeneration] 无法从最近任务API恢复任务ID:', err);
+            }
+            
+            // 如果无法从最近任务API获取，尝试备用方案
+            try {
+              // 尝试从历史记录API查询最近任务
+              const historyResp = await fetch(`/api/image-history?limit=1`);
+              if (historyResp.ok) {
+                const historyData = await historyResp.json();
+                if (historyData && historyData.history && historyData.history.length > 0) {
+                  const latestImage = historyData.history[0];
+                  if (latestImage && latestImage.task_id) {
+                    console.log(`[useImageGeneration] 从历史记录找到最近任务ID: ${latestImage.task_id}`);
+                    setCurrentTaskId(latestImage.task_id);
                     
-                    // 启动轮询
-                    startEnhancedPollingTaskStatus(data.taskId);
+                    // 更新任务本地存储
+                    const task = getPendingTask(temporaryTaskId);
+                    if (task) {
+                      clearPendingTask(temporaryTaskId);
+                      savePendingTask({
+                        ...task,
+                        taskId: latestImage.task_id
+                      });
+                      
+                      // 启动轮询
+                      startEnhancedPollingTaskStatus(latestImage.task_id);
+                    }
+                    return; // 成功找到任务，结束流程
                   }
                 }
-              })
-              .catch(err => console.error('[useImageGeneration] 无法恢复任务ID:', err));
+              }
+            } catch (historyErr) {
+              console.error('[useImageGeneration] 无法从历史记录恢复任务ID:', historyErr);
+            }
+            
+            // 所有恢复方法都失败，直接使用临时任务ID继续
+            console.log(`[useImageGeneration] 所有恢复方法失败，继续使用临时任务ID: ${temporaryTaskId}`);
+            // 延迟再次尝试轮询，防止短时间内多次请求
+            setTimeout(() => {
+              if (isGenerating && currentTaskId === temporaryTaskId) {
+                startEnhancedPollingTaskStatus(temporaryTaskId);
+              }
+            }, 10000); // 等待10秒后开始轮询
           }, 5000);
           
           // 返回null表示网络错误，但不抛出异常
@@ -966,8 +1015,63 @@ export default function useImageGeneration(
       // 更新状态为恢复中
       updateTaskStatus(taskInfo.taskId, 'recovering');
       
+      // 检查任务ID是否是临时ID
+      if (taskId.startsWith('temp-')) {
+        // 尝试获取真实任务ID
+        try {
+          const lastTaskResp = await fetch(`/api/last-task-for-user`);
+          if (!lastTaskResp.ok) {
+            throw new Error(`获取最近任务失败: ${lastTaskResp.statusText}`);
+          }
+          
+          const lastTaskData = await lastTaskResp.json();
+          
+          if (lastTaskData && lastTaskData.taskId) {
+            console.log(`[任务恢复] 将临时任务ID ${taskId} 映射到真实任务ID: ${lastTaskData.taskId}`);
+            
+            // 更新任务ID
+            clearPendingTask(taskId);
+            taskInfo.taskId = lastTaskData.taskId;
+            savePendingTask(taskInfo);
+            
+            // 更新当前任务ID
+            setCurrentTaskId(lastTaskData.taskId);
+            
+            // 使用新任务ID
+            taskId = lastTaskData.taskId;
+          }
+        } catch (err) {
+          console.warn(`[任务恢复] 无法将临时任务ID映射到真实任务ID: ${err}`);
+          // 继续使用临时任务ID
+        }
+      }
+      
       // 查询当前任务状态
-      const statusResponse = await fetch(`/api/image-task-status/${taskInfo.taskId}`);
+      try {
+        // 尝试使用任务最终状态检查API
+        const finalCheckResp = await fetch(`/api/task-final-check/${taskId}`);
+        
+        if (finalCheckResp.ok) {
+          const statusData = await finalCheckResp.json();
+          
+          // 如果任务已完成或失败，直接处理结果
+          if (['completed', 'failed'].includes(statusData.status)) {
+            console.log(`[任务恢复] 任务已${statusData.status === 'completed' ? '完成' : '失败'}`);
+            
+            // 使用轮询结果处理函数
+            handlePollingResult(statusData, taskId);
+            
+            setIsGenerating(false);
+            return true;
+          }
+        }
+      } catch (err) {
+        console.warn(`[任务恢复] 使用最终状态检查API失败: ${err}`);
+        // 回退到常规任务状态API
+      }
+      
+      // 如果最终状态检查失败，尝试常规任务状态API
+      const statusResponse = await fetch(`/api/image-task-status/${taskId}`);
       console.log(`[任务恢复] 当前任务状态:`, statusResponse);
       
       if (statusResponse.ok) {
@@ -978,7 +1082,7 @@ export default function useImageGeneration(
           console.log(`[任务恢复] 任务已${statusData.status === 'completed' ? '完成' : '失败'}`);
           
           // 使用前面定义的轮询结果处理函数
-          handlePollingResult(statusData, taskInfo.taskId);
+          handlePollingResult(statusData, taskId);
           
           setIsGenerating(false);
           return true;
@@ -990,23 +1094,9 @@ export default function useImageGeneration(
       toast.success(t('taskRecovering', { defaultValue: '正在恢复任务...' }));
       
       // 开始轮询任务状态
-      const pollingResult = await enhancedPollTaskStatus(taskId, {
-        maxAttempts: 180,         // 最多尝试180次 (约15分钟，视间隔而定)
-        initialInterval: 2000,    // 初始间隔2秒
-        maxInterval: 10000,       // 最大间隔10秒
-        exponentialFactor: 1.5,   // 指数增长因子
-        failureRetries: 0,        // 连续失败不重试
-        onProgress: (progress, stage) => {
-          console.log(`[任务恢复] 状态更新: ${progress}%, 阶段: ${stage}`);
-          // 更新本地存储中的任务状态
-          updateTaskStatus(taskInfo!.taskId, stage as string);
-        }
-      });
-      
-      // 处理轮询结果
-      handlePollingResult(pollingResult, taskInfo!.taskId);
-      
+      startEnhancedPollingTaskStatus(taskId);
       return true;
+      
     } catch (error: any) {
       console.error('[任务恢复] 恢复任务时出错:', error);
       setError(error.message || t('recoveryFailed', { defaultValue: '恢复任务失败' }));
@@ -1016,11 +1106,20 @@ export default function useImageGeneration(
       if (taskInfo?.taskId) {
         updateTaskStatus(taskInfo.taskId, 'error', error.message);
       }
+      
+      // 即使出错也尝试启动轮询
+      if (taskInfo?.taskId && isTaskActive(taskInfo)) {
+        setTimeout(() => {
+          console.log(`[任务恢复] 虽然恢复出错，但仍尝试轮询任务状态: ${taskInfo?.taskId}`);
+          startEnhancedPollingTaskStatus(taskInfo!.taskId);
+        }, 5000); // 5秒后重试
+      }
+      
       return false;
     } finally {
-      setIsGenerating(false);
+      // 不要在这里设置setIsGenerating(false)，因为轮询过程需要保持生成状态
     }
-  }, [handlePollingResult, t]);
+  }, [handlePollingResult, t, isGenerating]);
 
   // 放弃任务
   const discardTask = (taskId: string): void => {

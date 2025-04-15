@@ -82,58 +82,101 @@ export async function enhancedPollTaskStatus(
     return navigator.onLine;
   };
   
-  // 等待网络恢复
-  const waitForNetworkReconnection = async (): Promise<void> => {
-    // 使用Promise等待网络连接恢复
+  // 检查网络连接状态并等待恢复
+  const waitForNetwork = async (maxWaitTime = 30000): Promise<boolean> => {
+    if (checkNetworkStatus()) {
+      return true; // 网络已连接
+    }
+
+    console.log('[轮询] 等待网络连接恢复...');
+    
     return new Promise((resolve) => {
-      if (checkNetworkStatus()) {
-        resolve();
-        return;
-      }
-      
-      console.log('[轮询] 等待网络连接恢复...');
-      
-      // 监听网络恢复事件
+      // 网络恢复时的处理函数
       const handleOnline = () => {
-        console.log('[轮询] 网络连接已恢复');
         window.removeEventListener('online', handleOnline);
-        resolve();
+        clearTimeout(timeoutId);
+        console.log('[轮询] 网络连接已恢复');
+        resolve(true);
       };
       
-      window.addEventListener('online', handleOnline);
-      
-      // 设置超时，避免长时间等待
-      setTimeout(() => {
+      // 超时处理
+      const timeoutId = setTimeout(() => {
         window.removeEventListener('online', handleOnline);
-        console.log('[轮询] 等待网络连接恢复超时，尝试继续轮询');
-        resolve();
-      }, 30000); // 最多等待30秒
+        console.log('[轮询] 等待网络恢复超时');
+        resolve(false);
+      }, maxWaitTime);
+      
+      // 监听网络恢复事件
+      window.addEventListener('online', handleOnline);
     });
   };
   
-  // 增强型直接任务状态查询 - 即使轮询过程中出现错误，也会尝试直接从数据库获取任务状态
+  // 获取任务最终状态 - 绕过常规API，直接查询数据库中的状态
   const getFinalTaskStatus = async (taskId: string): Promise<any> => {
     try {
+      // 先尝试通过最终状态检查API获取
+      console.log('[轮询] 尝试通过任务最终状态检查API获取状态');
       const finalCheckResponse = await fetch(`/api/task-final-check/${taskId}`);
+      
       if (!finalCheckResponse.ok) {
         throw new Error(`HTTP error! status: ${finalCheckResponse.status}`);
       }
-      return await finalCheckResponse.json();
-    } catch (error) {
-      console.error('[轮询] 获取最终任务状态失败:', error);
       
-      // 退避策略，第二次尝试
+      const finalStatus = await finalCheckResponse.json();
+      console.log(`[轮询] 通过最终状态检查API获取到任务状态: ${finalStatus.status}`);
+      return finalStatus;
+    } catch (error) {
+      console.error('[轮询] 通过最终状态检查API获取任务状态失败:', error);
+      
+      // 等待一段时间后再尝试备用API
       await new Promise(resolve => setTimeout(resolve, 5000));
       
       try {
+        // 备用方案：使用常规任务状态API
+        console.log('[轮询] 尝试通过常规任务状态API获取状态');
         const backupResponse = await fetch(`/api/image-task-status/${taskId}`);
+        
         if (!backupResponse.ok) {
           throw new Error(`HTTP error! status: ${backupResponse.status}`);
         }
-        return await backupResponse.json();
+        
+        const backupStatus = await backupResponse.json();
+        console.log(`[轮询] 通过常规API获取到任务状态: ${backupStatus.status}`);
+        return backupStatus;
       } catch (backupError) {
-        console.error('[轮询] 备用API获取任务状态失败:', backupError);
-        return { status: 'unknown', error: '无法获取任务状态' };
+        console.error('[轮询] 备用API获取任务状态也失败:', backupError);
+        
+        // 最后尝试：查询历史记录API
+        try {
+          console.log('[轮询] 尝试通过历史记录API查找任务');
+          const historyResponse = await fetch('/api/image-history?limit=5');
+          
+          if (historyResponse.ok) {
+            const historyData = await historyResponse.json();
+            
+            if (historyData && historyData.history && historyData.history.length > 0) {
+              // 查找匹配的任务
+              const taskRecord = historyData.history.find((item: { task_id: string }) => item.task_id === taskId);
+              
+              if (taskRecord) {
+                console.log(`[轮询] 在历史记录中找到任务: ${taskId}`);
+                return {
+                  status: taskRecord.status,
+                  imageUrl: taskRecord.image_url,
+                  taskId: taskRecord.task_id
+                };
+              }
+            }
+          }
+        } catch (historyError) {
+          console.error('[轮询] 通过历史记录API查找任务失败:', historyError);
+        }
+        
+        // 所有尝试都失败，返回未知状态
+        return { 
+          status: 'unknown', 
+          error: '无法通过任何方式获取任务状态' 
+        };
       }
     }
   };
@@ -157,15 +200,15 @@ export async function enhancedPollTaskStatus(
         console.log('[轮询] 检测到网络连接中断');
         networkErrorsCount++;
         
-        // 如果网络错误次数过多，直接通过备用方式查询
+        // 如果网络错误次数过多，尝试直接获取最终状态
         if (networkErrorsCount >= 3) {
-          console.log('[轮询] 网络错误次数过多，尝试备用方式查询任务状态');
+          console.log('[轮询] 网络错误次数过多，尝试获取任务最终状态');
           try {
             const finalStatus = await getFinalTaskStatus(taskId);
-            if (finalStatus.status === 'completed') {
-              updateState('completed');
+            if (finalStatus.status === 'completed' || finalStatus.status === 'failed') {
+              updateState(finalStatus.status);
               resolve({
-                status: 'completed',
+                status: finalStatus.status,
                 data: finalStatus,
                 attempts,
                 elapsedTime: Date.now() - startTime
@@ -173,13 +216,17 @@ export async function enhancedPollTaskStatus(
               return;
             }
           } catch (error) {
-            console.error('[轮询] 备用查询失败，继续等待网络恢复:', error);
+            console.error('[轮询] 获取任务最终状态失败:', error);
           }
         }
         
-        await waitForNetworkReconnection();
+        // 等待网络恢复
+        const networkRecovered = await waitForNetwork();
+        if (!networkRecovered) {
+          console.log('[轮询] 网络恢复等待超时，尝试继续轮询');
+        }
         
-        // 网络恢复后立即检查任务状态
+        // 短暂延迟后继续
         setTimeout(checkStatus, 1000);
         return;
       }
