@@ -120,107 +120,110 @@ export const createClient = () => {
     
     // 在浏览器环境下使用完整配置
     // 使用正确的创建客户端参数格式
-    const client = createBrowserClient(supabaseUrl, supabaseAnonKey, {
-      // 浏览器客户端必要的cookie方法
-      cookies: {
-        get: (name) => {
-          try {
-            // 从document.cookie获取
-            if (typeof document === 'undefined') return null;
-            
-            const value = `; ${document.cookie}`;
-            const parts = value.split(`; ${name}=`);
-            if (parts.length === 2) return parts.pop()?.split(';').shift() || null;
-            return null;
-          } catch (error) {
-            console.error(`[SupabaseClient] 获取cookie "${name}"出错:`, error);
-            return null;
-          }
-        },
-        set: (name, value, options) => {
-          try {
-            // 设置到document.cookie，添加适当的选项
-            if (typeof document === 'undefined') return;
-            
-            let cookie = `${name}=${value}`;
-            if (options?.maxAge) cookie += `; Max-Age=${options.maxAge}`;
-            if (options?.path) cookie += `; Path=${options.path || '/'}`;
-            
-            // 添加SameSite属性，默认为Lax以支持跨站点请求
-            cookie += `; SameSite=Lax`;
-            
-            // 在生产环境添加Secure标记
-            if (window.location.protocol === 'https:') {
-              cookie += `; Secure`;
+    const client = createBrowserClient(
+      supabaseUrl,
+      supabaseAnonKey,
+      {
+        cookies: {
+          get: (name) => {
+            try {
+              // 从document.cookie获取
+              if (typeof document === 'undefined') return null;
+              
+              const value = `; ${document.cookie}`;
+              const parts = value.split(`; ${name}=`);
+              if (parts.length === 2) return parts.pop()?.split(';').shift() || null;
+              return null;
+            } catch (error) {
+              console.error(`[SupabaseClient] 获取cookie "${name}"出错:`, error);
+              return null;
             }
-            
-            document.cookie = cookie;
-            
-            // 更明确地设置认证相关cookie，确保包含所有必要属性
-            if (name === 'sb-access-token' && value) {
-              const authCookie = `user_authenticated=true; path=/; max-age=604800; SameSite=Lax`;
-              document.cookie = authCookie;
+          },
+          set: (name, value, options) => {
+            try {
+              // 设置到document.cookie，添加适当的选项
+              if (typeof document === 'undefined') return;
               
-              // 确保清除任何登出标记
-              document.cookie = 'logged_out=; path=/; max-age=0; expires=Thu, 01 Jan 1970 00:00:00 GMT';
-              document.cookie = 'force_logged_out=; path=/; max-age=0; expires=Thu, 01 Jan 1970 00:00:00 GMT';
+              let cookie = `${name}=${value}`;
+              if (options?.maxAge) cookie += `; Max-Age=${options.maxAge}`;
+              if (options?.path) cookie += `; Path=${options.path || '/'}`;
               
-              // 记录到localStorage
-              if (typeof localStorage !== 'undefined') {
-                localStorage.setItem('wasAuthenticated', 'true');
-                localStorage.setItem('auth_time', Date.now().toString());
-                localStorage.setItem('auth_valid', 'true');
+              // 添加SameSite属性，默认为Lax以支持跨站点请求
+              cookie += `; SameSite=Lax`;
+              
+              // 在生产环境添加Secure标记
+              if (window.location.protocol === 'https:') {
+                cookie += `; Secure`;
+              }
+              
+              document.cookie = cookie;
+              
+              // 更明确地设置认证相关cookie，确保包含所有必要属性
+              if (name === 'sb-access-token' && value) {
+                const authCookie = `user_authenticated=true; path=/; max-age=604800; SameSite=Lax`;
+                document.cookie = authCookie;
                 
-                // 清除登出标记
-                localStorage.removeItem('force_logged_out');
+                // 确保清除任何登出标记
+                document.cookie = 'logged_out=; path=/; max-age=0; expires=Thu, 01 Jan 1970 00:00:00 GMT';
+                document.cookie = 'force_logged_out=; path=/; max-age=0; expires=Thu, 01 Jan 1970 00:00:00 GMT';
+                
+                // 记录到localStorage
+                if (typeof localStorage !== 'undefined') {
+                  localStorage.setItem('wasAuthenticated', 'true');
+                  localStorage.setItem('auth_time', Date.now().toString());
+                  localStorage.setItem('auth_valid', 'true');
+                  
+                  // 清除登出标记
+                  localStorage.removeItem('force_logged_out');
+                }
+                
+                if (typeof sessionStorage !== 'undefined') {
+                  sessionStorage.removeItem('isLoggedOut');
+                  sessionStorage.setItem('activeAuth', 'true');
+                }
+                
+                console.log(`[SupabaseClient] 已设置认证cookie: ${name}=${value.substring(0, 10)}... 和关联标记`);
               }
               
-              if (typeof sessionStorage !== 'undefined') {
-                sessionStorage.removeItem('isLoggedOut');
-                sessionStorage.setItem('activeAuth', 'true');
+              // 清除可能的登出标记
+              if ((name === 'sb-access-token' || name === 'sb-refresh-token') && value) {
+                if (typeof localStorage !== 'undefined') {
+                  localStorage.removeItem('force_logged_out');
+                }
+                if (typeof sessionStorage !== 'undefined') {
+                  sessionStorage.removeItem('isLoggedOut');
+                }
               }
+            } catch (error) {
+              console.error(`[SupabaseClient] 设置cookie "${name}"出错:`, error);
+            }
+          },
+          remove: (name, options) => {
+            try {
+              // 从document.cookie移除
+              if (typeof document === 'undefined') return;
               
-              console.log(`[SupabaseClient] 已设置认证cookie: ${name}=${value.substring(0, 10)}... 和关联标记`);
-            }
-            
-            // 清除可能的登出标记
-            if ((name === 'sb-access-token' || name === 'sb-refresh-token') && value) {
-              if (typeof localStorage !== 'undefined') {
-                localStorage.removeItem('force_logged_out');
+              document.cookie = `${name}=; Max-Age=0; Path=${options?.path || '/'}`;
+              
+              // 如果移除认证token，也清除认证标记
+              if (name === 'sb-access-token') {
+                document.cookie = 'user_authenticated=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
               }
-              if (typeof sessionStorage !== 'undefined') {
-                sessionStorage.removeItem('isLoggedOut');
-              }
+            } catch (error) {
+              console.error(`[SupabaseClient] 移除cookie "${name}"出错:`, error);
             }
-          } catch (error) {
-            console.error(`[SupabaseClient] 设置cookie "${name}"出错:`, error);
-          }
+          },
         },
-        remove: (name, options) => {
-          try {
-            // 从document.cookie移除
-            if (typeof document === 'undefined') return;
-            
-            document.cookie = `${name}=; Max-Age=0; Path=${options?.path || '/'}`;
-            
-            // 如果移除认证token，也清除认证标记
-            if (name === 'sb-access-token') {
-              document.cookie = 'user_authenticated=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
-            }
-          } catch (error) {
-            console.error(`[SupabaseClient] 移除cookie "${name}"出错:`, error);
-          }
+        auth: {
+          persistSession: true,
+          autoRefreshToken: true,
+          detectSessionInUrl: true,
+          flowType: 'pkce',
+          // 公共存储键名
+          storageKey: 'supabase.auth.token',
         },
-      },
-      auth: {
-        persistSession: true,
-        autoRefreshToken: true,
-        detectSessionInUrl: true,
-        flowType: 'pkce',
-        // 公共存储键名
-        storageKey: 'supabase.auth.token',
-      },
-    });
+      }
+    );
     
     // 订阅会话状态变化
     client.auth.onAuthStateChange(handleSessionChange);

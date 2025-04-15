@@ -4,16 +4,17 @@
  */
 
 import { updatePendingTaskStatus } from './taskStorage';
+import { TASK_CONFIG } from '@/constants/taskConfig';
 
 // 轮询配置选项接口
-export interface PollingOptions {
-  maxAttempts?: number;         // 最大轮询次数
-  initialInterval?: number;     // 初始轮询间隔(毫秒)
-  maxInterval?: number;         // 最大轮询间隔(毫秒)
-  exponentialFactor?: number;   // 指数增长因子
-  failureRetries?: number;      // 连续失败重试次数
-  onProgress?: (progress: number, stage: string) => void; // 进度回调
-  onStateChange?: (state: PollingState) => void; // 状态变化回调
+export interface PollOptions {
+  maxAttempts?: number;
+  initialInterval?: number;
+  maxInterval?: number;
+  exponentialFactor?: number;
+  failureRetries?: number;
+  onProgress?: (progress: number, stage: string) => void;
+  onStateChange?: (state: string) => void;
 }
 
 // 轮询状态
@@ -39,21 +40,19 @@ export interface PollingResult {
  * 使用指数退避策略和错误处理机制，轮询任务状态
  */
 export async function enhancedPollTaskStatus(
-  taskId: string, 
-  options: PollingOptions = {}
+  taskId: string,
+  options: PollOptions = {}
 ): Promise<PollingResult> {
-  // 默认配置和用户配置合并
   const {
-    maxAttempts = 120,          // 默认最大尝试次数(10分钟)
-    initialInterval = 2000,     // 初始间隔2秒
-    maxInterval = 10000,        // 最大间隔10秒
-    exponentialFactor = 1.5,    // 指数增长因子
-    failureRetries = 0,         // 连续失败不进行重试
-    onProgress,                 // 进度回调
-    onStateChange               // 状态变化回调
+    maxAttempts = TASK_CONFIG.POLLING_MAX_ATTEMPTS,
+    initialInterval = TASK_CONFIG.POLLING_INTERVAL,
+    maxInterval = 10000,
+    exponentialFactor = 1.5,
+    failureRetries = 3,
+    onProgress,
+    onStateChange
   } = options;
-  
-  // 轮询状态
+
   let attempts = 0;
   let currentInterval = initialInterval;
   let consecutiveFailures = 0;
@@ -134,77 +133,65 @@ export async function enhancedPollTaskStatus(
         console.log(`[轮询] 第${attempts}次检查任务${taskId}状态`);
         
         // 尝试获取任务状态
-        const response = await fetch(`/api/image-task-status/${taskId}`, {
-          headers: {
-            'Cache-Control': 'no-cache, no-store',
-            'Pragma': 'no-cache'
-          },
-          // 为请求添加超时
-          signal: AbortSignal.timeout 
-            ? AbortSignal.timeout(15000) 
-            : new AbortController().signal
-        });
+        const response = await fetch(`/api/image-task-status/${taskId}`);
         
-        // 检查响应状态
         if (!response.ok) {
-          throw new Error(`状态请求失败: ${response.status}`);
+          throw new Error(`HTTP error! status: ${response.status}`);
         }
         
         // 重置网络错误计数
         networkErrorsCount = 0;
         
         // 解析响应数据
-        const data = await response.json();
+        const result = await response.json();
         
         // 重置连续失败计数
         consecutiveFailures = 0;
         
-        // 更新任务本地存储状态
-        updatePendingTaskStatus(taskId, data.status || 'processing');
-        
-        // 处理任务完成
-        if (data.status === 'completed') {
+        // 回调进度更新
+        if (onProgress && result.progress !== undefined) {
+          onProgress(result.progress, result.stage || 'processing');
+        }
+
+        // 回调状态变化
+        if (onStateChange && result.status) {
+          onStateChange(result.status);
+        }
+
+        // 检查任务是否完成
+        if (result.status === TASK_CONFIG.TASK_STATUS.COMPLETED) {
           console.log(`[轮询] 任务${taskId}已完成`);
           updateState('completed');
           resolve({
             status: 'completed',
-            data,
+            data: result,
             attempts,
             elapsedTime: Date.now() - startTime
           });
           return;
-        } 
-        // 处理任务失败
-        else if (data.status === 'failed') {
-          console.log(`[轮询] 任务${taskId}失败: ${data.error || '未知错误'}`);
+        }
+
+        // 检查任务是否失败
+        if (result.status === TASK_CONFIG.TASK_STATUS.FAILED) {
+          console.log(`[轮询] 任务${taskId}失败: ${result.error || '未知错误'}`);
           updateState('failed');
           
           // 更新任务本地存储状态
           updatePendingTaskStatus(
             taskId, 
             'failed', 
-            data.error || '图片生成失败'
+            result.error || '图片生成失败'
           );
           
           reject({
             status: 'failed',
-            error: data.error || '图片生成失败',
+            error: result.error || '图片生成失败',
             attempts,
             elapsedTime: Date.now() - startTime
           });
           return;
-        } 
-        // 处理任务进行中
-        else if (data.status === 'processing' || data.status === 'pending') {
-          // 如果有进度信息和回调，更新进度
-          if (data.waitTime && onProgress) {
-            // 根据等待时间估算进度
-            const estimatedProgress = getEstimatedProgress(data.waitTime);
-            const stage = getStageFromWaitTime(data.waitTime);
-            onProgress(estimatedProgress, stage);
-          }
         }
-        
+
         // 检查是否达到最大尝试次数
         if (attempts >= maxAttempts) {
           console.log(`[轮询] 任务${taskId}超过最大尝试次数`);
@@ -249,67 +236,31 @@ export async function enhancedPollTaskStatus(
           return;
         }
         
-        // 动态调整轮询间隔（指数退避算法）
-        if (attempts > 5) {
-          currentInterval = Math.min(currentInterval * exponentialFactor, maxInterval);
-        }
+        // 增加轮询间隔，但不超过最大值
+        currentInterval = Math.min(
+          currentInterval * exponentialFactor,
+          maxInterval
+        );
         
         // 安排下一次检查
         setTimeout(checkStatus, currentInterval);
         
       } catch (error) {
-        console.error(`[轮询] 检查任务${taskId}状态失败:`, error);
+        console.error(`[轮询错误] 尝试 ${attempts + 1}/${maxAttempts}:`, error);
         
-        // 增加连续失败计数
         consecutiveFailures++;
         
-        // 检查是否是网络错误
-        const isNetworkError = error instanceof TypeError && 
-          (error.message.includes('network') || 
-           error.message.includes('fetch') || 
-           error.message.includes('aborted'));
-        
-        if (isNetworkError) {
-          networkErrorsCount++;
-          console.log(`[轮询] 检测到网络错误 (${networkErrorsCount}次)`);
-          
-          // 如果连续网络错误超过3次，尝试等待网络恢复
-          if (networkErrorsCount >= 3) {
-            console.log('[轮询] 连续网络错误，等待网络恢复...');
-            
-            // 尝试等待网络恢复
-            waitForNetworkReconnection().then(() => {
-              // 网络恢复后重置错误计数并立即尝试重新连接
-              networkErrorsCount = 0;
-              setTimeout(checkStatus, 1000);
-            });
-            
-            return;
-          }
-        }
-        
-        // 如果连续失败次数超过阈值，使用保守策略
+        // 如果连续失败次数超过限制，抛出错误
         if (consecutiveFailures > failureRetries) {
-          // 连续多次失败，但不立即放弃，转为更保守的轮询策略
-          consecutiveFailures = 1; // 重置为1而不是0，保持警惕
-          currentInterval = maxInterval; // 使用最大间隔
-          console.log(`[轮询] 切换到保守轮询策略，间隔${maxInterval}ms`);
+          reject(new Error(`轮询失败: ${error.message}`));
+          return;
         }
         
-        // 检查是否达到最大尝试次数
-        if (attempts >= maxAttempts) {
-          updateState('timeout');
-          reject({
-            status: 'timeout',
-            error: '轮询超时',
-            attempts,
-            elapsedTime: Date.now() - startTime
-          });
-        } else {
-          // 继续轮询，但使用更长的间隔
-          const retryInterval = Math.min(currentInterval * 2, maxInterval);
-          setTimeout(checkStatus, retryInterval);
-        }
+        // 失败后增加轮询间隔
+        currentInterval = Math.min(
+          currentInterval * 2,
+          maxInterval
+        );
       }
     };
     

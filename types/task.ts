@@ -22,4 +22,30 @@ export interface Task {
   created_at: string;    // 创建时间
   updated_at?: string;   // 更新时间
   parameters?: Record<string, any>; // 任务参数
+}
+
+export interface PendingTask {
+  taskId: string;
+  status: string;
+  timestamp: number;
+  lastUpdated?: number;
+  params: any;
+  error?: string;
+  errorMessage?: string;
+}
+
+export interface TaskUpdatePayload {
+  status: string;
+  progress?: number;
+  stage?: string;
+  error?: string;
+  result?: any;
+}
+
+export interface TaskPollingResult {
+  status: string;
+  data?: any;
+  error?: string;
+  attempts: number;
+  elapsedTime: number;
 } 

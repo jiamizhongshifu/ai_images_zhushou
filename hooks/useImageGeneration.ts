@@ -703,7 +703,7 @@ export default function useImageGeneration(
       
       // 使用带有超时和重试限制的fetch
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 60000); // 60秒超时
+      const timeoutId = setTimeout(() => controller.abort(), 300000); // 5分钟超时
       
       try {
         // 调用异步API创建任务

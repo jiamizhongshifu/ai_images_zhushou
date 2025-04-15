@@ -2,6 +2,8 @@
  * 任务恢复管理工具 - 用于管理浏览器本地存储中的任务状态
  */
 
+import { TASK_CONFIG } from '@/constants/taskConfig';
+
 const PENDING_TASKS_KEY = 'pendingImageTasks';
 
 export interface PendingTask {
@@ -92,31 +94,68 @@ export function getPendingTask(taskId: string): PendingTask | null {
 }
 
 /**
- * 更新任务状态
+ * 检查任务是否过期
  */
-export function updatePendingTaskStatus(
-  taskId: string, 
-  status: string, 
-  errorMessage?: string
-): void {
+export function isTaskExpired(task: PendingTask): boolean {
+  const now = Date.now();
+  const taskAge = now - task.timestamp;
+  return taskAge > TASK_CONFIG.BACKEND_TIMEOUT;
+}
+
+/**
+ * 检查任务是否活跃
+ */
+export function isTaskActive(task: PendingTask): boolean {
+  return ['pending', 'processing', 'created'].includes(task.status) && !isTaskExpired(task);
+}
+
+/**
+ * 增强的任务恢复检查
+ */
+export function shouldRecoverTask(task: PendingTask): boolean {
+  if (!task) return false;
+  
+  // 检查任务状态
+  const isValidStatus = ['pending', 'processing', 'created'].includes(task.status);
+  if (!isValidStatus) return false;
+  
+  // 检查任务年龄
+  if (isTaskExpired(task)) return false;
+  
+  // 检查是否有必要的任务参数
+  if (!task.params || typeof task.params !== 'object') return false;
+  
+  return true;
+}
+
+/**
+ * 增强的任务状态更新
+ */
+export async function updateTaskStatus(
+  taskId: string,
+  status: string,
+  error?: string
+): Promise<void> {
   try {
     const task = getPendingTask(taskId);
-    if (!task) {
-      console.warn(`[任务恢复] 任务 ${taskId} 不存在，无法更新状态`);
-      return;
+    if (!task) return;
+
+    // 更新状态
+    task.status = status;
+    if (error) task.error = error;
+    task.lastUpdated = Date.now();
+
+    // 保存更新后的任务
+    savePendingTask(task);
+
+    // 如果任务完成或失败，执行清理
+    if (['completed', 'failed', 'cancelled'].includes(status)) {
+      setTimeout(() => {
+        clearPendingTask(taskId);
+      }, 5000); // 5秒后清理
     }
-    
-    // 更新任务状态
-    savePendingTask({
-      ...task,
-      status,
-      timestamp: Date.now(), // 更新时间戳
-      errorMessage: errorMessage || task.errorMessage
-    });
-    
-    console.log(`[任务恢复] 已更新任务 ${taskId} 状态为 ${status}`);
   } catch (error) {
-    console.error(`[任务恢复] 更新任务 ${taskId} 状态失败:`, error);
+    console.error('[任务恢复] 更新任务状态失败:', error);
   }
 }
 
