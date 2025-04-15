@@ -14,9 +14,12 @@ import { Clock, RefreshCw, AlertCircle } from "lucide-react";
 
 interface PendingTask {
   taskId: string;
-  params: any;
-  timestamp: number;
   status: string;
+  timestamp: number;
+  lastUpdated?: number;
+  params: any;
+  error?: string;
+  errorMessage?: string;
 }
 
 interface TaskRecoveryDialogProps {

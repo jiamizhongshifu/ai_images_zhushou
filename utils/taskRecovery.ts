@@ -11,6 +11,8 @@ export interface PendingTask {
   params: any;
   timestamp: number;
   status: string;
+  lastUpdated?: number;
+  error?: string;
   errorMessage?: string;
 }
 
@@ -142,7 +144,7 @@ export async function updateTaskStatus(
 
     // 更新状态
     task.status = status;
-    if (error) task.error = error;
+    if (error) task.errorMessage = error;
     task.lastUpdated = Date.now();
 
     // 保存更新后的任务
