@@ -8,12 +8,15 @@ import { compressImage, estimateBase64Size } from '@/utils/image/compressImage';
 import { 
   savePendingTask, 
   getPendingTask, 
-  updatePendingTaskStatus, 
+  updateTaskStatus,
   clearPendingTask,
   getAllPendingTasks,
   isSameRequest,
   cleanupExpiredTasks,
-  PendingTask
+  shouldRecoverTask,
+  isTaskExpired,
+  isTaskActive,
+  type PendingTask
 } from '@/utils/taskRecovery';
 import { enhancedPollTaskStatus } from '@/utils/taskPoller';
 import { TaskSyncManager } from '@/utils/taskSync/taskSyncManager';
@@ -288,11 +291,7 @@ export default function useImageGeneration(
       setCurrentTaskId(null);
       
       // 更新任务本地存储状态
-      updatePendingTaskStatus(
-        taskId, 
-        'failed', 
-        error.error || '图像生成失败'
-      );
+      updateTaskStatus(taskId, 'failed', error.error || '图像生成失败');
       
       // 显示错误通知
       notify(`生成失败: ${error.error || '未知错误'}`, 'error');
@@ -331,7 +330,7 @@ export default function useImageGeneration(
       setError(result.error || '图像生成失败');
       
       // 更新任务本地存储状态
-      updatePendingTaskStatus(taskId, 'failed', result.error || '图像生成失败');
+      updateTaskStatus(taskId, 'failed', result.error || '图像生成失败');
       
       // 显示错误通知
       notify(`生成失败: ${result.error || '未知错误'}`, 'error');
@@ -450,7 +449,7 @@ export default function useImageGeneration(
             console.log(`[任务恢复] 用户拒绝恢复任务`);
             // 用户拒绝恢复，将任务标记为已取消
             activeTasks.forEach(task => {
-              updatePendingTaskStatus(task.taskId, 'cancelled');
+              updateTaskStatus(task.taskId, 'cancelled');
             });
           }
         }
@@ -869,7 +868,7 @@ export default function useImageGeneration(
       setError(null);
       
       // 更新状态为恢复中
-      updatePendingTaskStatus(taskInfo.taskId, 'recovering');
+      updateTaskStatus(taskInfo.taskId, 'recovering');
       
       // 查询当前任务状态
       const statusResponse = await fetch(`/api/image-task-status/${taskInfo.taskId}`);
@@ -904,7 +903,7 @@ export default function useImageGeneration(
         onProgress: (progress, stage) => {
           console.log(`[任务恢复] 状态更新: ${progress}%, 阶段: ${stage}`);
           // 更新本地存储中的任务状态
-          updatePendingTaskStatus(taskInfo!.taskId, stage as string);
+          updateTaskStatus(taskInfo!.taskId, stage as string);
         }
       });
       
@@ -919,7 +918,7 @@ export default function useImageGeneration(
       
       // 错误时也标记任务状态
       if (taskInfo?.taskId) {
-        updatePendingTaskStatus(taskInfo.taskId, 'error', error.message);
+        updateTaskStatus(taskInfo.taskId, 'error', error.message);
       }
       return false;
     } finally {
