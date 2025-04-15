@@ -1,6 +1,7 @@
 "use client";
 
-import { PendingTask, getPendingTask, updateTaskStatus, clearPendingTask } from './taskRecovery';
+import { getPendingTask, updateTaskStatus, clearPendingTask } from './taskRecovery';
+import { PendingTask, TaskStatus } from '@/types/task';
 import useNotification from '@/hooks/useNotification';
 
 interface RecoveryOptions {
@@ -46,7 +47,7 @@ export default class TaskRecoveryService {
       }
       
       // 更新任务状态
-      updateTaskStatus(task.taskId, 'recovering');
+      updateTaskStatus(task.taskId, TaskStatus.PROCESSING, 'Recovering task');
       
       // 检查任务状态
       const response = await fetch(`/api/image-task-status/${task.taskId}`);
@@ -59,10 +60,10 @@ export default class TaskRecoveryService {
       
       // 根据任务状态处理
       switch (data.status) {
-        case 'completed':
+        case TaskStatus.COMPLETED:
           // 任务已完成，直接显示结果
           if (onStatusChange) {
-            onStatusChange('completed', data);
+            onStatusChange(TaskStatus.COMPLETED, data);
           }
           if (onSuccess && data.imageUrl) {
             onSuccess(data.imageUrl);
@@ -71,10 +72,10 @@ export default class TaskRecoveryService {
           this.showNotification('任务已完成', 'success');
           break;
           
-        case 'failed':
+        case TaskStatus.FAILED:
           // 任务失败，显示错误
           if (onStatusChange) {
-            onStatusChange('failed', data);
+            onStatusChange(TaskStatus.FAILED, data);
           }
           if (onError) {
             onError(data.error || '任务处理失败');
@@ -83,17 +84,17 @@ export default class TaskRecoveryService {
           this.showNotification(`任务处理失败: ${data.error || '未知错误'}`, 'error');
           break;
           
-        case 'cancelled':
+        case TaskStatus.CANCELLED:
           // 任务已取消
           if (onStatusChange) {
-            onStatusChange('cancelled', data);
+            onStatusChange(TaskStatus.CANCELLED, data);
           }
           clearPendingTask(task.taskId);
           this.showNotification('任务已被取消', 'info');
           break;
           
-        case 'pending':
-        case 'processing':
+        case TaskStatus.PENDING:
+        case TaskStatus.PROCESSING:
           // 任务仍在进行中，添加SSE监听
           if (onStatusChange) {
             onStatusChange(data.status, data);
@@ -108,7 +109,7 @@ export default class TaskRecoveryService {
           if (onError) {
             onError(`未知任务状态: ${data.status}`);
           }
-          updateTaskStatus(task.taskId, 'error', `未知任务状态: ${data.status}`);
+          updateTaskStatus(task.taskId, TaskStatus.FAILED, `未知任务状态: ${data.status}`);
           this.showNotification(`未知任务状态: ${data.status}`, 'error');
           break;
       }
@@ -121,7 +122,7 @@ export default class TaskRecoveryService {
         onError(errorMessage);
       }
       
-      updateTaskStatus(task.taskId, 'error', errorMessage);
+      updateTaskStatus(task.taskId, TaskStatus.FAILED, errorMessage);
       this.showNotification(`恢复任务失败: ${errorMessage}`, 'error');
     }
   }
