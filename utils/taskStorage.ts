@@ -1,303 +1,209 @@
 /**
- * 任务本地存储管理工具
- * 用于在localStorage中存储、检索和管理图像生成任务信息
+ * 图片生成任务本地存储管理工具
+ * 用于管理用户浏览器本地的图片生成任务状态
  */
 
-import { PendingTask } from '@/types/task';
-import { TaskStatus } from '@/types/task';
+import { PendingTask, TaskStatus } from '@/types/task';
+import { TASK_CONFIG } from '@/constants/taskConfig';
 
-// 存储键前缀和过期时间
-const TASK_STORAGE_KEY = 'img_task_';
-const TASK_LIST_KEY = 'img_task_list';
-const TASK_EXPIRATION = 24 * 60 * 60 * 1000; // 24小时过期时间
+// 本地存储键名
+const PENDING_TASKS_KEY = 'pendingImageTasks';
 
 /**
- * 保存任务信息到本地存储
+ * 安全地访问localStorage
+ * @param action 要执行的操作函数
+ * @param fallback 失败时的返回值
  */
-export function savePendingTask(taskInfo: PendingTask): void {
+function safeLocalStorage<T>(action: () => T, fallback: T): T {
   try {
-    if (!taskInfo.taskId) {
-      console.error('[任务存储] 无法保存任务，缺少taskId');
-      return;
-    }
-
-    // 保存单个任务信息
-    localStorage.setItem(
-      `${TASK_STORAGE_KEY}${taskInfo.taskId}`,
-      JSON.stringify({
-        ...taskInfo,
-        timestamp: taskInfo.timestamp || Date.now(),
-        lastChecked: Date.now()
-      })
-    );
-    
-    // 更新任务列表
-    const taskList = getTaskList();
-    if (!taskList.includes(taskInfo.taskId)) {
-      taskList.push(taskInfo.taskId);
-      localStorage.setItem(TASK_LIST_KEY, JSON.stringify(taskList));
+    // 检查localStorage是否可用
+    if (typeof window === 'undefined' || !window.localStorage) {
+      console.warn('[taskStorage] localStorage不可用，可能在SSR环境中');
+      return fallback;
     }
     
-    console.log(`[任务存储] 已保存任务 ${taskInfo.taskId} 到本地存储`);
+    return action();
   } catch (error) {
-    console.error('[任务存储] 保存任务到本地存储失败:', error);
+    console.error('[taskStorage] 访问localStorage时出错:', error);
+    return fallback;
   }
+}
+
+/**
+ * 保存待处理任务到本地存储
+ */
+export function savePendingTask(task: PendingTask): void {
+  safeLocalStorage(() => {
+    // 获取现有任务列表
+    const existingTasksJson = localStorage.getItem(PENDING_TASKS_KEY);
+    let tasks: PendingTask[] = [];
+    
+    if (existingTasksJson) {
+      tasks = JSON.parse(existingTasksJson);
+      
+      // 如果任务已存在，更新它
+      const existingIndex = tasks.findIndex(t => t.taskId === task.taskId);
+      if (existingIndex >= 0) {
+        tasks[existingIndex] = { ...tasks[existingIndex], ...task };
+      } else {
+        // 添加新任务
+        tasks.push(task);
+      }
+    } else {
+      // 第一个任务
+      tasks = [task];
+    }
+    
+    // 限制最多保存10个任务
+    if (tasks.length > 10) {
+      // 按时间排序，保留最近的10个
+      tasks.sort((a, b) => b.timestamp - a.timestamp);
+      tasks = tasks.slice(0, 10);
+    }
+    
+    // 保存到本地存储
+    localStorage.setItem(PENDING_TASKS_KEY, JSON.stringify(tasks));
+    console.log(`[taskStorage] 已保存任务 ${task.taskId} 到本地存储`);
+    
+    return true;
+  }, false);
+}
+
+/**
+ * 从本地存储中获取所有待处理任务
+ */
+export function getAllPendingTasks(): PendingTask[] {
+  return safeLocalStorage(() => {
+    const tasksJson = localStorage.getItem(PENDING_TASKS_KEY);
+    if (!tasksJson) return [];
+    
+    const tasks = JSON.parse(tasksJson);
+    return Array.isArray(tasks) ? tasks : [];
+  }, []);
+}
+
+/**
+ * 从本地存储中获取特定任务
+ */
+export function getPendingTask(taskId: string): PendingTask | null {
+  return safeLocalStorage(() => {
+    const tasks = getAllPendingTasks();
+    return tasks.find(task => task.taskId === taskId) || null;
+  }, null);
+}
+
+/**
+ * 根据创建时间检查任务是否过期
+ */
+export function isTaskExpired(task: PendingTask): boolean {
+  const now = Date.now();
+  const taskAge = now - task.timestamp;
+  // 超过6小时的任务视为过期
+  return taskAge > 6 * 60 * 60 * 1000; // 6小时过期时间
 }
 
 /**
  * 更新任务状态
  */
-export function updatePendingTaskStatus(
+export function updateTaskStatus(
   taskId: string,
   status: TaskStatus,
-  errorMessage?: string
+  error?: string
 ): void {
-  try {
-    const taskKey = `${TASK_STORAGE_KEY}${taskId}`;
-    const rawTask = localStorage.getItem(taskKey);
-    
-    if (!rawTask) {
-      console.warn(`[存储] 未找到任务${taskId}的信息`);
-      return;
+  safeLocalStorage(() => {
+    const task = getPendingTask(taskId);
+    if (!task) return false;
+
+    // 如果任务已经处于完成状态，不再更新
+    if ([TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED].includes(task.status)) {
+      console.log(`[taskStorage] 任务 ${taskId} 已处于终态 ${task.status}，跳过更新`);
+      return false;
     }
-    
-    const task = JSON.parse(rawTask) as PendingTask;
-    
-    // 更新任务状态
+
+    // 更新状态
     task.status = status;
+    if (error) task.errorMessage = error;
     task.lastUpdated = Date.now();
-    
-    if (errorMessage) {
-      task.errorMessage = errorMessage;
+
+    // 保存更新后的任务
+    savePendingTask(task);
+
+    // 如果任务完成或失败，延迟清理
+    if ([TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED].includes(status)) {
+      setTimeout(() => {
+        clearPendingTask(taskId);
+      }, 5 * 60 * 1000); // 5分钟后清理，给用户足够时间查看结果
     }
     
-    // 保存更新后的任务信息
-    localStorage.setItem(taskKey, JSON.stringify(task));
-    
-    // 如果任务已完成或失败，从任务列表中移除
-    if (status === TaskStatus.COMPLETED || status === TaskStatus.FAILED || status === TaskStatus.CANCELLED) {
-      removeTaskFromList(taskId);
-    }
-    
-    console.log(`[存储] 已更新任务${taskId}状态为${status}`);
-  } catch (error) {
-    console.error(`[存储] 更新任务${taskId}状态失败:`, error);
-  }
+    return true;
+  }, false);
 }
 
 /**
- * 获取指定任务信息
- */
-export function getPendingTask(taskId: string): PendingTask | null {
-  try {
-    const taskKey = `${TASK_STORAGE_KEY}${taskId}`;
-    const rawTask = localStorage.getItem(taskKey);
-    
-    if (!rawTask) {
-      return null;
-    }
-    
-    const task = JSON.parse(rawTask) as PendingTask;
-    
-    // 检查任务是否过期
-    if (Date.now() - task.timestamp > TASK_EXPIRATION) {
-      clearPendingTask(taskId);
-      return null;
-    }
-    
-    return task;
-  } catch (error) {
-    console.error(`[任务存储] 获取任务 ${taskId} 信息失败:`, error);
-    return null;
-  }
-}
-
-/**
- * 清除指定任务信息
+ * 清除特定任务
  */
 export function clearPendingTask(taskId: string): void {
-  try {
-    // 移除任务详情
-    localStorage.removeItem(`${TASK_STORAGE_KEY}${taskId}`);
+  safeLocalStorage(() => {
+    const tasks = getAllPendingTasks();
+    const filteredTasks = tasks.filter(task => task.taskId !== taskId);
     
-    // 从任务列表中移除
-    const taskList = getTaskList().filter(id => id !== taskId);
-    localStorage.setItem(TASK_LIST_KEY, JSON.stringify(taskList));
-    
-    console.log(`[任务存储] 已清除任务 ${taskId} 的本地存储`);
-  } catch (error) {
-    console.error(`[任务存储] 清除任务 ${taskId} 存储失败:`, error);
-  }
-}
-
-/**
- * 从任务列表中移除指定任务
- */
-function removeTaskFromList(taskId: string): void {
-  try {
-    const taskList = getTaskList();
-    const updatedList = taskList.filter(id => id !== taskId);
-    localStorage.setItem(TASK_LIST_KEY, JSON.stringify(updatedList));
-    console.log(`[存储] 已从任务列表中移除任务${taskId}`);
-  } catch (error) {
-    console.error(`[存储] 从任务列表移除任务${taskId}失败:`, error);
-  }
-}
-
-/**
- * 获取任务列表
- */
-function getTaskList(): string[] {
-  try {
-    const rawList = localStorage.getItem(TASK_LIST_KEY);
-    return rawList ? JSON.parse(rawList) : [];
-  } catch (error) {
-    console.error('[存储] 获取任务列表失败:', error);
-    return [];
-  }
-}
-
-/**
- * 检查是否有未完成的任务
- */
-export function checkPendingTasks(): PendingTask | null {
-  try {
-    // 获取所有任务ID
-    const taskIds = getTaskList();
-    
-    // 如果没有存储的任务，直接返回null
-    if (!taskIds.length) {
-      return null;
+    if (filteredTasks.length === tasks.length) {
+      console.warn(`[taskStorage] 任务 ${taskId} 不存在，无需清除`);
+      return false;
     }
     
-    const now = Date.now();
-    let mostRecentTask: PendingTask | null = null;
-    
-    // 遍历所有任务，找出最近的任务并清理过期任务
-    for (const taskId of taskIds) {
-      const task = getPendingTask(taskId);
-      
-      if (!task) continue;
-      
-      // 如果任务已经完成或失败，清除它
-      if (task.status === 'completed' || task.status === 'failed') {
-        clearPendingTask(taskId);
-        continue;
-      }
-      
-      // 检查是否过期
-      if (now - task.timestamp > TASK_EXPIRATION) {
-        clearPendingTask(taskId);
-        continue;
-      }
-      
-      // 找出最近的任务
-      if (!mostRecentTask || task.timestamp > mostRecentTask.timestamp) {
-        mostRecentTask = task;
-      }
-    }
-    
-    return mostRecentTask;
-  } catch (error) {
-    console.error('[任务存储] 检查未完成任务失败:', error);
-    return null;
-  }
+    localStorage.setItem(PENDING_TASKS_KEY, JSON.stringify(filteredTasks));
+    console.log(`[taskStorage] 已清除任务 ${taskId}`);
+    return true;
+  }, false);
 }
 
 /**
- * 获取所有未完成的任务
- */
-export function getAllPendingTasks(): PendingTask[] {
-  try {
-    const taskIds = getTaskList();
-    const pendingTasks: PendingTask[] = [];
-    const now = Date.now();
-    
-    for (const taskId of taskIds) {
-      const task = getPendingTask(taskId);
-      
-      if (!task) continue;
-      
-      // 如果任务已经完成或失败，清除它
-      if (task.status === 'completed' || task.status === 'failed') {
-        clearPendingTask(taskId);
-        continue;
-      }
-      
-      // 检查是否过期
-      if (now - task.timestamp > TASK_EXPIRATION) {
-        clearPendingTask(taskId);
-        continue;
-      }
-      
-      pendingTasks.push(task);
-    }
-    
-    return pendingTasks.sort((a, b) => b.timestamp - a.timestamp);
-  } catch (error) {
-    console.error('[任务存储] 获取所有未完成任务失败:', error);
-    return [];
-  }
-}
-
-/**
- * 比较两个任务请求是否相同
- */
-export function isSameRequest(task: PendingTask, newParams: any): boolean {
-  if (!task || !task.params || !newParams) return false;
-  
-  // 比较基本参数
-  const samePrompt = task.params.prompt === newParams.prompt;
-  const sameStyle = task.params.style === newParams.style;
-  
-  // 如果都有图片，则认为不是相同请求（每次上传的图片通常不同）
-  const bothHaveImage = !!task.params.image && !!newParams.image;
-  
-  // 如果基本参数相同且至少一个没有图片，则认为是相同请求
-  return samePrompt && sameStyle && !bothHaveImage;
-}
-
-/**
- * 清理所有过期任务
+ * 清理过期任务
  */
 export function cleanupExpiredTasks(): void {
-  try {
-    const taskIds = getTaskList();
-    const now = Date.now();
-    let cleanedCount = 0;
+  safeLocalStorage(() => {
+    const tasks = getAllPendingTasks();
+    const validTasks = tasks.filter(task => !isTaskExpired(task));
     
-    for (const taskId of taskIds) {
-      const taskKey = `${TASK_STORAGE_KEY}${taskId}`;
-      const rawTask = localStorage.getItem(taskKey);
-      
-      if (!rawTask) {
-        // 任务不存在，从列表中移除
-        cleanedCount++;
-        continue;
-      }
-      
-      const task = JSON.parse(rawTask) as PendingTask;
-      
-      // 检查是否过期或已完成
-      if (
-        now - task.timestamp > TASK_EXPIRATION ||
-        task.status === 'completed' ||
-        task.status === 'failed'
-      ) {
-        localStorage.removeItem(taskKey);
-        cleanedCount++;
-      }
+    if (validTasks.length < tasks.length) {
+      localStorage.setItem(PENDING_TASKS_KEY, JSON.stringify(validTasks));
+      console.log(`[taskStorage] 已清理 ${tasks.length - validTasks.length} 个过期任务`);
     }
     
-    // 更新任务列表
-    if (cleanedCount > 0) {
-      const validTaskIds = taskIds.filter(id => 
-        localStorage.getItem(`${TASK_STORAGE_KEY}${id}`) !== null
-      );
-      localStorage.setItem(TASK_LIST_KEY, JSON.stringify(validTaskIds));
-      console.log(`[任务存储] 已清理 ${cleanedCount} 个过期任务`);
+    return true;
+  }, false);
+}
+
+/**
+ * 检查两个任务请求是否相同
+ */
+export function isSameRequest(task1: PendingTask, task2: Record<string, any>): boolean {
+  if (!task1 || !task2) return false;
+  
+  // 比较关键参数
+  const keysToCompare = ['prompt', 'style', 'aspectRatio'];
+  
+  for (const key of keysToCompare) {
+    if (task1.params[key] !== task2[key]) {
+      return false;
     }
-  } catch (error) {
-    console.error('[任务存储] 清理过期任务失败:', error);
   }
+  
+  // 比较图像（如果有）
+  if (task1.params.image && task2.image) {
+    // 图像内容较大，只比较前100个字符和长度
+    const img1 = task1.params.image;
+    const img2 = task2.image;
+    
+    if (typeof img1 === 'string' && typeof img2 === 'string') {
+      const prefix1 = img1.substring(0, 100);
+      const prefix2 = img2.substring(0, 100);
+      if (prefix1 !== prefix2 || img1.length !== img2.length) {
+        return false;
+      }
+    }
+  }
+  
+  return true;
 } 

@@ -1,208 +1,148 @@
 "use client";
 
-import { useEffect, useState, useRef } from 'react';
-import useNotification from '@/hooks/useNotification';
-import { debounce } from '@/lib/utils';
+import { useEffect, useState } from 'react';
+import { toast } from 'react-hot-toast';
 
 interface TaskStatusListenerProps {
   taskId: string;
-  onStatusChange?: (status: string, data: any) => void;
-  onCompleted?: (imageUrl: string) => void;
-  onError?: (error: string) => void;
+  onCompleted: (imageUrl: string) => void;
+  onError: (error: string) => void;
 }
 
-// 全局任务状态映射，防止重复通知
-const taskNotifications = new Map<string, {
-  lastStatus: string,
-  timestamp: number,
-  notified: boolean
-}>();
-
-// 清理过期任务通知记录
-const cleanupTaskNotifications = () => {
-  const now = Date.now();
-  const EXPIRE_TIME = 5 * 60 * 1000; // 5分钟过期
-  
-  taskNotifications.forEach((data, taskId) => {
-    if (now - data.timestamp > EXPIRE_TIME) {
-      taskNotifications.delete(taskId);
-    }
-  });
-};
-
-// 如果在浏览器环境，设置定期清理
-if (typeof window !== 'undefined') {
-  setInterval(cleanupTaskNotifications, 60 * 1000); // 每分钟清理一次
-}
-
-const TaskStatusListener = ({ 
-  taskId, 
-  onStatusChange, 
-  onCompleted, 
-  onError 
-}: TaskStatusListenerProps) => {
-  const [connected, setConnected] = useState(false);
+/**
+ * 任务状态监听组件 - 使用Server-Sent Events监听任务状态变化
+ */
+export default function TaskStatusListener({ taskId, onCompleted, onError }: TaskStatusListenerProps) {
   const [eventSource, setEventSource] = useState<EventSource | null>(null);
-  const { showNotification } = useNotification();
-  const isMounted = useRef<boolean>(true);
-  
-  // 使用防抖包装回调函数，防止短时间内多次触发
-  const debouncedOnCompleted = useRef(
-    debounce((imageUrl: string) => {
-      if (!isMounted.current) return;
-      console.log(`[TaskListener] 防抖后触发完成回调: ${imageUrl}`);
-      onCompleted?.(imageUrl);
-    }, 300)
-  ).current;
-  
-  // 使用防抖包装错误回调函数
-  const debouncedOnError = useRef(
-    debounce((error: string) => {
-      if (!isMounted.current) return;
-      console.log(`[TaskListener] 防抖后触发错误回调: ${error}`);
-      onError?.(error);
-    }, 300)
-  ).current;
-  
-  // 使用防抖包装状态变化回调函数
-  const debouncedOnStatusChange = useRef(
-    debounce((status: string, data: any) => {
-      if (!isMounted.current) return;
-      console.log(`[TaskListener] 防抖后触发状态变化回调: ${status}`);
-      onStatusChange?.(status, data);
-    }, 300)
-  ).current;
-  
-  // 连接SSE
+
   useEffect(() => {
     if (!taskId) return;
+
+    console.log(`[TaskStatusListener] 开始监听任务: ${taskId}`);
     
-    // 检查浏览器是否支持EventSource
-    if (!window.EventSource) {
-      console.error('浏览器不支持EventSource，将使用轮询模式');
-      return;
-    }
+    // 创建事件源
+    let retryCount = 0;
+    const maxRetries = 3;
+    let retryTimeout: NodeJS.Timeout;
     
-    console.log(`[TaskListener] 开始监听任务: ${taskId}`);
-    
-    // 标记组件已挂载
-    isMounted.current = true;
-    
-    // 检查任务是否已通知过
-    if (taskNotifications.has(taskId)) {
-      const taskData = taskNotifications.get(taskId)!;
-      
-      // 如果任务已经成功完成并通知过，直接触发回调，无需重新连接
-      if (taskData.lastStatus === 'completed' && taskData.notified) {
-        console.log(`[TaskListener] 任务 ${taskId} 已经完成并通知过，跳过连接`);
-        return;
-      }
-      
-      // 如果任务已经失败并通知过，直接触发错误回调，无需重新连接
-      if (taskData.lastStatus === 'failed' && taskData.notified) {
-        console.log(`[TaskListener] 任务 ${taskId} 已经失败并通知过，跳过连接`);
-        return;
-      }
-    }
-    
-    // 创建EventSource连接
-    const sse = new EventSource(`/api/notify-task-update?taskId=${taskId}`);
-    setEventSource(sse);
-    
-    // 连接打开时
-    sse.onopen = () => {
-      console.log(`[TaskListener] SSE连接已打开: ${taskId}`);
-      setConnected(true);
-    };
-    
-    // 接收消息时
-    sse.onmessage = (event) => {
+    const connectEventSource = () => {
       try {
-        const data = JSON.parse(event.data);
-        console.log(`[TaskListener] 收到任务更新:`, data);
+        // 关闭之前的连接
+        if (eventSource) {
+          eventSource.close();
+        }
         
-        // 更新任务状态记录
-        taskNotifications.set(taskId, {
-          lastStatus: data.status,
-          timestamp: Date.now(),
-          notified: true
+        // 创建新的SSE连接
+        const newEventSource = new EventSource(`/api/tasks/stream/${taskId}`);
+        setEventSource(newEventSource);
+        
+        // 连接成功事件
+        newEventSource.onopen = () => {
+          console.log(`[TaskStatusListener] 已连接到任务状态流: ${taskId}`);
+          retryCount = 0; // 重置重试次数
+        };
+        
+        // 监听消息事件
+        newEventSource.addEventListener('message', (event) => {
+          try {
+            console.log(`[TaskStatusListener] 收到消息:`, event.data);
+            const data = JSON.parse(event.data);
+            
+            // 处理任务完成
+            if (data.status === 'completed' && data.imageUrl) {
+              console.log(`[TaskStatusListener] 任务完成，图片URL: ${data.imageUrl}`);
+              onCompleted(data.imageUrl);
+              newEventSource.close();
+            }
+            
+            // 处理任务失败
+            if (data.status === 'failed' || data.status === 'cancelled') {
+              console.log(`[TaskStatusListener] 任务失败: ${data.error || '未知错误'}`);
+              onError(data.error || '任务处理失败');
+              newEventSource.close();
+            }
+          } catch (error) {
+            console.error('[TaskStatusListener] 处理消息时出错:', error);
+          }
         });
         
-        // 传递状态变化到父组件（使用防抖）
-        debouncedOnStatusChange(data.status, data);
-        
-        // 任务完成时
-        if (data.status === 'completed' && data.imageUrl) {
-          console.log(`[TaskListener] 任务完成，图片URL: ${data.imageUrl}`);
+        // 监听错误事件
+        newEventSource.onerror = (error) => {
+          console.error(`[TaskStatusListener] 事件源错误:`, error);
           
-          // 使用防抖函数触发完成回调
-          debouncedOnCompleted(data.imageUrl);
-          
-          // 只在第一次收到完成状态时显示通知
-          if (!taskNotifications.has(taskId) || 
-              taskNotifications.get(taskId)!.lastStatus !== 'completed') {
-            showNotification('图片生成成功!', 'success');
+          // 连接失败时重试
+          if (retryCount < maxRetries) {
+            retryCount++;
+            console.log(`[TaskStatusListener] 尝试重新连接 (${retryCount}/${maxRetries})...`);
+            
+            // 关闭当前连接
+            newEventSource.close();
+            
+            // 延迟重试
+            retryTimeout = setTimeout(() => {
+              connectEventSource();
+            }, 2000 * retryCount); // 指数退避
+          } else {
+            console.error(`[TaskStatusListener] 达到最大重试次数，停止重试`);
+            // 切换到轮询模式获取任务状态
+            pollTaskStatus();
           }
-          
-          // 关闭连接
-          sse.close();
-          setEventSource(null);
-        }
-        
-        // 任务失败时
-        if (data.status === 'failed') {
-          console.log(`[TaskListener] 任务失败: ${data.error_message || '未知错误'}`);
-          
-          // 使用防抖函数触发错误回调
-          debouncedOnError(data.error_message || '图片生成失败');
-          
-          // 只在第一次收到失败状态时显示通知
-          if (!taskNotifications.has(taskId) || 
-              taskNotifications.get(taskId)!.lastStatus !== 'failed') {
-            showNotification('图片生成失败', 'error');
-          }
-          
-          // 关闭连接
-          sse.close();
-          setEventSource(null);
-        }
-        
-        // 连接关闭事件
-        if (data.type === 'close') {
-          console.log(`[TaskListener] 服务器请求关闭连接`);
-          sse.close();
-          setEventSource(null);
-        }
+        };
       } catch (error) {
-        console.error('[TaskListener] 处理SSE消息出错:', error);
+        console.error('[TaskStatusListener] 创建事件源时出错:', error);
+        // 失败时使用轮询方式
+        pollTaskStatus();
       }
     };
     
-    // 错误处理
-    sse.onerror = (error) => {
-      console.error(`[TaskListener] SSE连接错误:`, error);
-      setConnected(false);
+    // 备用轮询方式
+    const pollTaskStatus = async () => {
+      console.log(`[TaskStatusListener] 切换到轮询模式: ${taskId}`);
       
-      // 尝试重新连接
-      setTimeout(() => {
-        if (isMounted.current) {
-          sse.close();
-          setEventSource(null);
+      try {
+        const response = await fetch(`/api/image-task-status/${taskId}`);
+        if (response.ok) {
+          const data = await response.json();
+          
+          if (data.status === 'completed' && data.imageUrl) {
+            console.log(`[TaskStatusListener] 轮询发现任务已完成: ${data.imageUrl}`);
+            onCompleted(data.imageUrl);
+            return; // 任务完成，停止轮询
+          }
+          
+          if (data.status === 'failed' || data.status === 'cancelled') {
+            console.log(`[TaskStatusListener] 轮询发现任务已失败: ${data.error || '未知错误'}`);
+            onError(data.error || '任务处理失败');
+            return; // 任务失败，停止轮询
+          }
+          
+          // 任务仍在进行中，继续轮询
+          setTimeout(pollTaskStatus, 5000);
+        } else {
+          // 请求失败，可能是网络问题，稍后重试
+          console.error(`[TaskStatusListener] 轮询请求失败: ${response.status}`);
+          toast.error('任务状态检查失败，将在5秒后重试');
+          setTimeout(pollTaskStatus, 5000);
         }
-      }, 3000);
+      } catch (error) {
+        console.error('[TaskStatusListener] 轮询出错:', error);
+        toast.error('任务状态检查出错，将在5秒后重试');
+        setTimeout(pollTaskStatus, 5000);
+      }
     };
     
-    // 清理函数
+    // 启动监听
+    connectEventSource();
+    
+    // 组件卸载时清理
     return () => {
-      console.log(`[TaskListener] 清理SSE连接: ${taskId}`);
-      isMounted.current = false;
-      sse.close();
-      setEventSource(null);
+      console.log(`[TaskStatusListener] 停止监听任务: ${taskId}`);
+      if (eventSource) {
+        eventSource.close();
+      }
+      clearTimeout(retryTimeout);
     };
-  }, [taskId, debouncedOnCompleted, debouncedOnError, debouncedOnStatusChange, showNotification]);
-  
-  // 组件仅用于监听，不输出UI
-  return null;
-};
+  }, [taskId, onCompleted, onError]);
 
-export default TaskStatusListener; 
+  return null;
+} 

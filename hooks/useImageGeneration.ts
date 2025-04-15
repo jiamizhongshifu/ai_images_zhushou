@@ -497,6 +497,11 @@ export default function useImageGeneration(
       return null;
     }
 
+    // 设置UI状态为生成中
+    setIsGenerating(true);
+    setStatus('loading');
+    setError(null);
+    
     // 设置提交锁定
     console.log('[useImageGeneration] 所有检查通过，设置提交锁定');
     TaskSyncManager.setSubmitLock();
@@ -615,6 +620,8 @@ export default function useImageGeneration(
       
       // 如果没有currentTaskId,说明任务还未创建成功
       setError(error instanceof Error ? error.message : '生成失败');
+      setStatus('error');
+      setIsGenerating(false); // 设置生成状态为false
       notify('创建任务失败,请重试', 'error');
       
       return null;
