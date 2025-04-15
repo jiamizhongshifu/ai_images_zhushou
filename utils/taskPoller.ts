@@ -3,7 +3,7 @@
  * 用于管理图像生成任务的状态轮询，支持指数退避策略和错误处理
  */
 
-import { updatePendingTaskStatus } from './taskStorage';
+import { updateTaskStatus } from './taskStorage';
 import { TASK_CONFIG } from '@/constants/taskConfig';
 import { TaskStatus } from '@/types/task';
 
@@ -172,7 +172,7 @@ export async function enhancedPollTaskStatus(
           updateState(TaskStatus.FAILED);
           
           // 更新任务本地存储状态
-          updatePendingTaskStatus(
+          updateTaskStatus(
             taskId, 
             TaskStatus.FAILED,
             result.error || '图片生成失败'
@@ -193,7 +193,7 @@ export async function enhancedPollTaskStatus(
           updateState(TaskStatus.FAILED);
           
           // 更新任务本地存储状态
-          updatePendingTaskStatus(
+          updateTaskStatus(
             taskId, 
             TaskStatus.FAILED,
             '任务处理超时'
