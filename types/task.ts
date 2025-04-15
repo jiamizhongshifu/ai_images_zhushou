@@ -24,24 +24,18 @@ export interface Task {
   parameters?: Record<string, any>; // 任务参数
 }
 
-/**
- * 待处理任务接口
- */
 export interface PendingTask {
-  taskId: string;                    // 任务ID
-  status: TaskStatus;                // 任务状态
-  timestamp: number;                 // 创建时间戳
-  lastUpdated: number;              // 最后更新时间戳
-  params: Record<string, any>;      // 任务参数
-  error: string | null;             // 错误信息
-  errorMessage: string | null;      // 错误详细信息
-  progress?: number;                // 进度
-  stage?: string;                   // 当前阶段
-  result?: any;                     // 任务结果
+  taskId: string;
+  status: string;
+  timestamp: number;
+  lastUpdated?: number;
+  params: any;
+  error?: string;
+  errorMessage?: string;
 }
 
 export interface TaskUpdatePayload {
-  status: TaskStatus;
+  status: string;
   progress?: number;
   stage?: string;
   error?: string;
@@ -49,7 +43,7 @@ export interface TaskUpdatePayload {
 }
 
 export interface TaskPollingResult {
-  status: TaskStatus;
+  status: string;
   data?: any;
   error?: string;
   attempts: number;

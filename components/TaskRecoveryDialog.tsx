@@ -3,11 +3,10 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Button } from '@/components/ui/button';
 import { formatDistanceToNow } from 'date-fns';
 import { zhCN } from 'date-fns/locale/zh-CN';
-import { getAllPendingTasks } from '@/utils/taskStorage';
-import { PendingTask, TaskStatus } from '@/types/task';
+import { getAllPendingTasks, StoredTaskInfo } from '@/utils/taskStorage';
 
 interface TaskRecoveryDialogProps {
-  onRecover: (task: PendingTask) => void;
+  onRecover: (task: StoredTaskInfo) => void;
   onDiscard: (taskId: string) => void;
 }
 
@@ -17,7 +16,7 @@ interface TaskRecoveryDialogProps {
  */
 export default function TaskRecoveryDialog({ onRecover, onDiscard }: TaskRecoveryDialogProps) {
   const [isOpen, setIsOpen] = useState(false);
-  const [pendingTask, setPendingTask] = useState<PendingTask | null>(null);
+  const [pendingTask, setPendingTask] = useState<StoredTaskInfo | null>(null);
 
   // 在组件挂载时检查是否有未完成的任务
   useEffect(() => {
@@ -28,7 +27,7 @@ export default function TaskRecoveryDialog({ onRecover, onDiscard }: TaskRecover
       if (pendingTasks.length > 0) {
         // 过滤出状态为 pending 或 processing 的任务
         const activeTasks = pendingTasks.filter(
-          task => task.status === TaskStatus.PENDING || task.status === TaskStatus.PROCESSING
+          task => task.status === 'pending' || task.status === 'processing'
         );
         
         if (activeTasks.length > 0) {

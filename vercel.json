@@ -1,11 +1,7 @@
 {
-  "version": 2,
-  "buildCommand": "SHARP_IGNORE_GLOBAL=true pnpm install && chmod +x ./scripts/fix-all-next15-params.sh && ./scripts/fix-all-next15-params.sh && next build",
-  "installCommand": "SHARP_IGNORE_GLOBAL=true pnpm install",
+  "buildCommand": "SHARP_IGNORE_GLOBAL=true CI=true pnpm install sharp && pnpm run build",
+  "installCommand": "pnpm install --no-frozen-lockfile",
   "framework": "nextjs",
-  "env": {
-    "SHARP_IGNORE_GLOBAL": "true"
-  },
   "functions": {
     "app/api/generate-image-direct/route.ts": {
       "memory": 1024,
@@ -28,50 +24,10 @@
       "maxDuration": 300
     }
   },
-  "outputDirectory": ".next",
-  "regions": ["iad1"],
-  "ignoreCommand": "echo Skipping ignored files...",
-  "git": {
-    "deploymentEnabled": {
-      "main": true
-    }
-  },
-  "headers": [
-    {
-      "source": "/(.*)",
-      "headers": [
-        {
-          "key": "X-Content-Type-Options",
-          "value": "nosniff"
-        },
-        {
-          "key": "X-Frame-Options",
-          "value": "DENY"
-        },
-        {
-          "key": "X-XSS-Protection",
-          "value": "1; mode=block"
-        }
-      ]
-    },
-    {
-      "source": "/api/(.*)",
-      "headers": [
-        {
-          "key": "Cache-Control",
-          "value": "no-store, max-age=0"
-        }
-      ]
-    }
-  ],
   "crons": [
     {
       "path": "/api/cron/cleanup-tasks",
-      "schedule": "0 */2 * * *"
-    },
-    {
-      "path": "/api/cron/fix-pending-orders",
-      "schedule": "*/15 * * * *"
+      "schedule": "0 0 * * *"
     }
   ]
 }

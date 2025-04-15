@@ -61,16 +61,5 @@
     "tailwindcss-animate": "^1.0.7",
     "typescript": "5.7.2",
     "uuid": "^11.1.0"
-  },
-  "pnpm": {
-    "allowedDeprecatedVersions": {
-      "@supabase/auth-helpers-nextjs": "0.10.0"
-    },
-    "approvedPackages": {
-      "sharp": "0.34.1"
-    },
-    "overrides": {
-      "sharp": "0.34.1"
-    }
   }
 }

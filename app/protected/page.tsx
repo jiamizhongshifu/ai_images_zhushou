@@ -23,7 +23,7 @@ import useImageHandling from "@/hooks/useImageHandling";
 import useNotification from "@/hooks/useNotification";
 import TaskStatusListener from "@/app/components/TaskStatusListener";
 import TaskRecoveryDialog from "@/app/components/TaskRecoveryDialog";
-import { PendingTask } from "@/types/task";
+import { PendingTask } from "@/utils/taskRecovery";
 
 // 动态导入CreditRechargeDialog组件
 const CreditRechargeDialog = dynamic(

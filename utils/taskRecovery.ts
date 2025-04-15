@@ -3,9 +3,29 @@
  */
 
 import { TASK_CONFIG } from '@/constants/taskConfig';
-import { TaskStatus, PendingTask } from '@/types/task';
 
 const PENDING_TASKS_KEY = 'pendingImageTasks';
+
+export interface PendingTask {
+  taskId: string;
+  params: any;
+  timestamp: number;
+  status: string;
+  lastUpdated?: number;
+  error?: string;
+  errorMessage?: string;
+}
+
+// 添加预定义的状态类型
+export type TaskStatus = 
+  | 'pending'      // 初始状态
+  | 'created'      // 已创建
+  | 'processing'   // 处理中
+  | 'recovering'   // 恢复中
+  | 'completed'    // 完成
+  | 'failed'       // 失败
+  | 'cancelled'    // 取消
+  | 'error';       // 错误
 
 /**
  * 保存待处理任务到本地存储
@@ -88,7 +108,7 @@ export function isTaskExpired(task: PendingTask): boolean {
  * 检查任务是否活跃
  */
 export function isTaskActive(task: PendingTask): boolean {
-  return [TaskStatus.PENDING, TaskStatus.PROCESSING, TaskStatus.PENDING].includes(task.status) && !isTaskExpired(task);
+  return ['pending', 'processing', 'created'].includes(task.status) && !isTaskExpired(task);
 }
 
 /**
@@ -98,7 +118,7 @@ export function shouldRecoverTask(task: PendingTask): boolean {
   if (!task) return false;
   
   // 检查任务状态
-  const isValidStatus = [TaskStatus.PENDING, TaskStatus.PROCESSING, TaskStatus.PENDING].includes(task.status);
+  const isValidStatus = ['pending', 'processing', 'created'].includes(task.status);
   if (!isValidStatus) return false;
   
   // 检查任务年龄
@@ -111,39 +131,16 @@ export function shouldRecoverTask(task: PendingTask): boolean {
 }
 
 /**
- * 检查是否存在相同的活跃任务
- */
-export function hasActiveIdenticalTask(params: any): boolean {
-  try {
-    const tasks = getAllPendingTasks();
-    return tasks.some(task => {
-      const isActive = [TaskStatus.PENDING, TaskStatus.PROCESSING, TaskStatus.PENDING].includes(task.status);
-      const isRecent = Date.now() - task.timestamp < TASK_CONFIG.BACKEND_TIMEOUT;
-      return isActive && isRecent && isSameRequest(task, params);
-    });
-  } catch (error) {
-    console.error('[任务恢复] 检查重复任务失败:', error);
-    return false;
-  }
-}
-
-/**
  * 增强的任务状态更新
  */
 export async function updateTaskStatus(
   taskId: string,
-  status: TaskStatus,
+  status: string,
   error?: string
 ): Promise<void> {
   try {
     const task = getPendingTask(taskId);
     if (!task) return;
-
-    // 如果任务已经处于完成状态，不再更新
-    if ([TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED].includes(task.status)) {
-      console.log(`[任务恢复] 任务 ${taskId} 已处于终态 ${task.status}，跳过更新`);
-      return;
-    }
 
     // 更新状态
     task.status = status;
@@ -154,7 +151,7 @@ export async function updateTaskStatus(
     savePendingTask(task);
 
     // 如果任务完成或失败，执行清理
-    if ([TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED].includes(status)) {
+    if (['completed', 'failed', 'cancelled'].includes(status)) {
       setTimeout(() => {
         clearPendingTask(taskId);
       }, 5000); // 5秒后清理
@@ -229,7 +226,7 @@ export function hasActivePendingTasks(): boolean {
     
     return tasks.some(task => {
       // 只有处理中和等待中的任务才算活跃
-      const isActiveStatus = [TaskStatus.PENDING, TaskStatus.PROCESSING, TaskStatus.PENDING].includes(task.status);
+      const isActiveStatus = ['pending', 'processing', 'created'].includes(task.status);
       const isRecent = now - task.timestamp < ACTIVE_TIME;
       return isActiveStatus && isRecent;
     });
