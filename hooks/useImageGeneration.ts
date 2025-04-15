@@ -678,7 +678,7 @@ export default function useImageGeneration(
         image: processedImage || undefined,
         style: style !== "自定义" ? style : undefined,
         aspectRatio,
-        standardAspectRatio,
+        standardRatio: standardAspectRatio,
         requestId // 添加请求ID到请求数据，服务器端可以用它来防止重复处理
       };
       
@@ -698,131 +698,122 @@ export default function useImageGeneration(
         console.log(`- 图片数据: 无`);
       }
       
-      // 发送请求阶段
+      // 发送任务创建请求
       updateGenerationStage('sending_request', 20);
       
-      // 使用带有超时和重试限制的fetch
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 300000); // 5分钟超时
+      // 设置请求超时
+      let timeoutId: NodeJS.Timeout | undefined;
+      const timeoutPromise = new Promise<null>((_, reject) => {
+        timeoutId = setTimeout(() => {
+          reject(new Error('请求超时，但任务可能已创建'));
+        }, 20000); // 20秒超时
+      });
       
       try {
-        // 调用异步API创建任务
-        const response = await fetch("/api/generate-image-task", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-Request-ID": requestId // 添加请求ID头，帮助服务器端识别重复请求
-          },
-          signal: controller.signal,
-          body: JSON.stringify(requestData),
-        }).catch(fetchError => {
+        // 竞争超时和实际请求
+        const response = await Promise.race([
+          fetch("/api/generate-image-task", {
+            method: "POST", 
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Request-Id': requestId
+            },
+            body: JSON.stringify({ 
+              prompt: fullPrompt,
+              image: processedImage,
+              style,
+              aspectRatio,
+              standardRatio: standardAspectRatio
+            })
+          }),
+          timeoutPromise
+        ]).catch(fetchError => {
           // 特殊处理网络错误，但不终止流程
           console.error('[useImageGeneration] 请求网络错误:', fetchError);
           
-          // 创建并保存临时任务ID，即使请求失败也继续
-          const temporaryTaskId = `temp-${requestId}`;
-          console.log(`[useImageGeneration] 生成临时任务ID: ${temporaryTaskId} 以继续处理`);
+          // 清除可能存在的超时计时器
+          if (timeoutId) clearTimeout(timeoutId);
           
-          // 保存任务到本地存储，即使请求失败也能恢复
+          // 创建临时任务ID，并保存任务信息，以便后续自动恢复
+          const tempTaskId = `temp-${requestId}`;
+          setCurrentTaskId(tempTaskId);
+          
+          // 保存任务相关参数
           savePendingTask({
-            taskId: temporaryTaskId,
+            taskId: tempTaskId,
             params: options,
             timestamp: Date.now(),
-            status: 'pending' // 使用pending状态替代created
+            status: 'pending' // 使用pending替代idle
           });
           
-          // 记录到跨标签页同步管理器
-          TaskSyncManager.recordTask({
-            taskId: temporaryTaskId,
-            timestamp: Date.now(),
-            status: 'idle', // 使用idle状态替代created
-            params: options
-          });
+          console.log(`[useImageGeneration] 生成临时任务ID: ${tempTaskId} 以继续处理`);
           
-          // 设置任务ID但继续处理
-          setCurrentTaskId(temporaryTaskId);
-          updateGenerationStage('processing', 30);
-          
-          // 尝试获取实际任务状态
+          // 开始自动恢复流程
           setTimeout(async () => {
             try {
-              // 先尝试从最近任务API获取真实任务ID
-              const lastTaskResp = await fetch(`/api/last-task-for-user`);
-              if (!lastTaskResp.ok) {
-                throw new Error(`获取最近任务失败: ${lastTaskResp.statusText}`);
+              console.log('[自动恢复] 开始自动查询最近任务');
+              
+              // 等待3秒，让后端有足够时间创建任务
+              await new Promise(resolve => setTimeout(resolve, 3000));
+              
+              // 自动查询最近的任务
+              const recentTasksResponse = await fetch('/api/recent-tasks?limit=1&minutes=3');
+              
+              if (!recentTasksResponse.ok) {
+                throw new Error(`获取最近任务失败: ${recentTasksResponse.status}`);
               }
               
-              const lastTaskData = await lastTaskResp.json();
+              const recentTasksData = await recentTasksResponse.json();
               
-              if (lastTaskData && lastTaskData.taskId) {
-                console.log(`[useImageGeneration] 恢复到真实任务ID: ${lastTaskData.taskId}`);
-                setCurrentTaskId(lastTaskData.taskId);
+              if (recentTasksData.success && recentTasksData.tasks && recentTasksData.tasks.length > 0) {
+                // 找到最近的任务
+                const latestTask = recentTasksData.tasks[0];
+                console.log(`[自动恢复] 找到最近任务: ${latestTask.taskId}`);
                 
-                // 更新任务本地存储
-                const task = getPendingTask(temporaryTaskId);
-                if (task) {
-                  clearPendingTask(temporaryTaskId);
-                  savePendingTask({
-                    ...task,
-                    taskId: lastTaskData.taskId
-                  });
-                  
-                  // 启动轮询
-                  startEnhancedPollingTaskStatus(lastTaskData.taskId);
-                }
-                return; // 成功找到任务，结束流程
+                // 从本地存储中清除临时任务
+                clearPendingTask(tempTaskId);
+                
+                // 设置新的任务ID并保存
+                setCurrentTaskId(latestTask.taskId);
+                
+                // 保存真实任务ID
+                savePendingTask({
+                  taskId: latestTask.taskId,
+                  params: options,
+                  timestamp: Date.now(),
+                  status: 'processing'
+                });
+                
+                console.log(`[自动恢复] 自动恢复到真实任务ID: ${latestTask.taskId}`);
+                
+                // 开始轮询任务状态
+                updateGenerationStage('processing', 30);
+                TaskSyncManager.updateTaskStatus(latestTask.taskId, 'processing'); // 使用processing替代polling
+                startEnhancedPollingTaskStatus(latestTask.taskId);
+              } else {
+                console.warn('[自动恢复] 未找到可恢复的最近任务');
+                // 如果没有找到最近任务，回退到手动恢复
+                setIsGenerating(false);
+                setStatus('error');
+                setError('任务创建过程中断，请重试或手动恢复');
+                // 不清除临时任务，等待用户手动恢复
               }
-            } catch (err) {
-              console.error('[useImageGeneration] 无法从最近任务API恢复任务ID:', err);
+            } catch (recoveryError) {
+              console.error('[自动恢复] 自动恢复失败:', recoveryError);
+              // 如果自动恢复失败，回退到手动恢复
+              setIsGenerating(false);
+              setStatus('error');
+              setError('自动恢复失败，请手动恢复任务');
+              // 不清除临时任务，等待用户手动恢复
             }
-            
-            // 如果无法从最近任务API获取，尝试备用方案
-            try {
-              // 尝试从历史记录API查询最近任务
-              const historyResp = await fetch(`/api/image-history?limit=1`);
-              if (historyResp.ok) {
-                const historyData = await historyResp.json();
-                if (historyData && historyData.history && historyData.history.length > 0) {
-                  const latestImage = historyData.history[0];
-                  if (latestImage && latestImage.task_id) {
-                    console.log(`[useImageGeneration] 从历史记录找到最近任务ID: ${latestImage.task_id}`);
-                    setCurrentTaskId(latestImage.task_id);
-                    
-                    // 更新任务本地存储
-                    const task = getPendingTask(temporaryTaskId);
-                    if (task) {
-                      clearPendingTask(temporaryTaskId);
-                      savePendingTask({
-                        ...task,
-                        taskId: latestImage.task_id
-                      });
-                      
-                      // 启动轮询
-                      startEnhancedPollingTaskStatus(latestImage.task_id);
-                    }
-                    return; // 成功找到任务，结束流程
-                  }
-                }
-              }
-            } catch (historyErr) {
-              console.error('[useImageGeneration] 无法从历史记录恢复任务ID:', historyErr);
-            }
-            
-            // 所有恢复方法都失败，直接使用临时任务ID继续
-            console.log(`[useImageGeneration] 所有恢复方法失败，继续使用临时任务ID: ${temporaryTaskId}`);
-            // 延迟再次尝试轮询，防止短时间内多次请求
-            setTimeout(() => {
-              if (isGenerating && currentTaskId === temporaryTaskId) {
-                startEnhancedPollingTaskStatus(temporaryTaskId);
-              }
-            }, 10000); // 等待10秒后开始轮询
-          }, 5000);
+          }, 1000);
           
           // 返回null表示网络错误，但不抛出异常
           return null;
         });
         
-        clearTimeout(timeoutId);
+        // 清除超时计时器
+        if (timeoutId) clearTimeout(timeoutId);
         
         // 如果网络请求失败但已创建临时任务，则继续处理
         if (!response) {
@@ -931,8 +922,6 @@ export default function useImageGeneration(
         
         return { taskId }; // 返回任务ID以支持外部状态监听
       } catch (fetchError) {
-        clearTimeout(timeoutId);
-        
         // 特殊处理AbortError（超时）
         if (fetchError instanceof Error && fetchError.name === 'AbortError') {
           console.error('[useImageGeneration] 请求超时:', fetchError);
