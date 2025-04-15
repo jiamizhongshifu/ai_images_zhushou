@@ -396,6 +396,12 @@ export default function useImageGeneration(
       // 检查是否有未完成的任务
       const pendingTask = checkPendingTask();
       if (pendingTask && !isGenerating) {
+        // 严格检查：确保任务没有auto_recovering标记
+        if (pendingTask.auto_recovering === true) {
+          console.log(`[useImageGeneration] 页面加载时检测到自动恢复中的任务: ${pendingTask.taskId}，跳过手动恢复确认`);
+          return;
+        }
+        
         console.log(`[useImageGeneration] 页面加载时检测到未完成任务: ${pendingTask.taskId}`);
         
         // 询问用户是否要恢复任务
@@ -429,12 +435,22 @@ export default function useImageGeneration(
           ['pending', 'created', 'processing'].includes(task.status) &&
           // 任务时间在12小时内
           (Date.now() - task.timestamp < 12 * 60 * 60 * 1000) &&
-          // 新增：排除正在自动恢复的任务
-          !task.auto_recovering
+          // 严格检查：任务必须没有auto_recovering标记才会显示恢复对话框
+          task.auto_recovering !== true
         );
         
         if (activeTasks.length > 0) {
           console.log(`[任务恢复] 检测到 ${activeTasks.length} 个未完成的任务`);
+          
+          // 查找所有标记为auto_recovering的任务，记录日志但不弹出恢复对话框
+          const autoRecoveringTasks = pendingTasks.filter(task => 
+            ['pending', 'created', 'processing'].includes(task.status) &&
+            task.auto_recovering === true
+          );
+          
+          if (autoRecoveringTasks.length > 0) {
+            console.log(`[任务恢复] 发现 ${autoRecoveringTasks.length} 个自动恢复中的任务，这些任务不会触发恢复对话框`);
+          }
           
           // 按时间排序，最新的任务优先恢复
           const sortedTasks = activeTasks.sort((a, b) => b.timestamp - a.timestamp);
@@ -779,12 +795,13 @@ export default function useImageGeneration(
                 // 设置新的任务ID并保存
                 setCurrentTaskId(latestTask.taskId);
                 
-                // 保存真实任务ID
+                // 保存真实任务ID - 修改：保留auto_recovering标记
                 savePendingTask({
                   taskId: latestTask.taskId,
                   params: options,
                   timestamp: Date.now(),
-                  status: 'processing'
+                  status: 'processing',
+                  auto_recovering: true // 保留自动恢复标记，防止出现手动恢复提示
                 });
                 
                 console.log(`[自动恢复] 自动恢复到真实任务ID: ${latestTask.taskId}`);
