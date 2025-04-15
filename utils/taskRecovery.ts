@@ -36,6 +36,7 @@ export interface PendingTask {
   status: TaskStatus;
   error?: string;
   errorMessage?: string;
+  auto_recovering?: boolean; // 标记任务是否正在自动恢复中
 }
 
 /**

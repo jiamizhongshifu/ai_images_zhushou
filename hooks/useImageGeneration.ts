@@ -428,7 +428,9 @@ export default function useImageGeneration(
         const activeTasks = pendingTasks.filter(task => 
           ['pending', 'created', 'processing'].includes(task.status) &&
           // 任务时间在12小时内
-          (Date.now() - task.timestamp < 12 * 60 * 60 * 1000)
+          (Date.now() - task.timestamp < 12 * 60 * 60 * 1000) &&
+          // 新增：排除正在自动恢复的任务
+          !task.auto_recovering
         );
         
         if (activeTasks.length > 0) {
@@ -736,17 +738,18 @@ export default function useImageGeneration(
           
           // 创建临时任务ID，并保存任务信息，以便后续自动恢复
           const tempTaskId = `temp-${requestId}`;
+          console.log(`[useImageGeneration] 生成临时任务ID: ${tempTaskId} 以继续处理`);
+          
           setCurrentTaskId(tempTaskId);
           
-          // 保存任务相关参数
+          // 保存任务相关参数，添加auto_recovering标记，防止触发手动恢复
           savePendingTask({
             taskId: tempTaskId,
             params: options,
             timestamp: Date.now(),
-            status: 'pending' // 使用pending替代idle
+            status: 'pending', // 使用pending替代idle
+            auto_recovering: true // 添加自动恢复标记，防止触发手动确认
           });
-          
-          console.log(`[useImageGeneration] 生成临时任务ID: ${tempTaskId} 以继续处理`);
           
           // 开始自动恢复流程
           setTimeout(async () => {
@@ -984,6 +987,12 @@ export default function useImageGeneration(
       if (!task) {
         notify(`任务 ${taskId} 不存在`, 'error');
         return false;
+      }
+      
+      // 如果任务正在自动恢复中，直接返回成功，避免重复恢复
+      if (task.auto_recovering) {
+        console.log(`[任务恢复] 任务 ${taskId} 正在自动恢复中，跳过手动恢复`);
+        return true;
       }
       
       // 保存任务信息到外部变量，使其在 catch 块中也可访问

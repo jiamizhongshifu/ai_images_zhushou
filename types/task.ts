@@ -32,6 +32,7 @@ export interface PendingTask {
   params: any;
   error?: string;
   errorMessage?: string;
+  auto_recovering?: boolean; // 标记任务是否正在自动恢复中
 }
 
 export interface TaskUpdatePayload {
