@@ -1,92 +1,84 @@
 /**
- * 日志工具模块 - 提供统一的日志记录接口
+ * 日志工具模块
+ * 提供统一的日志记录功能，支持不同级别的日志输出
  */
+
+interface LoggerInterface {
+  error: (message: string, ...args: any[]) => void;
+  warn: (message: string, ...args: any[]) => void;
+  info: (message: string, ...args: any[]) => void;
+  debug: (message: string, ...args: any[]) => void;
+  trace: (message: string, ...args: any[]) => void;
+}
 
 // 日志级别
-type LogLevel = 'debug' | 'info' | 'warn' | 'error';
+export enum LogLevel {
+  ERROR = 0,
+  WARN = 1,
+  INFO = 2,
+  DEBUG = 3,
+  TRACE = 4
+}
 
-// 环境检查
-const isProduction = process.env.NODE_ENV === 'production';
-const isDevelopment = process.env.NODE_ENV === 'development';
+// 当前日志级别，可通过环境变量配置
+const currentLogLevel: LogLevel = (process.env.LOG_LEVEL ? 
+  parseInt(process.env.LOG_LEVEL) : 
+  (process.env.NODE_ENV === 'production' ? LogLevel.INFO : LogLevel.DEBUG)) as LogLevel;
 
-// 日志前缀颜色（仅在开发环境控制台中有效）
-const LOG_COLORS = {
-  debug: '\x1b[36m', // 青色
-  info: '\x1b[32m',  // 绿色
-  warn: '\x1b[33m',  // 黄色
-  error: '\x1b[31m', // 红色
-  reset: '\x1b[0m'   // 重置
+/**
+ * 获取格式化的时间字符串
+ */
+const getFormattedTime = (): string => {
+  const now = new Date();
+  return now.toISOString();
 };
 
 /**
- * 格式化日志消息
+ * 日志记录器实现
  */
-const formatMessage = (level: LogLevel, message: string, module?: string): string => {
-  const timestamp = new Date().toISOString();
-  const modulePrefix = module ? `[${module}] ` : '';
-  return `[${timestamp}] [${level.toUpperCase()}] ${modulePrefix}${message}`;
-};
-
-/**
- * 控制台日志输出
- */
-const consoleLog = (level: LogLevel, message: string, ...args: any[]) => {
-  // 在生产环境中，忽略debug级别的日志
-  if (isProduction && level === 'debug') return;
-
-  const color = isDevelopment ? LOG_COLORS[level] : '';
-  const reset = isDevelopment ? LOG_COLORS.reset : '';
-  
-  switch (level) {
-    case 'debug':
-      console.debug(`${color}${message}${reset}`, ...args);
-      break;
-    case 'info':
-      console.info(`${color}${message}${reset}`, ...args);
-      break;
-    case 'warn':
-      console.warn(`${color}${message}${reset}`, ...args);
-      break;
-    case 'error':
-      console.error(`${color}${message}${reset}`, ...args);
-      break;
-  }
-};
-
-/**
- * 创建日志记录器
- */
-export const getLogger = (module?: string) => {
-  return {
-    debug: (message: string, ...args: any[]) => {
-      consoleLog('debug', formatMessage('debug', message, module), ...args);
-    },
-    info: (message: string, ...args: any[]) => {
-      consoleLog('info', formatMessage('info', message, module), ...args);
-    },
-    warn: (message: string, ...args: any[]) => {
-      consoleLog('warn', formatMessage('warn', message, module), ...args);
-    },
-    error: (message: string, ...args: any[]) => {
-      consoleLog('error', formatMessage('error', message, module), ...args);
-    }
-  };
-};
-
-// 默认日志记录器
-const logger = {
-  debug: (message: string, ...args: any[]) => {
-    consoleLog('debug', formatMessage('debug', message), ...args);
-  },
-  info: (message: string, ...args: any[]) => {
-    consoleLog('info', formatMessage('info', message), ...args);
-  },
-  warn: (message: string, ...args: any[]) => {
-    consoleLog('warn', formatMessage('warn', message), ...args);
-  },
+export const logger: LoggerInterface = {
+  /**
+   * 记录错误级别日志
+   */
   error: (message: string, ...args: any[]) => {
-    consoleLog('error', formatMessage('error', message), ...args);
+    if (currentLogLevel >= LogLevel.ERROR) {
+      console.error(`[${getFormattedTime()}] ERROR: ${message}`, ...args);
+    }
+  },
+  
+  /**
+   * 记录警告级别日志
+   */
+  warn: (message: string, ...args: any[]) => {
+    if (currentLogLevel >= LogLevel.WARN) {
+      console.warn(`[${getFormattedTime()}] WARN: ${message}`, ...args);
+    }
+  },
+  
+  /**
+   * 记录信息级别日志
+   */
+  info: (message: string, ...args: any[]) => {
+    if (currentLogLevel >= LogLevel.INFO) {
+      console.log(`[${getFormattedTime()}] INFO: ${message}`, ...args);
+    }
+  },
+  
+  /**
+   * 记录调试级别日志
+   */
+  debug: (message: string, ...args: any[]) => {
+    if (currentLogLevel >= LogLevel.DEBUG) {
+      console.log(`[${getFormattedTime()}] DEBUG: ${message}`, ...args);
+    }
+  },
+  
+  /**
+   * 记录跟踪级别日志
+   */
+  trace: (message: string, ...args: any[]) => {
+    if (currentLogLevel >= LogLevel.TRACE) {
+      console.log(`[${getFormattedTime()}] TRACE: ${message}`, ...args);
+    }
   }
-};
-
-export default logger; 
+}; 
