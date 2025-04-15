@@ -1,7 +1,11 @@
 {
-  "buildCommand": "SHARP_IGNORE_GLOBAL=true CI=true pnpm install sharp && pnpm run build",
-  "installCommand": "pnpm install --no-frozen-lockfile",
+  "version": 2,
+  "buildCommand": "SHARP_IGNORE_GLOBAL=true pnpm install && pnpm run build",
+  "installCommand": "SHARP_IGNORE_GLOBAL=true pnpm install",
   "framework": "nextjs",
+  "env": {
+    "SHARP_IGNORE_GLOBAL": "true"
+  },
   "functions": {
     "app/api/generate-image-direct/route.ts": {
       "memory": 1024,
