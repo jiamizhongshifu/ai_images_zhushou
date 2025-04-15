@@ -34,9 +34,17 @@ import { showNotification } from '@/utils/notification';
 
 // 图片大小限制配置
 const MAX_IMAGE_SIZE_KB = 6144; // 6MB
-const MAX_IMAGE_WIDTH = 1024;
-const MAX_IMAGE_HEIGHT = 1024;
+const MAX_IMAGE_WIDTH = 2500;  // 增加到2500以保持更好的质量
+const MAX_IMAGE_HEIGHT = 2500; // 增加到2500以保持更好的质量
 const DEFAULT_QUALITY = 0.8;
+
+// 添加压缩质量等级
+const COMPRESSION_LEVELS = [
+  { maxSize: 8192, quality: 0.9 },  // 8MB -> 90%质量
+  { maxSize: 6144, quality: 0.85 }, // 6MB -> 85%质量  
+  { maxSize: 4096, quality: 0.8 },  // 4MB -> 80%质量
+  { maxSize: 2048, quality: 0.75 }  // 2MB -> 75%质量
+];
 
 const USER_CREDITS_CACHE_KEY = CACHE_PREFIXES.USER_CREDITS + ':main';
 const HISTORY_CACHE_KEY = CACHE_PREFIXES.HISTORY + ':recent';
@@ -662,30 +670,57 @@ export default function useImageGeneration(
         
         // 如果图片大于限制，进行压缩
         if (estimatedSize > MAX_IMAGE_SIZE_KB) {
-          updateGenerationStage('preparing', 7); // 更新进度以表示正在压缩
+          updateGenerationStage('preparing', 7);
           console.log(`[useImageGeneration] 图片超过大小限制(${MAX_IMAGE_SIZE_KB}KB)，开始压缩...`);
           
           try {
+            // 确定压缩质量
+            let targetQuality = DEFAULT_QUALITY;
+            for (const level of COMPRESSION_LEVELS) {
+              if (estimatedSize > level.maxSize) {
+                targetQuality = level.quality;
+                break;
+              }
+            }
+
+            // 第一步：如果尺寸过大，先调整分辨率
+            const img = new Image();
+            await new Promise((resolve, reject) => {
+              img.onload = resolve;
+              img.onerror = reject;
+              img.src = image;
+            });
+
+            let finalMaxWidth = MAX_IMAGE_WIDTH;
+            let finalMaxHeight = MAX_IMAGE_HEIGHT;
+            
+            // 如果图片尺寸超过限制，按比例缩小
+            if (img.width > MAX_IMAGE_WIDTH || img.height > MAX_IMAGE_HEIGHT) {
+              const ratio = Math.min(MAX_IMAGE_WIDTH / img.width, MAX_IMAGE_HEIGHT / img.height);
+              finalMaxWidth = Math.round(img.width * ratio);
+              finalMaxHeight = Math.round(img.height * ratio);
+            }
+
+            // 压缩图片
             processedImage = await compressImage(
               image,
               {
-                maxWidth: MAX_IMAGE_WIDTH,
-                maxHeight: MAX_IMAGE_HEIGHT,
-                quality: DEFAULT_QUALITY
+                maxWidth: finalMaxWidth,
+                maxHeight: finalMaxHeight,
+                quality: targetQuality
               }
             );
             
             const newSize = estimateBase64Size(processedImage);
             console.log(`[useImageGeneration] 压缩完成，新大小: ~${newSize}KB (压缩率: ${(newSize/estimatedSize*100).toFixed(1)}%)`);
             
-            // 如果压缩后仍然超过限制
+            // 如果压缩后仍然超过限制，但已经是最低质量，继续使用
             if (newSize > MAX_IMAGE_SIZE_KB) {
-              console.warn(`[useImageGeneration] 警告：压缩后仍超过${MAX_IMAGE_SIZE_KB}KB，可能导致请求失败`);
-              notify(`图片尺寸较大(${(newSize/1024).toFixed(1)}MB)，可能影响生成速度或失败`, 'info');
+              console.warn(`[useImageGeneration] 警告：压缩后仍超过${MAX_IMAGE_SIZE_KB}KB，但将继续处理`);
             }
           } catch (compressError) {
             console.error('[useImageGeneration] 图片压缩失败:', compressError);
-            notify('图片压缩失败，将使用原图，可能导致请求超时', 'info');
+            throw new Error('图片处理失败，请重试或选择其他图片');
           }
         }
       }

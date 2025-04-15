@@ -5,6 +5,8 @@ import { Button } from "@/components/ui/button";
 import Image from "next/image";
 import { LazyImage } from "@/components/ui/lazy-image";
 import { ImageLoading, ImageError } from "@/components/ui/loading-states";
+import { compressImage } from '@/utils/image/compressImage';
+import { useToast } from "@/components/ui/use-toast";
 
 interface ImageUploaderProps {
   uploadedImage: string | null;
@@ -12,11 +14,27 @@ interface ImageUploaderProps {
   onImageUploaded?: (dataUrl: string, width: number, height: number) => void;
 }
 
+// 图片大小限制配置
+const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+const MAX_IMAGE_WIDTH = 2500;
+const MAX_IMAGE_HEIGHT = 2500;
+const DEFAULT_QUALITY = 0.85;
+
+// 压缩质量等级
+const COMPRESSION_LEVELS = [
+  { maxSize: 8192, quality: 0.9 },  // 8MB -> 90%质量
+  { maxSize: 6144, quality: 0.85 }, // 6MB -> 85%质量  
+  { maxSize: 4096, quality: 0.8 },  // 4MB -> 80%质量
+  { maxSize: 2048, quality: 0.75 }  // 2MB -> 75%质量
+];
+
 export default function ImageUploader({
   uploadedImage,
   setUploadedImage,
   onImageUploaded = () => {},
 }: ImageUploaderProps) {
+  const { toast } = useToast();
+  
   // 组件状态
   const [dragActive, setDragActive] = useState(false);
   const [imageError, setImageError] = useState<string | null>(null);
@@ -26,10 +44,96 @@ export default function ImageUploader({
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // 处理文件输入变化
-  const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      processImageFile(file);
+  const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    // 检查文件大小
+    if (file.size > MAX_FILE_SIZE) {
+      toast({
+        type: "error",
+        title: "文件过大",
+        description: "文件大小超过10MB限制",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setImageError(null);
+    setImageLoading(true);
+
+    try {
+      // 读取文件为base64
+      const reader = new FileReader();
+      const base64Promise = new Promise<string>((resolve, reject) => {
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = reject;
+      });
+      reader.readAsDataURL(file);
+      const base64 = await base64Promise;
+
+      // 获取图片尺寸
+      const imgElement = document.createElement('img');
+      const dimensionsPromise = new Promise<{width: number, height: number}>((resolve, reject) => {
+        imgElement.onload = () => resolve({
+          width: imgElement.width,
+          height: imgElement.height
+        });
+        imgElement.onerror = reject;
+        imgElement.src = base64;
+      });
+      const { width, height } = await dimensionsPromise;
+
+      // 确定是否需要压缩
+      let needsCompression = false;
+      let targetQuality = DEFAULT_QUALITY;
+      
+      // 检查文件大小，确定压缩质量
+      for (const level of COMPRESSION_LEVELS) {
+        if (file.size > level.maxSize * 1024) {
+          needsCompression = true;
+          targetQuality = level.quality;
+          break;
+        }
+      }
+
+      // 检查尺寸是否需要调整
+      let finalMaxWidth = MAX_IMAGE_WIDTH;
+      let finalMaxHeight = MAX_IMAGE_HEIGHT;
+      if (width > MAX_IMAGE_WIDTH || height > MAX_IMAGE_HEIGHT) {
+        needsCompression = true;
+        const ratio = Math.min(MAX_IMAGE_WIDTH / width, MAX_IMAGE_HEIGHT / height);
+        finalMaxWidth = Math.round(width * ratio);
+        finalMaxHeight = Math.round(height * ratio);
+      }
+
+      // 如果需要压缩
+      let processedImage = base64;
+      if (needsCompression) {
+        console.log(`[ImageUploader] 开始压缩图片 (${(file.size/1024/1024).toFixed(2)}MB)...`);
+        processedImage = await compressImage(base64, {
+          maxWidth: finalMaxWidth,
+          maxHeight: finalMaxHeight,
+          quality: targetQuality
+        });
+        console.log(`[ImageUploader] 压缩完成`);
+      }
+
+      // 更新预览和调用回调
+      setUploadedImage(processedImage);
+      onImageUploaded(processedImage, width, height);
+      setImageLoading(false);
+
+    } catch (error) {
+      console.error('[ImageUploader] 图片处理失败:', error);
+      setImageError("图片处理失败，请重试");
+      setImageLoading(false);
+      toast({
+        type: "error",
+        title: "处理失败",
+        description: "图片处理失败，请重试",
+        variant: "destructive",
+      });
     }
   };
 
