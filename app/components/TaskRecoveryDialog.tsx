@@ -11,19 +11,10 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Clock, RefreshCw, AlertCircle } from "lucide-react";
-
-interface PendingTask {
-  taskId: string;
-  status: string;
-  timestamp: number;
-  lastUpdated?: number;
-  params: any;
-  error?: string;
-  errorMessage?: string;
-}
+import { PendingTask, TaskStatus } from "@/utils/taskRecovery";
 
 interface TaskRecoveryDialogProps {
-  onRecover: (task: PendingTask) => void;
+  onRecover: (task: PendingTask) => Promise<void> | void;
   onDiscard: (taskId: string) => void;
 }
 
@@ -38,7 +29,9 @@ export default function TaskRecoveryDialog({
     // 页面加载时检查本地存储中的未完成任务
     const checkPendingTasks = () => {
       try {
-        const storedTasks = localStorage.getItem('pendingImageTasks');
+        // 使用与taskRecovery.ts相同的存储键
+        const TASKS_STORAGE_KEY = 'pending_image_tasks';
+        const storedTasks = localStorage.getItem(TASKS_STORAGE_KEY);
         if (!storedTasks) return;
         
         const tasks: PendingTask[] = JSON.parse(storedTasks);
