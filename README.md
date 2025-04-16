@@ -247,3 +247,37 @@ pm2 logs ai-image-task-processor
 1. 任务处理器未运行。请确保运行`node scripts/task-processor.mjs`脚本。
 2. 处理API出错。检查任务处理器的日志输出。
 3. 环境变量配置不正确。确保所有必需的API密钥都已设置。
+
+## 系统配置
+
+### 环境变量配置
+
+本项目使用环境变量进行配置，请确保以下几点：
+
+1. 复制 `.env.example` 文件并重命名为 `.env` 或 `.env.local`
+2. 填写必要的环境变量，特别是以下关键变量：
+   - `TASK_PROCESS_SECRET_KEY`: 任务处理服务之间的认证密钥，必须保持一致
+   - `INTERNAL_API_KEY`: 内部API调用的认证密钥，与上面的密钥配合使用
+   - `OPENAI_API_KEY`: OpenAI/图资API的访问密钥
+   - Supabase相关配置
+
+#### 重要说明：任务处理密钥配置
+
+确保所有服务环境中的 `TASK_PROCESS_SECRET_KEY` 和 `INTERNAL_API_KEY` 保持一致，否则会导致：
+- 任务进度更新失败（出现401未授权错误）
+- 跨服务通信中断
+- 任务状态无法正确同步
+
+执行以下命令可以验证环境变量配置：
+
+```bash
+node scripts/check-env.mjs
+```
+
+### API访问认证
+
+系统内部API通信使用以下认证方式：
+- Bearer Token: `Authorization: Bearer YOUR_SECRET_KEY`
+- API Key: `X-API-Key: YOUR_SECRET_KEY`
+
+两种方式都支持，确保密钥在所有环境中保持一致。

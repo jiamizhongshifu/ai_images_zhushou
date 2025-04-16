@@ -73,5 +73,94 @@ function checkApiKey() {
     : '❌ OPENAI_API_KEY 配置存在问题，可能无法被正确读取'));
 }
 
-// 执行检查
-checkApiKey(); 
+// 增加任务处理器认证检查
+function checkTaskProcessAuth() {
+  console.log('\n=== 任务处理器认证配置检查 ===');
+  
+  // 检查主要密钥
+  const taskProcessKey = process.env.TASK_PROCESS_SECRET_KEY;
+  const internalApiKey = process.env.INTERNAL_API_KEY;
+  const apiSecretKey = process.env.API_SECRET_KEY;
+  
+  // 检查TASK_PROCESS_SECRET_KEY
+  if (!taskProcessKey) {
+    console.error('❌ TASK_PROCESS_SECRET_KEY 未设置，任务进度更新将失败');
+  } else {
+    // 掩码显示密钥
+    const maskedKey = maskKey(taskProcessKey);
+    console.log(`✅ TASK_PROCESS_SECRET_KEY 已设置: ${maskedKey}`);
+    console.log(`   长度: ${taskProcessKey.length} 字符`);
+  }
+  
+  // 检查备用密钥
+  console.log('\n--- 备用认证密钥检查 ---');
+  console.log(`INTERNAL_API_KEY: ${internalApiKey ? '✅ 已设置' : '❌ 未设置'}`);
+  console.log(`API_SECRET_KEY: ${apiSecretKey ? '✅ 已设置' : '❌ 未设置'}`);
+  
+  // 综合评估
+  const hasMainKey = !!taskProcessKey;
+  const hasBackupKey = !!internalApiKey || !!apiSecretKey;
+  
+  console.log('\n认证配置评估:');
+  if (hasMainKey) {
+    console.log('✅ 主认证密钥已配置');
+  } else if (hasBackupKey) {
+    console.log('⚠️ 主认证密钥未配置，但有备用密钥可用');
+  } else {
+    console.log('❌ 严重错误: 所有认证密钥均未配置，任务进度更新将全部失败');
+  }
+  
+  // 测试密钥一致性
+  if (hasMainKey && hasBackupKey) {
+    if (taskProcessKey === internalApiKey || (apiSecretKey && taskProcessKey === apiSecretKey)) {
+      console.log('✅ 主密钥与至少一个备用密钥匹配，认证将正常工作');
+    } else {
+      console.warn('⚠️ 密钥不一致警告: 主密钥与备用密钥不匹配，建议使相同值以增强兼容性');
+    }
+  }
+}
+
+// 掩码显示密钥函数
+function maskKey(key) {
+  if (!key || key.length <= 8) return '***';
+  const start = key.substring(0, 4);
+  const end = key.substring(key.length - 4);
+  return `${start}${'*'.repeat(Math.min(10, key.length - 8))}${end}`;
+}
+
+// 检查所有Supabase配置
+function checkSupabaseConfig() {
+  console.log('\n=== Supabase配置检查 ===');
+  
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  
+  console.log(`NEXT_PUBLIC_SUPABASE_URL: ${supabaseUrl ? '✅ 已设置' : '❌ 未设置'}`);
+  console.log(`NEXT_PUBLIC_SUPABASE_ANON_KEY: ${supabaseAnonKey ? '✅ 已设置' : '❌ 未设置'}`);
+  console.log(`SUPABASE_SERVICE_ROLE_KEY: ${supabaseServiceKey ? '✅ 已设置' : '❌ 未设置'}`);
+  
+  if (supabaseUrl && supabaseAnonKey && supabaseServiceKey) {
+    console.log('✅ Supabase配置完整');
+  } else {
+    console.error('❌ Supabase配置不完整，部分功能可能无法正常工作');
+  }
+}
+
+// 主函数
+function main() {
+  console.log('=====================================================');
+  console.log('🔍 开始检查环境变量配置');
+  console.log('=====================================================\n');
+  
+  checkApiKey();
+  checkTaskProcessAuth();
+  checkSupabaseConfig();
+  
+  console.log('\n=====================================================');
+  console.log('✨ 环境变量检查完成');
+  console.log('=====================================================');
+}
+
+// 执行主函数
+main(); 
