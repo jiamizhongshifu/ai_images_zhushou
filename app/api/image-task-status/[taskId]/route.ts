@@ -23,16 +23,16 @@ const logger = {
  * 获取任务状态和进度信息
  * 
  * @param request 请求对象
- * @param params 路由参数，包含任务ID
+ * @param context 路由上下文，包含任务ID
  * @returns 任务状态和进度信息
  */
 export async function GET(
   request: NextRequest,
-  { params }: { params: { taskId: string } }
+  context: { params: { taskId: string } }
 ) {
   try {
     // 获取任务ID
-    const taskId = params.taskId;
+    const taskId = context.params.taskId;
     
     if (!taskId) {
       return NextResponse.json(
