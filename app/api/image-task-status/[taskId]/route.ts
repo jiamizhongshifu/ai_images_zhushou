@@ -26,84 +26,10 @@ export async function GET(
   request: NextRequest,
   { params }: { params: { taskId: string } }
 ) {
-  try {
-    // 获取任务ID
-    const taskId = params.taskId;
-    
-    if (!taskId) {
-      return NextResponse.json(
-        { error: '缺少任务ID参数' },
-        { status: 400 }
-      );
-    }
-    
-    // 查询数据库获取任务信息
-    const supabase = await createClient();
-
-    // 获取当前用户
-    const user = await getCurrentUser(supabase);
-    
-    if (!user) {
-      return NextResponse.json(
-        { error: '未授权访问' },
-        { status: 401 }
-      );
-    }
-    
-    // 查询数据库获取任务信息
-    const { data: task, error } = await supabase
-      .from('image_tasks')
-      .select(`
-        task_id,
-        status,
-        image_url,
-        error_message,
-        created_at,
-        updated_at,
-        progress_percentage,
-        current_stage,
-        stage_details
-      `)
-      .eq('task_id', taskId)
-      .eq('user_id', user.id)
-      .single();
-    
-    if (error) {
-      console.error('查询任务状态出错:', error);
-      return NextResponse.json(
-        { error: '查询任务状态失败' },
-        { status: 500 }
-      );
-    }
-    
-    if (!task) {
-      return NextResponse.json(
-        { error: '未找到指定任务' },
-        { status: 404 }
-      );
-    }
-    
-    // 返回任务信息
-    return NextResponse.json({
-      task: {
-        taskId: task.task_id,
-        status: task.status,
-        imageUrl: task.image_url,
-        errorMessage: task.error_message,
-        createdAt: task.created_at,
-        updatedAt: task.updated_at,
-        progress_percentage: task.progress_percentage || 0,
-        current_stage: task.current_stage || '',
-        stage_details: task.stage_details || null
-      }
-    });
-  } catch (error) {
-    console.error('获取任务状态出错:', error);
-    return NextResponse.json(
-      { error: '处理请求时出错' },
-      { status: 500 }
-    );
-  }
+  return NextResponse.json({
+    success: true,
+    taskId: params.taskId,
+  });
 }
 
 /**
