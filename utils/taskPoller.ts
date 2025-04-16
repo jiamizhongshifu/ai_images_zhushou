@@ -35,6 +35,18 @@ export interface PollingResult {
   elapsedTime: number;
 }
 
+// 任务进度状态缓存，用于进度平滑过渡
+interface ProgressCache {
+  [taskId: string]: {
+    lastProgress: number;
+    lastStage: string;
+    lastUpdate: number;
+  }
+}
+
+// 全局进度缓存
+const taskProgressCache: ProgressCache = {};
+
 /**
  * 增强型任务轮询函数
  * 使用指数退避策略和错误处理机制，轮询任务状态
@@ -60,6 +72,15 @@ export async function enhancedPollTaskStatus(
   let networkErrorsCount = 0;    // 网络错误计数
   const startTime = Date.now();
   
+  // 初始化任务进度缓存
+  if (!taskProgressCache[taskId]) {
+    taskProgressCache[taskId] = {
+      lastProgress: 0,
+      lastStage: 'queued',
+      lastUpdate: Date.now()
+    };
+  }
+  
   // 更新轮询状态
   const updateState = (state: PollingState) => {
     if (onStateChange) {
@@ -69,6 +90,51 @@ export async function enhancedPollTaskStatus(
   
   // 初始化状态
   updateState('polling');
+  
+  /**
+   * 平滑过渡进度
+   * @param currentProgress 当前进度
+   * @param targetProgress 目标进度
+   * @param stage 当前阶段
+   */
+  const smoothProgress = (currentProgress: number, targetProgress: number, stage: string) => {
+    const cache = taskProgressCache[taskId];
+    
+    // 如果目标进度小于当前进度，可能是由于轮询返回的数据有误，保持当前进度
+    if (targetProgress < cache.lastProgress && stage === cache.lastStage) {
+      // 特殊情况：如果阶段没变但进度回退超过10%，可能是实际发生了回退
+      if (cache.lastProgress - targetProgress <= 10) {
+        return cache.lastProgress;
+      }
+    }
+    
+    // 如果进度变化超过20%，采用渐进过渡
+    if (Math.abs(targetProgress - cache.lastProgress) > 20) {
+      // 计算平滑过渡的中间进度值
+      const timeDiff = Date.now() - cache.lastUpdate;
+      const progressStep = Math.max(1, Math.min(5, Math.floor(timeDiff / 500))); // 每500ms最多增加5%
+      
+      if (targetProgress > cache.lastProgress) {
+        // 向上平滑增长
+        const newProgress = Math.min(targetProgress, cache.lastProgress + progressStep);
+        cache.lastProgress = newProgress;
+        cache.lastUpdate = Date.now();
+        return newProgress;
+      } else {
+        // 阶段变化时允许进度回退
+        cache.lastProgress = targetProgress;
+        cache.lastStage = stage;
+        cache.lastUpdate = Date.now();
+        return targetProgress;
+      }
+    }
+    
+    // 正常进度更新
+    cache.lastProgress = targetProgress;
+    cache.lastStage = stage;
+    cache.lastUpdate = Date.now();
+    return targetProgress;
+  };
   
   // 取消轮询函数
   const cancel = () => {
@@ -252,8 +318,29 @@ export async function enhancedPollTaskStatus(
         consecutiveFailures = 0;
         
         // 回调进度更新
-        if (onProgress && result.progress !== undefined) {
-          onProgress(result.progress, result.stage || 'processing');
+        if (onProgress) {
+          // 优先使用API返回的实际进度数据
+          if (result.progress !== undefined) {
+            // 平滑处理进度
+            const smoothedProgress = smoothProgress(
+              taskProgressCache[taskId].lastProgress,
+              result.progress,
+              result.stage || 'processing'
+            );
+            
+            onProgress(smoothedProgress, result.stage || 'processing');
+          } 
+          // 兼容旧版本：使用estimatedProgress字段
+          else if (result.estimatedProgress !== undefined) {
+            onProgress(result.estimatedProgress, result.processingStage || 'processing');
+          }
+          // 兼容极旧版本：使用等待时间估算
+          else {
+            const waitTime = result.waitTime || Math.floor((Date.now() - startTime) / 1000);
+            const estimatedProgress = getEstimatedProgress(waitTime);
+            const stage = getStageFromWaitTime(waitTime);
+            onProgress(estimatedProgress, stage);
+          }
         }
 
         // 回调状态变化

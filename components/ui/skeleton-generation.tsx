@@ -1,25 +1,44 @@
 import { useState, useEffect, useRef } from 'react';
 import { Clock, ImageIcon, Loader2 } from 'lucide-react';
 
-// 图片生成的不同阶段及其对应信息
+// 图片生成的不同阶段及其对应信息 - 扩展以匹配后端API返回的阶段
 const GENERATION_STAGES = [
-  { id: 'preparing', label: '准备参数', percentage: 5 },
-  { id: 'configuring', label: '配置API', percentage: 10 },
-  { id: 'sending_request', label: '发送请求', percentage: 20 },
-  { id: 'processing', label: 'AI处理中', percentage: 60 },
-  { id: 'extracting_image', label: '提取图像', percentage: 85 },
-  { id: 'finalizing', label: '完成处理', percentage: 95 },
-  { id: 'completed', label: '图像生成完成', percentage: 100 },
-  { id: 'failed', label: '生成失败', percentage: 0 }
+  { id: 'queued', label: '排队中', percentage: 0, description: '等待处理...' },
+  { id: 'preparing', label: '准备参数', percentage: 5, description: '加载模型与配置...' },
+  { id: 'configuring', label: '配置API', percentage: 10, description: '优化参数...' },
+  { id: 'sending_request', label: '发送请求', percentage: 20, description: '连接AI服务...' },
+  { id: 'request_sent', label: '请求已发送', percentage: 25, description: '等待AI响应...' },
+  { id: 'processing', label: 'AI处理中', percentage: 60, description: '正在绘制图像...' },
+  { id: 'generating', label: '生成图像', percentage: 70, description: '构建图像内容...' },
+  { id: 'extracting_image', label: '提取图像', percentage: 85, description: '处理生成结果...' },
+  { id: 'optimizing', label: '优化图像', percentage: 90, description: '提升图像品质...' },
+  { id: 'finalizing', label: '完成处理', percentage: 95, description: '准备交付...' },
+  { id: 'completed', label: '图像生成完成', percentage: 100, description: '处理完成！' },
+  { id: 'failed', label: '生成失败', percentage: 0, description: '生成过程中遇到错误' }
 ];
 
-export type GenerationStage = 'preparing' | 'configuring' | 'sending_request' | 'processing' | 'extracting_image' | 'finalizing' | 'completed' | 'failed';
+// 阶段描述映射
+const STAGE_DESCRIPTIONS: Record<string, string> = {
+  queued: '任务正在队列中等待处理...',
+  preparing: '正在准备和验证参数...',
+  configuring: '配置AI模型和请求参数...',
+  sending_request: '正在与AI服务建立连接...',
+  processing: 'AI正在理解需求并构思画面...',
+  generating: 'AI开始绘制图像内容...',
+  extracting_image: '图像核心内容已生成，正在处理...',
+  finalizing: '调整细节和色彩，准备完成...',
+  completed: '图像生成成功，请欣赏您的作品！',
+  failed: '很抱歉，生成过程中遇到了问题'
+};
+
+export type GenerationStage = 'queued' | 'preparing' | 'configuring' | 'sending_request' | 'request_sent' | 'processing' | 'generating' | 'extracting_image' | 'optimizing' | 'finalizing' | 'completed' | 'failed';
 
 interface ImageGenerationSkeletonProps {
   taskId?: string;
   isGenerating: boolean;
   stage?: GenerationStage;
   percentage?: number;
+  stageDetails?: any; // 新增：阶段详细信息
   onStageChange?: (stage: string, percentage: number) => void;
 }
 
@@ -28,12 +47,14 @@ export function ImageGenerationSkeleton({
   isGenerating,
   stage: externalStage,
   percentage: externalPercentage,
+  stageDetails,
   onStageChange 
 }: ImageGenerationSkeletonProps) {
   // 当前阶段索引和详细进度信息
   const [currentStageIndex, setCurrentStageIndex] = useState(0);
   const [progress, setProgress] = useState({ percentage: 0, estimatedTime: '计算中...' });
   const [showDetails, setShowDetails] = useState(false);
+  const [stageDescription, setStageDescription] = useState('');
   
   // 计算总耗时
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
@@ -60,6 +81,16 @@ export function ImageGenerationSkeleton({
       if (stageIndex !== -1) {
         setCurrentStageIndex(stageIndex);
         
+        // 设置阶段描述
+        setStageDescription(
+          // 优先使用阶段详情中的描述
+          stageDetails?.description || 
+          // 其次使用预定义的阶段描述
+          STAGE_DESCRIPTIONS[externalStage] || 
+          // 最后使用默认描述
+          GENERATION_STAGES[stageIndex].description
+        );
+        
         // 在首次收到processing阶段的进度更新后，动态调整总时间估计
         if (!hasUpdatedEstimateRef.current && externalStage === 'processing' && externalPercentage > 30) {
           const elapsedTime = (Date.now() - startTimeRef.current) / 1000;
@@ -76,7 +107,7 @@ export function ImageGenerationSkeleton({
         }));
       }
     }
-  }, [externalStage, externalPercentage]);
+  }, [externalStage, externalPercentage, stageDetails]);
   
   // 更新已用时间和估计剩余时间
   useEffect(() => {
@@ -158,6 +189,9 @@ export function ImageGenerationSkeleton({
           estimatedTime: elapsedSeconds < 10 ? '计算中...' : `约${Math.max(1, Math.ceil((estimatedTotalTimeRef.current - elapsedSeconds) / 60))}分钟`
         });
         
+        // 设置阶段描述
+        setStageDescription(STAGE_DESCRIPTIONS[GENERATION_STAGES[currentIndex].id] || GENERATION_STAGES[currentIndex].description);
+        
         // 触发阶段变更回调
         if (onStageChange) {
           onStageChange(GENERATION_STAGES[currentIndex].id, GENERATION_STAGES[currentIndex].percentage);
@@ -220,6 +254,11 @@ export function ImageGenerationSkeleton({
           </p>
           <p className="text-sm text-muted-foreground mb-3">
             {progress.percentage}% 已完成
+          </p>
+          
+          {/* 阶段描述 */}
+          <p className="text-sm text-foreground/70 italic mb-2">
+            {stageDescription}
           </p>
           
           {/* 预计时间 */}
