@@ -237,24 +237,14 @@ export default function ImageUploader({
   return (
     <Card className="bg-card/60 rounded-xl border border-border shadow-ghibli-sm hover:shadow-ghibli transition-all duration-300">
       <CardContent className="p-5">
-        {/* 卡片标题和上传按钮 */}
+        {/* 卡片标题 - 移除选择文件按钮 */}
         <div className="flex justify-between items-center mb-4">
           <h3 className="text-lg font-medium font-quicksand text-foreground/90">上传照片</h3>
-          
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={handleButtonClick}
-            className="flex items-center text-sm bg-primary/10 text-primary hover:bg-primary/20 border-none font-quicksand shadow-ghibli-sm hover:shadow-ghibli transition-all duration-300"
-          >
-            <Upload className="h-4 w-4 mr-1" />
-            选择文件
-          </Button>
         </div>
         
-        {/* 文件拖放区域 */}
+        {/* 文件拖放区域 - 添加点击功能 */}
         <div
-          className={`relative min-h-[220px] border-2 border-dashed rounded-lg p-4 transition-all flex flex-col items-center justify-center ${
+          className={`relative min-h-[220px] border-2 border-dashed rounded-lg p-4 transition-all flex flex-col items-center justify-center cursor-pointer ${
             dragActive 
               ? "border-primary/60 bg-primary/5" 
               : uploadedImage
@@ -265,6 +255,9 @@ export default function ImageUploader({
           onDragLeave={handleDrag}
           onDragOver={handleDrag}
           onDrop={handleDrop}
+          onClick={!uploadedImage ? handleButtonClick : undefined}
+          role="button"
+          aria-label="上传图片区域"
         >
           {/* 隐藏的文件输入 */}
           <input
