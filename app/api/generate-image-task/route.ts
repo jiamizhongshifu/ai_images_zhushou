@@ -1069,14 +1069,9 @@ export async function POST(request: NextRequest) {
         
         // 获取图片尺寸比例参数
         let size: "1024x1024" | "1792x1024" | "1024x1792" = "1024x1024"; // 默认尺寸
-        let aspectRatioDescription = ""; // 比例描述文本
         
         // 根据请求参数和提示词确定合适的尺寸
         if (aspectRatio) {
-          // 添加比例描述到提示词中
-          aspectRatioDescription = getAspectRatioDescription(aspectRatio, standardAspectRatio);
-          logger.info(`使用比例描述: ${aspectRatioDescription}`);
-          
           // 根据实际图片比例决定输出尺寸
           logger.info(`检测到图片比例: ${aspectRatio}`);
           
@@ -1107,33 +1102,23 @@ export async function POST(request: NextRequest) {
         let promptText = prompt || "生成图像";
         let finalPrompt = "";
         
-        // 构建优化后的提示词 - 减少冗余，更加简洁明了
+        // 构建优化后的提示词 - 使用简洁结构：生成图像 + 风格 + 用户额外提示词
         if (image) {
           // 检查提示词是否已包含风格信息，避免重复添加
           const hasStyleInPrompt = style && promptText.toLowerCase().includes(style.toLowerCase());
           
           // 只在提示词中不包含风格信息时添加风格描述
-          const styleText = (style && !hasStyleInPrompt) ? `使用${style}风格` : "";
-          
-          // 根据图片比例动态构建提示词，避免矛盾的尺寸指令
-          let sizeInstruction = "";
-          if (aspectRatio) {
-            // 当有明确的比例要求时，强调保持原始比例
-            const [width, height] = aspectRatio.split(':').map(Number);
-            if (width > height) {
-              sizeInstruction = "请生成符合原图宽高比的横向图片";
-            } else if (height > width) {
-              sizeInstruction = "请生成符合原图宽高比的竖向图片";
-            } else {
-              sizeInstruction = "请生成符合原图宽高比的正方形图片";
-            }
-          } else {
-            // 没有明确比例要求时，默认使用正方形
-            sizeInstruction = "请保持原图的主要内容和构图";
+          // 修正常见拼写错误，如将"吉普力"修正为"吉卜力"
+          let styleName = style || "";
+          if (styleName === "吉普力") {
+            styleName = "吉卜力";
           }
           
-          // 更自然地表达比例需求，避免矛盾的指令和重复的风格
-          finalPrompt = `${promptText}${styleText ? ', ' + styleText : ''}${aspectRatio ? `, 保持${aspectRatio}比例` : ""}。${sizeInstruction}，保留原图中的关键内容和元素。`;
+          // 构建简洁的提示词
+          const styleText = (styleName && !hasStyleInPrompt) ? `${styleName}风格` : "";
+          
+          // 简化的提示词结构
+          finalPrompt = `生成图像，${styleText}${promptText !== "生成图像" ? '，' + promptText : ''}`;
           
           // 处理图片数据...
           let imageData;
@@ -1169,27 +1154,17 @@ export async function POST(request: NextRequest) {
           // 检查提示词是否已包含风格信息，避免重复添加
           const hasStyleInPrompt = style && promptText.toLowerCase().includes(style.toLowerCase());
           
-          // 只在提示词中不包含风格信息时添加风格描述
-          const styleText = (style && !hasStyleInPrompt) ? `使用${style}风格` : "";
-          
-          // 根据比例参数确定输出格式指令
-          let sizeInstruction = "";
-          if (aspectRatio) {
-            const [width, height] = aspectRatio.split(':').map(Number);
-            if (width > height) {
-              sizeInstruction = "横向图片";
-            } else if (height > width) {
-              sizeInstruction = "竖向图片";
-            } else {
-              sizeInstruction = "正方形图片";
-            }
-          } else {
-            // 没有比例参数时，根据size变量决定
-            sizeInstruction = size.includes("1792x1024") ? "横向图片" : (size.includes("1024x1792") ? "竖向图片" : "正方形图片");
+          // 修正常见拼写错误，如将"吉普力"修正为"吉卜力"
+          let styleName = style || "";
+          if (styleName === "吉普力") {
+            styleName = "吉卜力";
           }
           
-          // 更简洁自然的提示词，避免技术参数和矛盾指令
-          finalPrompt = `${promptText}${styleText ? ', ' + styleText : ''}。请生成${sizeInstruction}${aspectRatio ? `, 比例为${aspectRatio}` : ""}。`;
+          // 只在提示词中不包含风格信息时添加风格描述
+          const styleText = (styleName && !hasStyleInPrompt) ? `${styleName}风格` : "";
+          
+          // 简化的提示词结构
+          finalPrompt = `生成图像，${styleText}${promptText !== "生成图像" ? '，' + promptText : ''}`;
           
           // 没有图片时，只添加文本内容
           userMessageContent.push({
