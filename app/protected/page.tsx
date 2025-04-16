@@ -8,10 +8,6 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { generatePromptWithStyle } from "@/app/config/styles";
 import { ResponsiveContainer, ResponsiveSection, ResponsiveGrid } from "@/components/ui/responsive-container";
-import TaskStatusListener from "@/app/components/TaskStatusListener";
-import TaskRecoveryDialog from "@/app/components/TaskRecoveryDialog";
-import { TaskProgressBar } from "@/components/creation/TaskProgressBar";
-import { PendingTask } from "@/utils/taskRecovery";
 
 // 导入创作页组件
 import ImageUploader from "@/components/creation/image-uploader";
@@ -25,6 +21,9 @@ import useImageHistory from "@/hooks/useImageHistory";
 import useImageGeneration from "@/hooks/useImageGeneration";
 import useImageHandling from "@/hooks/useImageHandling";
 import useNotification from "@/hooks/useNotification";
+import TaskStatusListener from "@/app/components/TaskStatusListener";
+import TaskRecoveryDialog from "@/app/components/TaskRecoveryDialog";
+import { PendingTask } from "@/utils/taskRecovery";
 
 // 动态导入CreditRechargeDialog组件
 const CreditRechargeDialog = dynamic(
@@ -78,9 +77,7 @@ export default function ProtectedPage() {
     generationPercentage,
     recoverTask,
     discardTask,
-    checkPendingTask,
-    currentTaskId: taskCurrentId,
-    taskProgress
+    checkPendingTask
   } = useImageGeneration(
     showNotification,
     undefined,
@@ -256,9 +253,6 @@ export default function ProtectedPage() {
   const displayError = error || generationError;
   const isInitializing = isLoadingCredits && generatedImages.length === 0;
 
-  // 进度显示
-  const isTaskActive = isGenerating && generationStage !== 'completed';
-
   return (
     <div className="flex-1 w-full flex flex-col items-center">
       {/* 添加任务状态监听器 */}
@@ -294,14 +288,6 @@ export default function ProtectedPage() {
             </div>
           </div>
         )}
-
-        {/* 任务进度条 - 在生成过程中显示 */}
-        <TaskProgressBar
-          percentage={taskProgress.percentage}
-          stage={taskProgress.stage}
-          message={taskProgress.message}
-          isActive={isTaskActive}
-        />
 
         {/* 主要内容区域 */}
         <div className="w-full flex flex-col gap-6">

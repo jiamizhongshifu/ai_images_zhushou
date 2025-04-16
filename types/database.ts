@@ -14,6 +14,8 @@ export interface ImageTask {
   model?: string | null;
   attempt_count?: number;
   request_id?: string | null;
+  progress?: number | null;
+  stage?: string | null;
 }
 
 export interface ImageTasksTable {

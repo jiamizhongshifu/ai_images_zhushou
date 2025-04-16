@@ -11,6 +11,7 @@ import { createSecureClient, getCurrentUser } from '@/app/api/auth-middleware';
 import { ChatCompletionMessageParam, ChatCompletionContentPart } from 'openai/resources';
 import { ChatCompletionUserMessageParam, ChatCompletionSystemMessageParam } from 'openai/resources/chat/completions';
 import crypto from 'crypto';
+import { reportProgress, TaskStages } from '@/utils/updateTaskProgress';
 
 // 图片大小限制
 const MAX_REQUEST_SIZE_MB = 12; // 12MB
@@ -792,6 +793,54 @@ async function checkDuplicateRequest(
   }
 }
 
+// 在文件合适位置添加进度解析函数
+/**
+ * 从OpenAI响应中解析进度信息
+ * @param content 响应内容
+ * @returns 进度信息或null
+ */
+function parseProgressFromContent(content: string): { progress: number, stage: string } | null {
+  // 匹配常见的进度格式
+  const progressRegex = />🏃‍ 进度 (\d+)\.\./;
+  const progressMatch = content.match(progressRegex);
+  
+  if (progressMatch && progressMatch[1]) {
+    const progressValue = parseInt(progressMatch[1], 10);
+    if (!isNaN(progressValue)) {
+      return { 
+        progress: progressValue, 
+        stage: TaskStages.GENERATING
+      };
+    }
+  }
+  
+  // 匹配替代进度格式
+  const altProgressRegex = /(\d+)%|进度 (\d+)|当前进度：(\d+)|progress: (\d+)/i;
+  const altMatch = content.match(altProgressRegex);
+  
+  if (altMatch) {
+    const progressValue = parseInt(altMatch[1] || altMatch[2] || altMatch[3] || altMatch[4], 10);
+    if (!isNaN(progressValue)) {
+      return { 
+        progress: progressValue, 
+        stage: TaskStages.GENERATING
+      };
+    }
+  }
+  
+  // 匹配排队状态
+  if (content.includes('🕐 排队中')) {
+    return { progress: 5, stage: TaskStages.QUEUING };
+  }
+  
+  // 匹配生成中状态
+  if (content.includes('⚡ 生成中')) {
+    return { progress: 15, stage: TaskStages.GENERATING };
+  }
+  
+  return null;
+}
+
 // 主API处理函数，优化为监控执行时间和支持降级策略
 export async function POST(request: NextRequest) {
   const requestStartTime = Date.now();
@@ -1004,9 +1053,6 @@ export async function POST(request: NextRequest) {
       
       logger.info(`成功创建并验证任务，ID: ${taskId}, UUID: ${taskUUID}`);
       
-      // 在创建任务记录后添加
-      await updateTaskProgress(taskId, 'queued', 5, { message: '您的任务已加入队列' });
-      
       // 直接进行图像生成 - 不等待异步过程
       try {
         // 创建OpenAI客户端
@@ -1017,9 +1063,6 @@ export async function POST(request: NextRequest) {
         logger.info(`开始处理图像，任务ID: ${taskId}，使用模型: ${tuziClient.imageModel}`);
         logger.debug(`环境变量OPENAI_IMAGE_MODEL: ${process.env.OPENAI_IMAGE_MODEL || '未设置'}`);
         logger.debug(`环境变量OPENAI_MODEL: ${process.env.OPENAI_MODEL || '未设置'}`);
-        
-        // 在OpenAI API调用前
-        await updateTaskProgress(taskId, 'preparing', 15, { message: '准备生成参数' });
         
         // 定义消息结构
         let messages: ChatCompletionMessageParam[] = [];
@@ -1082,8 +1125,8 @@ export async function POST(request: NextRequest) {
               sizeInstruction = "请生成符合原图宽高比的正方形图片";
             }
           } else {
-            // 没有明确比例要求时，尊重原图的比例
-            sizeInstruction = "请保持原图的比例和主要内容";
+            // 没有明确比例要求时，默认使用正方形
+            sizeInstruction = "请保持原图的主要内容和构图";
           }
           
           // 更自然地表达比例需求，避免矛盾的指令
@@ -1161,17 +1204,11 @@ export async function POST(request: NextRequest) {
         // 记录最终提示词内容（完整记录，用于调试）
         logger.info(`最终提示词: "${finalPrompt}"`);
         
-        // 在配置消息后，发送请求前
-        await updateTaskProgress(taskId, 'configuring', 25, { message: '配置AI请求' });
-        
         // 图像生成参数
         const quality = "hd"; // 使用高清质量，提高输出图像质量
         
         // 使用gpt-4o通过聊天API生成图像
         logger.info(`使用聊天API (${process.env.OPENAI_MODEL || 'gpt-4o-image-vip'})生成图片`);
-        
-        // 请求发送前立即更新
-        await updateTaskProgress(taskId, 'request_sent', 30, { message: '请求已发送至AI' });
         
         // 添加API请求开始时间记录
         const apiRequestStartTime = Date.now();
@@ -1398,6 +1435,15 @@ export async function POST(request: NextRequest) {
                   // 输出流式内容到控制台
                   process.stdout.write(content);
                   
+                  // 添加进度解析和更新
+                  const progressInfo = parseProgressFromContent(content);
+                  if (progressInfo) {
+                    logger.info(`检测到进度更新: ${progressInfo.progress}%, 阶段: ${progressInfo.stage}`);
+                    
+                    // 异步更新任务进度
+                    reportProgress(taskId, progressInfo.progress, progressInfo.stage);
+                  }
+                  
                   // 检查是否已经完成JSON分析阶段
                   if (!jsonPhaseComplete && (
                     content.includes('生成图片') || 
@@ -1407,6 +1453,9 @@ export async function POST(request: NextRequest) {
                   )) {
                     jsonPhaseComplete = true;
                     logger.info('JSON分析阶段已完成，正在等待图像URL');
+                    
+                    // 更新任务状态为处理中
+                    reportProgress(taskId, 20, TaskStages.PROCESSING);
                   }
                   
                   // 尝试从内容中提取图片URL
@@ -1415,6 +1464,9 @@ export async function POST(request: NextRequest) {
                     if (extractedUrl) {
                       imageUrl = extractedUrl;
                       logger.info(`从流中提取到图片URL: ${imageUrl}`);
+                      
+                      // 更新任务状态为接近完成
+                      reportProgress(taskId, 90, TaskStages.EXTRACTING_IMAGE);
                     }
                   }
                 }
@@ -1487,9 +1539,6 @@ export async function POST(request: NextRequest) {
               if (imageUrl && isValidImageUrl(imageUrl)) {
                 logger.info(`成功提取有效的图片URL: ${imageUrl}`);
                 
-                // 更新进度为处理中
-                await updateTaskProgress(taskId, 'processing', 80, { message: '处理AI响应' });
-                
                 // 更新任务状态为成功
                 try {
                   const { error: updateError } = await supabaseAdmin
@@ -1518,9 +1567,6 @@ export async function POST(request: NextRequest) {
                     logger.error(`记录生成历史失败: ${historyError instanceof Error ? historyError.message : String(historyError)}`)
                   );
                 
-                // 更新进度为最终处理
-                await updateTaskProgress(taskId, 'finalizing', 95, { message: '完成最终处理' });
-                
                 // 记录图像结果与原始参数的对比
                 logger.info(`图像生成结果分析:
 - 生成的图片URL: ${imageUrl.substring(0, 50)}...
@@ -1536,9 +1582,6 @@ export async function POST(request: NextRequest) {
                   .catch(notifyError => 
                     logger.error(`发送任务完成通知失败: ${notifyError instanceof Error ? notifyError.message : String(notifyError)}`)
                   );
-                
-                // 更新进度为已完成
-                await updateTaskProgress(taskId, 'completed', 100, { message: '生成完成' });
                 
                 // 完成整个过程，记录总耗时
                 logger.timing(startTime, `整个图像生成任务完成，任务ID: ${taskId}`);
@@ -1570,10 +1613,6 @@ export async function POST(request: NextRequest) {
                 
                 // 如果没有找到有效URL，记录详细日志并抛出错误
                 logger.error(`无法提取有效的图片URL，响应内容: ${responseContent?.substring(0, 200)}...`);
-                
-                // 更新进度为出错
-                await updateTaskProgress(taskId, 'error', 0, { message: '无法提取有效的图片URL' });
-                
                 throw new Error('API返回的响应中没有包含有效的图像生成结果');
               }
             } catch (attemptError) {
@@ -1609,9 +1648,6 @@ export async function POST(request: NextRequest) {
           // 所有重试都失败，直接更新任务状态为失败
           const errorMsg = finalError instanceof Error ? finalError.message : String(finalError);
           logger.error(`图像生成失败: ${errorMsg}`);
-        
-          // 更新进度为出错
-          await updateTaskProgress(taskId, 'error', 0, { message: errorMsg.substring(0, 100) });
         
           // 更新任务状态为失败
           try {
@@ -1731,23 +1767,3 @@ export async function POST(request: NextRequest) {
     logger.info(`API请求总处理时间: ${totalTime}ms (${totalTime/1000}秒)`);
   }
 } 
-
-const updateTaskProgress = async (taskId: string, stage: string, percentage: number, details?: any) => {
-  try {
-    const supabase = await createClient();
-    const { error } = await supabase
-      .from('image_tasks')
-      .update({
-        progress_percentage: percentage,
-        current_stage: stage,
-        stage_details: details ? JSON.stringify(details) : null
-      })
-      .eq('task_id', taskId);
-    
-    if (error) {
-      console.error('Failed to update task progress:', error);
-    }
-  } catch (err) {
-    console.error('Error updating task progress:', err);
-  }
-};
