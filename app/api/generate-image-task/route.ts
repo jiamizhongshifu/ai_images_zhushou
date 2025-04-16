@@ -1102,64 +1102,57 @@ export async function POST(request: NextRequest) {
         let promptText = prompt || "";
         let finalPrompt = "";
         
-        // 构建优化后的提示词
+        // 构建最简化的提示词 - 彻底重写风格名称处理
         if (image) {
-          // 修正风格名称
-          let styleName = style || "";
-          const originalStyleName = styleName; // 保存原始风格名称用于检查
-          
-          // 修正常见错误拼写
-          if (styleName === "吉普力") {
-            styleName = "吉卜力";
+          // 1. 确保使用正确的风格名称
+          let styleName = "";
+          if (style) {
+            // 修正已知错误拼写
+            styleName = style === "吉普力" ? "吉卜力" : style;
           }
           
-          // 移除原始提示词中的错误风格名称，避免重复
-          if (originalStyleName && originalStyleName !== styleName && promptText.includes(originalStyleName)) {
-            promptText = promptText.replace(new RegExp(`${originalStyleName}风格`, 'g'), '');
-            promptText = promptText.replace(new RegExp(`${originalStyleName}`, 'g'), '');
-            promptText = promptText.replace(/，，/g, '，').replace(/^，|，$/g, '');
+          // 2. 从头构建提示词，不依赖原始输入，避免重复风格
+          finalPrompt = "生成图像";
+          
+          // 3. 只添加一次风格名称
+          if (styleName) {
+            finalPrompt += `，${styleName}风格`;
           }
           
-          // 构建基础提示词部分 - 生成图像只添加一次
-          let basePrompt = promptText;
-          if (!basePrompt.toLowerCase().includes("生成图像")) {
-            basePrompt = "生成图像" + (basePrompt ? "，" + basePrompt : "");
-          }
-          
-          // 检查是否已包含任何形式的风格名称
-          const hasCorrectStyle = styleName && basePrompt.toLowerCase().includes(styleName.toLowerCase());
-          const hasOriginalStyle = originalStyleName && originalStyleName !== styleName && 
-                                 basePrompt.toLowerCase().includes(originalStyleName.toLowerCase());
-          
-          // 只有在不包含任何形式的风格名称时才添加
-          if (styleName && !hasCorrectStyle && !hasOriginalStyle) {
-            basePrompt += basePrompt.endsWith("，") || basePrompt === "生成图像" ? "" : "，";
-            basePrompt += `${styleName}风格`;
-          }
-          
-          // 添加比例指令 - 简单明确
+          // 4. 添加简单明确的比例指令
           if (aspectRatio) {
             const [width, height] = aspectRatio.split(':').map(Number);
             const ratio = width / height;
             
-            // 确保末尾有逗号分隔
-            if (!basePrompt.endsWith("，")) {
-              basePrompt += "，";
-            }
-            
             if (ratio > 1) {
-              basePrompt += "保持横向比例";
+              finalPrompt += "，保持横向比例";
             } else if (ratio < 1) {
-              basePrompt += "保持竖向比例";
+              finalPrompt += "，保持竖向比例";
             } else {
-              basePrompt += "保持正方形比例";
+              finalPrompt += "，保持正方形比例";
             }
           }
           
-          // 清理重复的逗号
-          basePrompt = basePrompt.replace(/，，+/g, '，');
-          
-          finalPrompt = basePrompt;
+          // 5. 如果用户有其他非风格的提示内容，添加到末尾
+          if (promptText && !promptText.includes("生成图像") && 
+             (!styleName || !promptText.toLowerCase().includes(styleName.toLowerCase()))) {
+            // 移除可能的风格名称避免重复 (包括错误拼写)
+            let cleanPrompt = promptText;
+            if (style === "吉普力") {
+              cleanPrompt = cleanPrompt.replace(/吉普力风格/g, "").replace(/吉普力/g, "");
+              cleanPrompt = cleanPrompt.replace(/吉卜力风格/g, "").replace(/吉卜力/g, "");
+            } else if (style) {
+              cleanPrompt = cleanPrompt.replace(new RegExp(`${style}风格`, 'g'), "");
+              cleanPrompt = cleanPrompt.replace(new RegExp(`${style}`, 'g'), "");
+            }
+            
+            // 清理多余逗号和空白
+            cleanPrompt = cleanPrompt.trim().replace(/^，|，$/g, "").replace(/，+/g, "，");
+            
+            if (cleanPrompt) {
+              finalPrompt += `，${cleanPrompt}`;
+            }
+          }
           
           // 处理图片数据...
           let imageData;
@@ -1192,62 +1185,55 @@ export async function POST(request: NextRequest) {
           
           logger.info(`图片处理：使用优化后的提示词模板，长度=${finalPrompt.length}字符`);
         } else {
-          // 修正风格名称
-          let styleName = style || "";
-          const originalStyleName = styleName; // 保存原始风格名称用于检查
-          
-          // 修正常见错误拼写
-          if (styleName === "吉普力") {
-            styleName = "吉卜力";
+          // 1. 确保使用正确的风格名称
+          let styleName = "";
+          if (style) {
+            // 修正已知错误拼写
+            styleName = style === "吉普力" ? "吉卜力" : style;
           }
           
-          // 移除原始提示词中的错误风格名称，避免重复
-          if (originalStyleName && originalStyleName !== styleName && promptText.includes(originalStyleName)) {
-            promptText = promptText.replace(new RegExp(`${originalStyleName}风格`, 'g'), '');
-            promptText = promptText.replace(new RegExp(`${originalStyleName}`, 'g'), '');
-            promptText = promptText.replace(/，，/g, '，').replace(/^，|，$/g, '');
+          // 2. 从头构建提示词，不依赖原始输入，避免重复风格
+          finalPrompt = "生成图像";
+          
+          // 3. 只添加一次风格名称
+          if (styleName) {
+            finalPrompt += `，${styleName}风格`;
           }
           
-          // 构建基础提示词部分 - 生成图像只添加一次
-          let basePrompt = promptText;
-          if (!basePrompt.toLowerCase().includes("生成图像")) {
-            basePrompt = "生成图像" + (basePrompt ? "，" + basePrompt : "");
-          }
-          
-          // 检查是否已包含任何形式的风格名称
-          const hasCorrectStyle = styleName && basePrompt.toLowerCase().includes(styleName.toLowerCase());
-          const hasOriginalStyle = originalStyleName && originalStyleName !== styleName && 
-                                 basePrompt.toLowerCase().includes(originalStyleName.toLowerCase());
-          
-          // 只有在不包含任何形式的风格名称时才添加
-          if (styleName && !hasCorrectStyle && !hasOriginalStyle) {
-            basePrompt += basePrompt.endsWith("，") || basePrompt === "生成图像" ? "" : "，";
-            basePrompt += `${styleName}风格`;
-          }
-          
-          // 添加比例指令 - 简单明确
+          // 4. 添加简单明确的比例指令
           if (aspectRatio) {
             const [width, height] = aspectRatio.split(':').map(Number);
             const ratio = width / height;
             
-            // 确保末尾有逗号分隔
-            if (!basePrompt.endsWith("，")) {
-              basePrompt += "，";
-            }
-            
             if (ratio > 1) {
-              basePrompt += "保持横向比例";
+              finalPrompt += "，保持横向比例";
             } else if (ratio < 1) {
-              basePrompt += "保持竖向比例";
+              finalPrompt += "，保持竖向比例";
             } else {
-              basePrompt += "保持正方形比例";
+              finalPrompt += "，保持正方形比例";
             }
           }
           
-          // 清理重复的逗号
-          basePrompt = basePrompt.replace(/，，+/g, '，');
-          
-          finalPrompt = basePrompt;
+          // 5. 如果用户有其他非风格的提示内容，添加到末尾
+          if (promptText && !promptText.includes("生成图像") && 
+             (!styleName || !promptText.toLowerCase().includes(styleName.toLowerCase()))) {
+            // 移除可能的风格名称避免重复 (包括错误拼写)
+            let cleanPrompt = promptText;
+            if (style === "吉普力") {
+              cleanPrompt = cleanPrompt.replace(/吉普力风格/g, "").replace(/吉普力/g, "");
+              cleanPrompt = cleanPrompt.replace(/吉卜力风格/g, "").replace(/吉卜力/g, "");
+            } else if (style) {
+              cleanPrompt = cleanPrompt.replace(new RegExp(`${style}风格`, 'g'), "");
+              cleanPrompt = cleanPrompt.replace(new RegExp(`${style}`, 'g'), "");
+            }
+            
+            // 清理多余逗号和空白
+            cleanPrompt = cleanPrompt.trim().replace(/^，|，$/g, "").replace(/，+/g, "，");
+            
+            if (cleanPrompt) {
+              finalPrompt += `，${cleanPrompt}`;
+            }
+          }
           
           // 没有图片时，只添加文本内容
           userMessageContent.push({
