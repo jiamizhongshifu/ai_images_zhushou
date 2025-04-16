@@ -105,14 +105,14 @@ async function sendWithRetry(
       
       // 调整日志级别，减少正常尝试时的日志量
       if (retries === 0) {
-        console.log(`[图片任务] 尝试更新任务进度`);
+        console.log(`[图片任务] 尝试更新任务进度 (taskId: ${data.taskId})`);
       } else {
         console.log(`[图片任务] 重试更新任务进度 (尝试 ${retries + 1}/${maxRetries + 1}) - 使用备用认证头`);
       }
       
-      // 使用AbortController设置请求超时
+      // 使用AbortController设置请求超时 - 增加到15秒
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 5000); // 5秒超时
+      const timeoutId = setTimeout(() => controller.abort(), 15000); // 15秒超时，原来是5秒
       
       // 构建请求头
       const headers: Record<string, string> = {
@@ -130,7 +130,9 @@ async function sendWithRetry(
           method: 'POST',
           headers,
           body: JSON.stringify(data),
-          signal: controller.signal
+          signal: controller.signal,
+          // 添加缓存控制，避免缓存问题
+          cache: 'no-store'
         });
         
         // 清除超时定时器
@@ -168,7 +170,7 @@ async function sendWithRetry(
       
       // 检查是否是超时或网络错误
       if (errorMsg.includes('abort') || errorMsg.includes('timeout')) {
-        console.warn(`[图片任务] 更新进度请求超时 (尝试 ${retries + 1}/${maxRetries + 1})`);
+        console.warn(`[图片任务] 更新进度请求超时 (尝试 ${retries + 1}/${maxRetries + 1}), URL: ${url}`);
       } else {
         console.error(`[图片任务] 更新进度请求异常 (尝试 ${retries + 1}/${maxRetries + 1}):`, error);
       }
@@ -180,10 +182,9 @@ async function sendWithRetry(
     
     // 最后一次尝试失败，但不影响图片生成流程
     if (retries > maxRetries) {
-      console.warn(`[图片任务] 所有进度更新尝试失败，使用降级策略: 仅记录到日志`);
+      console.warn(`[图片任务] 所有进度更新尝试失败，使用降级策略: 仅记录到日志 (taskId: ${data.taskId})`);
       
       // 这里实现降级策略，确保即使无法更新进度也不影响主流程
-      // 可以考虑将进度信息写入本地缓存、发送到其他服务或执行其他降级操作
       return null;
     }
     
