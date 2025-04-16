@@ -1109,8 +1109,11 @@ export async function POST(request: NextRequest) {
         
         // 构建优化后的提示词 - 减少冗余，更加简洁明了
         if (image) {
-          // 构建针对图片转换的标准化提示词，自然表达比例需求
-          const styleText = style ? `使用${style}风格` : "";
+          // 检查提示词是否已包含风格信息，避免重复添加
+          const hasStyleInPrompt = style && promptText.toLowerCase().includes(style.toLowerCase());
+          
+          // 只在提示词中不包含风格信息时添加风格描述
+          const styleText = (style && !hasStyleInPrompt) ? `使用${style}风格` : "";
           
           // 根据图片比例动态构建提示词，避免矛盾的尺寸指令
           let sizeInstruction = "";
@@ -1129,8 +1132,8 @@ export async function POST(request: NextRequest) {
             sizeInstruction = "请保持原图的主要内容和构图";
           }
           
-          // 更自然地表达比例需求，避免矛盾的指令
-          finalPrompt = `${promptText}，${styleText}${aspectRatio ? `，保持${aspectRatio}比例` : ""}。${sizeInstruction}，保留原图中的关键内容和元素。`;
+          // 更自然地表达比例需求，避免矛盾的指令和重复的风格
+          finalPrompt = `${promptText}${styleText ? ', ' + styleText : ''}${aspectRatio ? `, 保持${aspectRatio}比例` : ""}。${sizeInstruction}，保留原图中的关键内容和元素。`;
           
           // 处理图片数据...
           let imageData;
@@ -1163,8 +1166,11 @@ export async function POST(request: NextRequest) {
           
           logger.info(`图片处理：使用优化后的提示词模板，长度=${finalPrompt.length}字符`);
         } else {
-          // 没有图片时的简化提示词
-          const styleText = style ? `使用${style}风格` : "";
+          // 检查提示词是否已包含风格信息，避免重复添加
+          const hasStyleInPrompt = style && promptText.toLowerCase().includes(style.toLowerCase());
+          
+          // 只在提示词中不包含风格信息时添加风格描述
+          const styleText = (style && !hasStyleInPrompt) ? `使用${style}风格` : "";
           
           // 根据比例参数确定输出格式指令
           let sizeInstruction = "";
@@ -1183,7 +1189,7 @@ export async function POST(request: NextRequest) {
           }
           
           // 更简洁自然的提示词，避免技术参数和矛盾指令
-          finalPrompt = `${promptText}${styleText ? '，' + styleText : ''}。请生成${sizeInstruction}${aspectRatio ? `，比例为${aspectRatio}` : ""}。`;
+          finalPrompt = `${promptText}${styleText ? ', ' + styleText : ''}。请生成${sizeInstruction}${aspectRatio ? `, 比例为${aspectRatio}` : ""}。`;
           
           // 没有图片时，只添加文本内容
           userMessageContent.push({

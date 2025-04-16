@@ -22,6 +22,17 @@ export async function updateTaskProgress(
   try {
     // 输出进度更新日志
     console.log(`[图片任务] 更新任务 ${taskId} 进度: ${progress}%, 阶段: ${stage}`);
+
+    // 验证参数
+    if (!taskId) {
+      console.error('[图片任务] 错误: 任务ID为空');
+      return null;
+    }
+
+    if (progress < 0 || progress > 100) {
+      console.warn(`[图片任务] 警告: 进度值 ${progress} 超出范围，已调整到有效范围`);
+      progress = Math.max(0, Math.min(100, progress));
+    }
     
     // 构建完整URL
     const url = `${apiBaseUrl}/api/update-task-progress`;
@@ -29,17 +40,36 @@ export async function updateTaskProgress(
     // 如果API密钥为空，尝试从其他可能的环境变量获取
     if (!apiKey) {
       console.warn(`[图片任务] 警告: TASK_PROCESS_SECRET_KEY 为空，尝试从备用源获取`);
-      apiKey = process.env.INTERNAL_API_KEY || process.env.API_SECRET_KEY || 'development-key';
+      
+      // 尝试从多个可能的环境变量中获取
+      apiKey = process.env.INTERNAL_API_KEY || 
+               process.env.API_SECRET_KEY || 
+               process.env.OPENAI_API_KEY?.substring(0, 8) || // 使用OpenAI密钥前8位作为备用
+               'development-key';
+      
+      // 如果是开发环境，可以使用特殊标识
+      if (process.env.NODE_ENV === 'development') {
+        console.log('[图片任务] 开发环境中使用临时密钥');
+      } else {
+        console.warn(`[图片任务] 生产环境中缺少任务处理密钥，请设置TASK_PROCESS_SECRET_KEY环境变量`);
+      }
     }
     
     // 发送更新请求，使用重试机制
-    return await sendWithRetry(url, {
+    const response = await sendWithRetry(url, {
       taskId,
       progress,
       stage
     }, apiKey);
+    
+    return response;
   } catch (error) {
     console.error(`[图片任务] 更新任务 ${taskId} 进度出错:`, error);
+    
+    // 使用降级策略：直接在日志中记录进度，不阻塞主流程
+    console.log(`[图片任务降级] 任务 ${taskId} 进度更新: ${progress}%, 阶段: ${stage} (仅记录到日志)`);
+    
+    // 错误不会传播到调用方，确保不影响图片生成流程
     return null;
   }
 }
@@ -73,7 +103,16 @@ async function sendWithRetry(
       // 使用当前重试次数对应的认证头
       const currentHeaderIndex = retries % authHeaders.length;
       
-      console.log(`[图片任务] 尝试更新任务进度 (尝试 ${retries + 1}/${maxRetries + 1})${retries > 0 ? ' - 使用备用认证头' : ''}`);
+      // 调整日志级别，减少正常尝试时的日志量
+      if (retries === 0) {
+        console.log(`[图片任务] 尝试更新任务进度`);
+      } else {
+        console.log(`[图片任务] 重试更新任务进度 (尝试 ${retries + 1}/${maxRetries + 1}) - 使用备用认证头`);
+      }
+      
+      // 使用AbortController设置请求超时
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000); // 5秒超时
       
       // 构建请求头
       const headers: Record<string, string> = {
@@ -86,41 +125,71 @@ async function sendWithRetry(
         headers[key] = authHeader[key];
       });
       
-      const response = await fetch(url, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(data)
-      });
-      
-      if (response.ok) {
-        console.log(`[图片任务] 任务 ${data.taskId} 进度更新成功: ${data.progress}%`);
-        return response;
-      } else {
-        const errorData = await response.json().catch(() => ({}));
-        console.error(`[图片任务] 更新任务 ${data.taskId} 进度失败: HTTP ${response.status}, 错误:`, errorData);
-        lastError = { status: response.status, data: errorData };
+      try {
+        const response = await fetch(url, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(data),
+          signal: controller.signal
+        });
         
-        // 如果不是认证错误，不再重试
-        if (response.status !== 401) {
-          break;
+        // 清除超时定时器
+        clearTimeout(timeoutId);
+        
+        if (response.ok) {
+          console.log(`[图片任务] 任务 ${data.taskId} 进度更新成功: ${data.progress}%`);
+          return response;
+        } else {
+          const errorData = await response.json().catch(() => ({}));
+          
+          // 检查是否缺少数据库列
+          if (response.status === 422 && errorData.code === 'schema_error') {
+            console.warn(`[图片任务] 数据库结构不匹配: ${errorData.details || '缺少进度或阶段列'}`);
+            console.warn(`[图片任务] 建议: ${errorData.suggestion || '运行数据库迁移脚本'}`);
+            
+            // 这种情况下不继续重试，但不视为致命错误
+            return null;
+          }
+          
+          console.error(`[图片任务] 更新任务 ${data.taskId} 进度失败: HTTP ${response.status}, 错误:`, errorData);
+          lastError = { status: response.status, data: errorData };
+          
+          // 如果不是认证错误，不再重试
+          if (response.status !== 401) {
+            break;
+          }
         }
+      } finally {
+        // 确保超时定时器被清除
+        clearTimeout(timeoutId);
       }
     } catch (error) {
-      console.error(`[图片任务] 更新进度请求异常 (尝试 ${retries + 1}/${maxRetries + 1}):`, error);
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      
+      // 检查是否是超时或网络错误
+      if (errorMsg.includes('abort') || errorMsg.includes('timeout')) {
+        console.warn(`[图片任务] 更新进度请求超时 (尝试 ${retries + 1}/${maxRetries + 1})`);
+      } else {
+        console.error(`[图片任务] 更新进度请求异常 (尝试 ${retries + 1}/${maxRetries + 1}):`, error);
+      }
+      
       lastError = error;
     }
     
     retries++;
     
-    // 最后一次尝试，直接更新数据库
+    // 最后一次尝试失败，但不影响图片生成流程
     if (retries > maxRetries) {
-      console.warn(`[图片任务] 所有进度更新尝试失败，使用备用更新机制或跳过`);
-      // 这里可以增加直接更新数据库的逻辑，但需要数据库访问权限
-      break;
+      console.warn(`[图片任务] 所有进度更新尝试失败，使用降级策略: 仅记录到日志`);
+      
+      // 这里实现降级策略，确保即使无法更新进度也不影响主流程
+      // 可以考虑将进度信息写入本地缓存、发送到其他服务或执行其他降级操作
+      return null;
     }
     
-    // 重试前等待一会
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    // 重试前等待一会，使用指数退避
+    const delay = Math.min(1000 * Math.pow(1.5, retries), 5000);
+    await new Promise(resolve => setTimeout(resolve, delay));
   }
   
   // 所有尝试都失败
@@ -158,6 +227,10 @@ export function reportProgress(
   // 异步发送进度更新，不等待结果
   updateTaskProgress(taskId, progress, stage, apiBaseUrl, apiKey)
     .catch(error => {
+      // 捕获并处理任何异常，确保不影响主流程
       console.error(`[图片任务] 异步报告任务 ${taskId} 进度失败:`, error);
+      
+      // 降级：仅记录到控制台
+      console.log(`[图片任务降级] 任务 ${taskId} 进度: ${progress}%, 阶段: ${stage} (记录到控制台)`);
     });
 } 
