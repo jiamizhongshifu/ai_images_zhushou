@@ -1099,26 +1099,46 @@ export async function POST(request: NextRequest) {
         const userMessageContent: Array<ChatCompletionContentPart> = [];
         
         // 初始化提示词变量
-        let promptText = prompt || "生成图像";
+        let promptText = prompt || "";
         let finalPrompt = "";
         
-        // 构建优化后的提示词 - 使用简洁结构：生成图像 + 风格 + 用户额外提示词
+        // 构建优化后的提示词
         if (image) {
-          // 检查提示词是否已包含风格信息，避免重复添加
-          const hasStyleInPrompt = style && promptText.toLowerCase().includes(style.toLowerCase());
-          
-          // 只在提示词中不包含风格信息时添加风格描述
-          // 修正常见拼写错误，如将"吉普力"修正为"吉卜力"
+          // 修正风格名称
           let styleName = style || "";
           if (styleName === "吉普力") {
             styleName = "吉卜力";
           }
           
-          // 构建简洁的提示词
-          const styleText = (styleName && !hasStyleInPrompt) ? `${styleName}风格` : "";
+          // 构建基础提示词部分 - 生成图像只添加一次
+          let basePrompt = promptText;
+          if (!basePrompt.toLowerCase().includes("生成图像")) {
+            basePrompt = "生成图像" + (basePrompt ? "，" + basePrompt : "");
+          }
           
-          // 简化的提示词结构
-          finalPrompt = `生成图像，${styleText}${promptText !== "生成图像" ? '，' + promptText : ''}`;
+          // 添加风格 - 只添加一次
+          if (styleName && !basePrompt.toLowerCase().includes(styleName.toLowerCase())) {
+            basePrompt += basePrompt.endsWith("，") || basePrompt === "生成图像" ? "" : "，";
+            basePrompt += `${styleName}风格`;
+          }
+          
+          // 添加比例指令 - 简单明确
+          if (aspectRatio) {
+            const [width, height] = aspectRatio.split(':').map(Number);
+            const ratio = width / height;
+            
+            basePrompt += "，";
+            
+            if (ratio > 1) {
+              basePrompt += "保持横向比例";
+            } else if (ratio < 1) {
+              basePrompt += "保持竖向比例";
+            } else {
+              basePrompt += "保持正方形比例";
+            }
+          }
+          
+          finalPrompt = basePrompt;
           
           // 处理图片数据...
           let imageData;
@@ -1151,20 +1171,41 @@ export async function POST(request: NextRequest) {
           
           logger.info(`图片处理：使用优化后的提示词模板，长度=${finalPrompt.length}字符`);
         } else {
-          // 检查提示词是否已包含风格信息，避免重复添加
-          const hasStyleInPrompt = style && promptText.toLowerCase().includes(style.toLowerCase());
-          
-          // 修正常见拼写错误，如将"吉普力"修正为"吉卜力"
+          // 修正风格名称
           let styleName = style || "";
           if (styleName === "吉普力") {
             styleName = "吉卜力";
           }
           
-          // 只在提示词中不包含风格信息时添加风格描述
-          const styleText = (styleName && !hasStyleInPrompt) ? `${styleName}风格` : "";
+          // 构建基础提示词部分 - 生成图像只添加一次
+          let basePrompt = promptText;
+          if (!basePrompt.toLowerCase().includes("生成图像")) {
+            basePrompt = "生成图像" + (basePrompt ? "，" + basePrompt : "");
+          }
           
-          // 简化的提示词结构
-          finalPrompt = `生成图像，${styleText}${promptText !== "生成图像" ? '，' + promptText : ''}`;
+          // 添加风格 - 只添加一次
+          if (styleName && !basePrompt.toLowerCase().includes(styleName.toLowerCase())) {
+            basePrompt += basePrompt.endsWith("，") || basePrompt === "生成图像" ? "" : "，";
+            basePrompt += `${styleName}风格`;
+          }
+          
+          // 添加比例指令 - 简单明确
+          if (aspectRatio) {
+            const [width, height] = aspectRatio.split(':').map(Number);
+            const ratio = width / height;
+            
+            basePrompt += "，";
+            
+            if (ratio > 1) {
+              basePrompt += "保持横向比例";
+            } else if (ratio < 1) {
+              basePrompt += "保持竖向比例";
+            } else {
+              basePrompt += "保持正方形比例";
+            }
+          }
+          
+          finalPrompt = basePrompt;
           
           // 没有图片时，只添加文本内容
           userMessageContent.push({
