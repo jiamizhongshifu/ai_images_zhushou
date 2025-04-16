@@ -17,12 +17,11 @@ const logger = {
  */
 export async function GET(
   request: NextRequest,
-  context: { params: Promise<{ taskId: string }> }
+  { params }: { params: { taskId: string } }
 ) {
   try {
     // 获取任务ID
-    const params = await context.params;
-    const { taskId } = params;
+    const taskId = params.taskId;
     
     if (!taskId) {
       return NextResponse.json(

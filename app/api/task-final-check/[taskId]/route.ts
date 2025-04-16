@@ -27,15 +27,14 @@ const logger = {
  */
 export async function GET(
   request: NextRequest,
-  context: { params: Promise<{ taskId: string }> }
+  { params }: { params: { taskId: string } }
 ) {
   try {
     // 生成请求ID
     const requestId = Math.random().toString(36).substring(2, 10);
     
     // 获取任务ID
-    const params = await context.params;
-    const { taskId } = params;
+    const taskId = params.taskId;
     
     logger.info(`[${requestId}] 获取任务${taskId}的最终状态`);
     
@@ -167,16 +166,17 @@ export async function GET(
 // 定义HTTP POST请求处理函数，用于主动取消任务
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ taskId: string }> }
+  { params }: { params: { taskId: string } }
 ) {
-  const resolvedParams = await params;
   const requestId = crypto.randomUUID().substring(0, 8);
   const startTime = Date.now();
-  logger.info(`[${requestId}] 开始执行任务取消操作: ${resolvedParams.taskId}`);
-
+  
   try {
     // 验证任务ID参数是否存在
-    const taskId = resolvedParams.taskId;
+    const taskId = params.taskId;
+    
+    logger.info(`[${requestId}] 开始执行任务取消操作: ${taskId}`);
+    
     if (!taskId) {
       logger.error(`[${requestId}] 缺少任务ID参数`);
       return NextResponse.json(
