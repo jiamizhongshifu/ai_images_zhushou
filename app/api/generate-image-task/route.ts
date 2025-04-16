@@ -1106,8 +1106,18 @@ export async function POST(request: NextRequest) {
         if (image) {
           // 修正风格名称
           let styleName = style || "";
+          const originalStyleName = styleName; // 保存原始风格名称用于检查
+          
+          // 修正常见错误拼写
           if (styleName === "吉普力") {
             styleName = "吉卜力";
+          }
+          
+          // 移除原始提示词中的错误风格名称，避免重复
+          if (originalStyleName && originalStyleName !== styleName && promptText.includes(originalStyleName)) {
+            promptText = promptText.replace(new RegExp(`${originalStyleName}风格`, 'g'), '');
+            promptText = promptText.replace(new RegExp(`${originalStyleName}`, 'g'), '');
+            promptText = promptText.replace(/，，/g, '，').replace(/^，|，$/g, '');
           }
           
           // 构建基础提示词部分 - 生成图像只添加一次
@@ -1116,8 +1126,13 @@ export async function POST(request: NextRequest) {
             basePrompt = "生成图像" + (basePrompt ? "，" + basePrompt : "");
           }
           
-          // 添加风格 - 只添加一次
-          if (styleName && !basePrompt.toLowerCase().includes(styleName.toLowerCase())) {
+          // 检查是否已包含任何形式的风格名称
+          const hasCorrectStyle = styleName && basePrompt.toLowerCase().includes(styleName.toLowerCase());
+          const hasOriginalStyle = originalStyleName && originalStyleName !== styleName && 
+                                 basePrompt.toLowerCase().includes(originalStyleName.toLowerCase());
+          
+          // 只有在不包含任何形式的风格名称时才添加
+          if (styleName && !hasCorrectStyle && !hasOriginalStyle) {
             basePrompt += basePrompt.endsWith("，") || basePrompt === "生成图像" ? "" : "，";
             basePrompt += `${styleName}风格`;
           }
@@ -1127,7 +1142,10 @@ export async function POST(request: NextRequest) {
             const [width, height] = aspectRatio.split(':').map(Number);
             const ratio = width / height;
             
-            basePrompt += "，";
+            // 确保末尾有逗号分隔
+            if (!basePrompt.endsWith("，")) {
+              basePrompt += "，";
+            }
             
             if (ratio > 1) {
               basePrompt += "保持横向比例";
@@ -1137,6 +1155,9 @@ export async function POST(request: NextRequest) {
               basePrompt += "保持正方形比例";
             }
           }
+          
+          // 清理重复的逗号
+          basePrompt = basePrompt.replace(/，，+/g, '，');
           
           finalPrompt = basePrompt;
           
@@ -1173,8 +1194,18 @@ export async function POST(request: NextRequest) {
         } else {
           // 修正风格名称
           let styleName = style || "";
+          const originalStyleName = styleName; // 保存原始风格名称用于检查
+          
+          // 修正常见错误拼写
           if (styleName === "吉普力") {
             styleName = "吉卜力";
+          }
+          
+          // 移除原始提示词中的错误风格名称，避免重复
+          if (originalStyleName && originalStyleName !== styleName && promptText.includes(originalStyleName)) {
+            promptText = promptText.replace(new RegExp(`${originalStyleName}风格`, 'g'), '');
+            promptText = promptText.replace(new RegExp(`${originalStyleName}`, 'g'), '');
+            promptText = promptText.replace(/，，/g, '，').replace(/^，|，$/g, '');
           }
           
           // 构建基础提示词部分 - 生成图像只添加一次
@@ -1183,8 +1214,13 @@ export async function POST(request: NextRequest) {
             basePrompt = "生成图像" + (basePrompt ? "，" + basePrompt : "");
           }
           
-          // 添加风格 - 只添加一次
-          if (styleName && !basePrompt.toLowerCase().includes(styleName.toLowerCase())) {
+          // 检查是否已包含任何形式的风格名称
+          const hasCorrectStyle = styleName && basePrompt.toLowerCase().includes(styleName.toLowerCase());
+          const hasOriginalStyle = originalStyleName && originalStyleName !== styleName && 
+                                 basePrompt.toLowerCase().includes(originalStyleName.toLowerCase());
+          
+          // 只有在不包含任何形式的风格名称时才添加
+          if (styleName && !hasCorrectStyle && !hasOriginalStyle) {
             basePrompt += basePrompt.endsWith("，") || basePrompt === "生成图像" ? "" : "，";
             basePrompt += `${styleName}风格`;
           }
@@ -1194,7 +1230,10 @@ export async function POST(request: NextRequest) {
             const [width, height] = aspectRatio.split(':').map(Number);
             const ratio = width / height;
             
-            basePrompt += "，";
+            // 确保末尾有逗号分隔
+            if (!basePrompt.endsWith("，")) {
+              basePrompt += "，";
+            }
             
             if (ratio > 1) {
               basePrompt += "保持横向比例";
@@ -1204,6 +1243,9 @@ export async function POST(request: NextRequest) {
               basePrompt += "保持正方形比例";
             }
           }
+          
+          // 清理重复的逗号
+          basePrompt = basePrompt.replace(/，，+/g, '，');
           
           finalPrompt = basePrompt;
           
