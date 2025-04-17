@@ -4,12 +4,13 @@
  */
 
 import { toast } from "react-hot-toast";
+import { AuthError } from "@supabase/supabase-js";
 
 // 存储诊断信息
 interface AuthDiagnostics {
   storageAvailable: boolean;
   cookiesAvailable: boolean;
-  lastErrors: string[];
+  lastErrors: Array<string>;
   lastErrorTime?: Date;
   diagnosticChecks: Record<string, boolean>;
 }
@@ -44,10 +45,10 @@ export function checkStorageAvailability(): boolean {
     authDiagnostics.cookiesAvailable = cookieAvailable;
     
     return true;
-  } catch (e) {
-    console.warn("[Auth] 存储检查失败:", e);
+  } catch (error) {
+    console.warn("[Auth] 存储检查失败:", error);
     authDiagnostics.storageAvailable = false;
-    authDiagnostics.lastErrors.push(e instanceof Error ? e.message : String(e));
+    authDiagnostics.lastErrors.push(error instanceof Error ? error.message : String(error));
     if (authDiagnostics.lastErrors.length > 5) {
       authDiagnostics.lastErrors.shift();
     }
@@ -164,7 +165,9 @@ export function resetAuthState(): void {
  * @param callback 登录回调函数
  * @returns 增强的处理函数
  */
-export function enhancedAuthHandler(callback: () => Promise<any>): () => Promise<void> {
+export function enhancedAuthHandler<T = void>(
+  callback: () => Promise<T>
+): () => Promise<void> {
   return async () => {
     // 检查环境
     checkAuthEnvironment();
@@ -176,15 +179,16 @@ export function enhancedAuthHandler(callback: () => Promise<any>): () => Promise
       console.error("[Auth] 登录处理错误:", error);
       
       // 记录错误
-      if (error instanceof Error) {
+      if (error instanceof AuthError || error instanceof Error) {
         authDiagnostics.lastErrors.push(error.message);
         if (authDiagnostics.lastErrors.length > 5) {
           authDiagnostics.lastErrors.shift();
         }
+        authDiagnostics.lastErrorTime = new Date();
       }
       
       // 显示错误
-      toast.error("登录过程中发生错误，请稍后重试");
+      toast.error(error instanceof AuthError ? error.message : "登录过程中发生错误，请稍后重试");
     }
   };
 } 

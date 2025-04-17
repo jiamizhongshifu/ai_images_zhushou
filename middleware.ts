@@ -1,6 +1,25 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { updateSession } from "@/utils/supabase/middleware";
 
+// 检测是否可能是浏览器扩展环境的辅助函数
+function isExtensionEnvironment(request: NextRequest): boolean {
+  // 检查请求头中的标志
+  const userAgent = request.headers.get('user-agent') || '';
+  const referer = request.headers.get('referer') || '';
+  const origin = request.headers.get('origin') || '';
+  
+  // Extension-specific indicators
+  return (
+    userAgent.includes('Chrome-Lighthouse') || 
+    referer.includes('chrome-extension://') ||
+    origin.includes('chrome-extension://') ||
+    // 检查特殊URL参数，可以由扩展环境设置
+    request.nextUrl.searchParams.has('extension_env') ||
+    // 检查特殊cookie标记
+    request.cookies.get('is_extension_env')?.value === 'true'
+  );
+}
+
 // 身份验证中间件
 export async function middleware(request: NextRequest) {
   try {
@@ -17,46 +36,72 @@ export async function middleware(request: NextRequest) {
       return NextResponse.next();
     }
     
-    // 优先检查登出状态，如果已登出，则直接处理
-    const url = new URL(request.url);
-    const hasLoggedOutParam = url.searchParams.has('logged_out') || 
-                             url.searchParams.has('logout') || 
-                             url.searchParams.has('force_logout');
-    
-    // 更严格地检查各种登出cookie
-    const hasLogoutCookie = request.cookies.get('force_logged_out')?.value === 'true';
-    const hasIsLoggedOutCookie = request.cookies.get('isLoggedOut')?.value === 'true';
-    const hasAuthLoggedOutCookie = request.cookies.get('auth_logged_out')?.value === 'true';
-    const hasLoggedOutCookie = request.cookies.get('logged_out')?.value === 'true';
-    
-    // 如果有任何登出标记，则快速处理
-    if (hasLoggedOutParam || hasLogoutCookie || hasIsLoggedOutCookie || 
-        hasAuthLoggedOutCookie || hasLoggedOutCookie) {
-      console.log('[中间件] 检测到登出标记，优先处理登出状态');
+    // 检查受保护页面URL中的auth_session参数（登录成功标志）
+    const hasAuthSession = request.nextUrl.searchParams.has('auth_session');
+    if (request.nextUrl.pathname.startsWith('/protected') && hasAuthSession) {
+      console.log('[中间件] 检测到auth_session参数，清除所有登出标记');
       
       // 创建响应
       const response = NextResponse.next();
       
-      // 确保设置登出cookie，前端可以检测
-      response.cookies.set('force_logged_out', 'true', { 
-        path: '/', 
-        maxAge: 60 * 60 * 24, // 24小时
-        httpOnly: false,
+      // 清除所有登出标记
+      const cookiesToClear = ['force_logged_out', 'isLoggedOut', 'auth_logged_out', 'logged_out'];
+      cookiesToClear.forEach(name => {
+        response.cookies.set(name, '', {
+          path: '/',
+          expires: new Date(0),
+          maxAge: 0
+        });
+      });
+      
+      // 设置强制登录标记
+      response.cookies.set('force_login', 'true', {
+        path: '/',
+        maxAge: 3600, // 1小时有效期
         sameSite: 'lax'
       });
       
-      // 移除所有可能表示登录状态的cookie
-      response.cookies.delete('user_authenticated');
-      response.cookies.delete('force_login');
-      response.cookies.delete('session_verified');
+      // 设置会话验证标记
+      response.cookies.set('session_verified', 'true', {
+        path: '/',
+        maxAge: 3600, // 1小时有效期
+        sameSite: 'lax'
+      });
       
-      // 如果是访问受保护页面，则重定向到登录页
-      if (request.nextUrl.pathname.startsWith('/protected')) {
-        return NextResponse.redirect(new URL('/sign-in', request.url));
-      }
-      
-      // 其他情况，放行请求
       return response;
+    }
+    
+    // 检查是否是浏览器扩展环境
+    const isExtension = isExtensionEnvironment(request);
+    if (isExtension) {
+      console.log('[中间件] 检测到可能的扩展环境，特殊处理');
+      
+      // 对于扩展环境，如果URL包含auth_session参数，优先信任该参数
+      if (hasAuthSession) {
+        console.log('[中间件] 扩展环境下检测到auth_session参数，强制视为已登录');
+        
+        // 创建响应
+        const response = NextResponse.next();
+        
+        // 清除所有登出标记
+        const cookiesToClear = ['force_logged_out', 'isLoggedOut', 'auth_logged_out', 'logged_out'];
+        cookiesToClear.forEach(name => {
+          response.cookies.set(name, '', {
+            path: '/',
+            expires: new Date(0),
+            maxAge: 0
+          });
+        });
+        
+        // 设置扩展环境标记
+        response.cookies.set('is_extension_env', 'true', {
+          path: '/',
+          maxAge: 86400, // 24小时
+          sameSite: 'lax'
+        });
+        
+        return response;
+      }
     }
     
     // 使用Supabase会话更新逻辑

@@ -36,42 +36,55 @@ export default function LoginForm({ message }: LoginFormProps) {
   // 处理登录成功后的重定向
   const redirectToProtected = async () => {
     try {
-      console.log('[登录表单] 开始重定向流程');
+      // 清除登出标记，确保不会被错误地识别为已登出状态
+      console.log('[登录重定向] 尝试清除登出标记');
       
-      // 1. 清除任何可能的登出标记
-      localStorage.removeItem('force_logged_out');
-      localStorage.removeItem('logged_out');
-      sessionStorage.removeItem('isLoggedOut');
-      document.cookie = 'force_logged_out=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
+      // 先调用API清除cookie中的登出标记
+      try {
+        const response = await fetch('/api/auth/clear-logout-flags', {
+          method: 'POST',
+          headers: {
+            'Cache-Control': 'no-cache',
+          },
+        });
+        
+        if (response.ok) {
+          console.log('[登录重定向] 成功清除登出标记cookies');
+        } else {
+          console.warn('[登录重定向] 清除登出标记失败:', response.status);
+        }
+      } catch (apiError) {
+        console.warn('[登录重定向] 调用清除登出标记API出错:', apiError);
+      }
       
-      // 2. 设置认证标记
-      const loginTime = Date.now().toString();
-      localStorage.setItem('wasAuthenticated', 'true');
-      localStorage.setItem('auth_time', loginTime);
-      document.cookie = 'user_authenticated=true; path=/; max-age=86400';
+      // 也尝试清除localStorage和sessionStorage中的登出标记
+      try {
+        if (typeof localStorage !== 'undefined') {
+          localStorage.removeItem('force_logged_out');
+          localStorage.removeItem('logged_out');
+        }
+        if (typeof sessionStorage !== 'undefined') {
+          sessionStorage.removeItem('isLoggedOut');
+        }
+      } catch (storageError) {
+        console.warn('[登录重定向] 清除存储中的登出标记出错:', storageError);
+      }
+
+      // 同步认证状态
+      await forceSyncAuthState();
       
-      // 3. 获取重定向参数
-      const urlParams = new URLSearchParams(window.location.search);
-      const redirectParam = urlParams.get('redirect');
+      // 添加auth_session参数并重定向到受保护页面
+      const targetUrl = redirectParam 
+        ? `${redirectParam}?auth_session=${Date.now()}`
+        : `/protected?auth_session=${Date.now()}`;
       
-      // 4. 刷新用户状态
-      await refreshUserState({ forceRefresh: true, showLoading: false });
-      
-      // 5. 确定重定向目标
-      let redirectTarget = redirectParam || '/protected';
-      
-      // 6. 添加认证参数
-      redirectTarget = `${redirectTarget}${redirectTarget.includes('?') ? '&' : '?'}auth_session=${loginTime}&auth_time=${loginTime}`;
-      
-      console.log(`[登录表单] 准备重定向到: ${redirectTarget}`);
-      
-      // 7. 使用window.location.href进行导航
-      window.location.href = redirectTarget;
-      
+      // 使用强制刷新的方式重定向，确保所有状态都被重置
+      // 这在浏览器扩展环境中特别重要
+      window.location.href = targetUrl;
     } catch (error) {
-      console.error('[登录表单] 重定向过程出错:', error);
-      // 出错时使用基本重定向
-      window.location.href = '/protected';
+      console.error('[登录重定向] 重定向过程中出错:', error);
+      // 即使出错也尝试重定向
+      window.location.href = redirectParam || '/protected';
     }
   };
 
