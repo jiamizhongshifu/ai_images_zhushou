@@ -1,3 +1,8 @@
+// 添加全局类型声明
+declare global {
+  var __GOOGLE_AUTH_SESSIONS: Map<string, any>;
+}
+
 import { NextRequest, NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { nanoid } from 'nanoid';
@@ -14,7 +19,7 @@ const REDIRECT_URI = IS_DEV
   : `https://imgtutu.ai/api/auth/google/callback`;
 
 // 存储待处理的认证状态
-export const pendingAuths = new Map();
+const pendingAuths = new Map();
 
 // 确保全局认证会话存储存在
 if (typeof global !== 'undefined' && !global.__GOOGLE_AUTH_SESSIONS) {
@@ -23,16 +28,16 @@ if (typeof global !== 'undefined' && !global.__GOOGLE_AUTH_SESSIONS) {
 }
 
 /**
- * 获取认证状态
+ * 获取认证状态（内部函数）
  */
-export function getAuthState(sessionKey: string) {
+function getAuthState(sessionKey: string) {
   return pendingAuths.get(sessionKey);
 }
 
 /**
- * 更新认证状态
+ * 更新认证状态（内部函数）
  */
-export function updateAuthState(sessionKey: string, update: any) {
+function updateAuthState(sessionKey: string, update: any) {
   const current = pendingAuths.get(sessionKey) || {};
   pendingAuths.set(sessionKey, { ...current, ...update });
   return pendingAuths.get(sessionKey);
