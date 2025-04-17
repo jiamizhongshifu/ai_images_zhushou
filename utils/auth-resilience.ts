@@ -128,17 +128,10 @@ const resetAuthConnectionFailures = () => {
 const checkAuthConnection = async (): Promise<boolean> => {
   try {
     console.log('[认证弹性] 检查认证服务连接状态...');
-    const success = await refreshSession();
-    
-    if (success) {
-      console.log('[认证弹性] 认证服务连接正常');
-      resetAuthConnectionFailures();
-      return true;
-    } else {
-      console.warn('[认证弹性] 会话刷新失败');
-      recordAuthConnectionFailure();
-      return false;
-    }
+    await refreshSession();
+    console.log('[认证弹性] 认证服务连接正常');
+    resetAuthConnectionFailures();
+    return true;
   } catch (error) {
     console.error('[认证弹性] 认证服务连接检查出错:', error);
     recordAuthConnectionFailure();
