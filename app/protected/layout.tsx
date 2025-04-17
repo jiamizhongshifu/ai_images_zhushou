@@ -8,8 +8,6 @@ import { Button } from '@/components/ui/button';
 import { ReactNode } from 'react';
 import { redirect } from 'next/navigation';
 import { useUserState } from '@/app/components/providers/user-state-provider';
-import { MainNav } from '@/app/components/ui/main-nav';
-import { Footer } from '@/app/components/ui/footer';
 
 export default function ProtectedLayout({
   children,
@@ -51,11 +49,9 @@ export default function ProtectedLayout({
 
   return (
     <div className="flex min-h-screen flex-col">
-      <MainNav />
       <main className="flex-1">
         {children}
       </main>
-      <Footer />
     </div>
   );
 }

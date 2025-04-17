@@ -232,15 +232,15 @@ export function MainNav({ providedAuthState }: MainNavProps) {
       // 立即更新状态
       setIsAuthenticated(false);
       
-      // 4. 跳转到首页
-      router.push('/?logged_out=true');
+      // 4. 使用window.location进行硬重定向，确保完全刷新页面
+      window.location.href = '/?logged_out=true';
     } catch (error) {
       console.error('[MainNav] 登出过程中出错:', error);
-      router.push('/?error=logout_failed');
+      window.location.href = '/?error=logout_failed';
     } finally {
       setIsSigningOut(false);
     }
-  }, [router]);
+  }, []);
 
   // 添加处理导航项点击的函数
   const handleNavClick = useCallback((e: React.MouseEvent, item: NavItem) => {

@@ -2,8 +2,9 @@
  * 统一认证服务 - 提供多层次存储和优雅降级的认证状态管理
  */
 
-import { createClient, SupabaseClient, Session, User } from '@supabase/supabase-js'
+import { createClient, SupabaseClient, Session, User, AuthChangeEvent } from '@supabase/supabase-js'
 import { Database } from '../types/supabase'
+import { supabaseClient } from './supabase-client'
 
 // 认证状态类型定义
 export interface AuthState {
@@ -13,8 +14,8 @@ export interface AuthState {
   userId?: string;
   sessionId?: string;
   email?: string;
-  lastVerified?: number;
-  user?: User;
+  user?: User | null;
+  session?: Session | null;
 }
 
 // 存储类型枚举
@@ -27,7 +28,9 @@ enum StorageType {
 // 默认认证状态
 const DEFAULT_AUTH_STATE: AuthState = {
   isAuthenticated: false,
-  lastAuthTime: 0
+  lastAuthTime: undefined,
+  user: null,
+  session: null
 };
 
 // 认证状态存储键名
@@ -212,21 +215,36 @@ let refreshPromise: Promise<boolean> | null = null;
 // 添加新的持久化存储键
 const AUTH_SESSION_TOKEN_KEY = 'sb-auth-token-persistent';
 
+// AuthService 类型定义
+export interface AuthServiceInterface {
+  supabase: SupabaseClient<Database>;
+  getSession(): Promise<Session | null>;
+  refreshSession(): Promise<void>;
+  handleAuthChange(event: AuthChangeEvent, session: Session | null): void;
+  setAuthState(state: Partial<AuthState>): void;
+  getAuthState(): AuthState;
+  clearAuthState(): void;
+  isAuthenticated(): boolean;
+}
+
 /**
  * 认证服务类 - 提供统一的认证状态管理
  */
-export class AuthService {
+export class AuthService implements AuthServiceInterface {
+  public supabase = supabaseClient;
   private static instance: AuthService;
   private subscribers: Array<(state: AuthState) => void> = [];
-  private supabase: SupabaseClient<Database>;
   private isInitializing = false;
   private lastApiAuthCheck = 0;
   private apiAuthTTL = 60 * 1000; // 1分钟的API认证检查间隔
+  private memoryAuthState: AuthState = DEFAULT_AUTH_STATE;
+  
+  // 添加登录保护期相关变量
+  private loginProtectionEnabled = false;
+  private loginProtectionExpiry = 0;
+  private readonly LOGIN_PROTECTION_DURATION = 15000; // 15秒保护期
 
   constructor() {
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-    const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-    this.supabase = createClient<Database>(supabaseUrl, supabaseKey);
     this.initAuthState();
   }
 
@@ -281,41 +299,24 @@ export class AuthService {
     }
   }
 
-  private handleAuthChange(event: string, session: Session | null): void {
-    console.log('[AuthService] 处理认证状态变化:', event, session);
+  public handleAuthChange(event: AuthChangeEvent, session: Session | null): void {
+    console.log('[AuthService] Auth state changed:', event, session);
     
-    switch (event) {
-      case 'SIGNED_IN':
-        if (session) {
-          this.setAuthState({ 
-            isAuthenticated: true,
-            lastAuthTime: Date.now(),
-            userId: session.user.id,
-            email: session.user.email || undefined,
-            user: session.user
-          });
-        }
-        break;
-      case 'SIGNED_OUT':
-        this.setAuthState({ 
-          isAuthenticated: false,
-          lastAuthTime: undefined,
-          userId: undefined,
-          email: undefined,
-          user: undefined
-        });
-        break;
-      case 'TOKEN_REFRESHED':
-        if (session) {
-          this.setAuthState({ 
-            isAuthenticated: true,
-            lastAuthTime: Date.now(),
-            userId: session.user.id,
-            email: session.user.email || undefined,
-            user: session.user
-          });
-        }
-        break;
+    if (event === 'SIGNED_IN') {
+      this.enableLoginProtection(); // 启用登录保护
+      this.setAuthState({
+        isAuthenticated: true,
+        session,
+        lastAuthTime: Date.now()
+      });
+      this.markSessionState(true);
+    } else if (event === 'SIGNED_OUT') {
+      this.setAuthState({
+        isAuthenticated: false,
+        session: null,
+        lastAuthTime: Date.now()
+      });
+      this.markSessionState(false);
     }
   }
 
@@ -368,6 +369,47 @@ export class AuthService {
   }
   
   /**
+   * 设置认证状态并通知订阅者
+   */
+  public setAuthState(newState: Partial<AuthState>) {
+    // 如果尝试设置未登录状态但处于保护期内，则忽略此次更新
+    if (this.loginProtectionEnabled && 
+        Date.now() < this.loginProtectionExpiry && 
+        newState.isAuthenticated === false) {
+      console.log('[AuthService] 登录保护期内，忽略未登录状态设置');
+      return;
+    }
+    
+    // 更新内存状态
+    this.memoryAuthState = {
+      ...this.memoryAuthState,
+      ...newState
+    };
+    
+    // 同步到全局memoryAuthState
+    memoryAuthState = { ...this.memoryAuthState };
+    
+    // 只在客户端环境下进行存储操作
+    if (this.isClientSide()) {
+      try {
+        // 使用storage辅助函数存储状态
+        storage.setItem('authState', JSON.stringify(this.memoryAuthState));
+        
+        // 如果设置了认证状态，同时更新持久化存储
+        if (newState.isAuthenticated !== undefined) {
+          this.persistAuthState(newState.isAuthenticated);
+          this.markSessionState(newState.isAuthenticated);
+        }
+      } catch (error) {
+        console.warn('[AuthService] 存储认证状态失败:', error);
+      }
+    }
+    
+    // 通知所有订阅者
+    this.notifySubscribers();
+  }
+
+  /**
    * 持久化认证状态
    */
   private persistAuthState(isAuthenticated: boolean): void {
@@ -375,13 +417,13 @@ export class AuthService {
     
     try {
       if (isAuthenticated) {
-        localStorage.setItem(AUTH_STATE_KEY, JSON.stringify({ 
+        storage.setItem(AUTH_STATE_KEY, JSON.stringify({ 
           isAuthenticated, 
           timestamp: Date.now() 
         }));
         
         // 清除登出标记
-        localStorage.removeItem('force_logged_out');
+        storage.removeItem('force_logged_out');
         
         // 同时设置临时会话标记
         try {
@@ -392,7 +434,7 @@ export class AuthService {
         }
       } else {
         // 清除认证状态
-        localStorage.removeItem(AUTH_STATE_KEY);
+        storage.removeItem(AUTH_STATE_KEY);
         try {
           sessionStorage.removeItem('temp_auth_state');
         } catch (e) {
@@ -402,31 +444,6 @@ export class AuthService {
     } catch (e) {
       console.error('[AuthService] 持久化认证状态出错:', e);
     }
-  }
-
-  /**
-   * 设置认证状态并通知订阅者
-   */
-  private setAuthState(state: Partial<AuthState>): void {
-    console.log('[AuthService] 设置认证状态:', state);
-    
-    // 更新内存状态
-    memoryAuthState = { 
-      ...memoryAuthState, 
-      ...state,
-      lastAuthTime: state.isAuthenticated ? (state.lastAuthTime || Date.now()) : undefined
-    };
-
-    // 同步到localStorage
-    try {
-      localStorage.setItem(AUTH_STATE_KEY, JSON.stringify(memoryAuthState));
-      sessionStorage.setItem(SESSION_STATE_KEY, memoryAuthState.isAuthenticated ? 'true' : 'false');
-    } catch (e) {
-      console.warn('[AuthService] 保存认证状态到存储失败:', e);
-    }
-
-    // 通知订阅者
-    this.notifySubscribers();
   }
 
   /**
@@ -536,31 +553,31 @@ export class AuthService {
    * 刷新会话
    * @returns 是否成功刷新会话
    */
-  async refreshSession(): Promise<boolean> {
+  async refreshSession(): Promise<void> {
     try {
       const { data: { session }, error } = await this.supabase.auth.getSession();
       
       if (error || !session) {
-        console.log('[AuthService] 刷新会话失败:', error?.message || '无会话');
-        this.setAuthState({ 
+        this.setAuthState({
           isAuthenticated: false,
-          lastAuthTime: 0
+          session: null,
+          lastAuthTime: Date.now()
         });
-        return false;
+        return;
       }
-
-      this.setAuthState({ 
+      
+      this.setAuthState({
         isAuthenticated: true,
+        session,
         lastAuthTime: Date.now()
       });
-      return true;
     } catch (error) {
-      console.error('[AuthService] 刷新会话时出错:', error);
-      this.setAuthState({ 
+      console.error('Failed to refresh session:', error);
+      this.setAuthState({
         isAuthenticated: false,
-        lastAuthTime: 0
+        session: null,
+        lastAuthTime: Date.now()
       });
-      return false;
     }
   }
 
@@ -611,9 +628,10 @@ export class AuthService {
       
       if (!sessionData.session) {
         console.log('[AuthService] 没有有效会话，尝试刷新');
-        const refreshed = await this.refreshSession();
-        if (!refreshed) {
-          console.log('[AuthService] 刷新会话失败，尝试备用方法');
+        await this.refreshSession();
+        // 重新检查会话状态
+        if (!this.isAuthenticated()) {
+          console.log('[AuthService] 刷新后仍未认证，尝试备用方法');
           return this.tryRecoverUserInfo();
         }
       }
@@ -627,8 +645,9 @@ export class AuthService {
         // 如果是会话缺失错误，尝试刷新会话后重试
         if (error.message?.includes('Auth session missing')) {
           console.log('[AuthService] 检测到会话缺失错误，尝试刷新会话');
-          const refreshed = await this.refreshSession();
-          if (refreshed) {
+          await this.refreshSession();
+          // 重新检查认证状态
+          if (this.isAuthenticated()) {
             // 重新获取用户信息
             try {
               const { data: retryData } = await this.supabase.auth.getUser();
@@ -768,108 +787,153 @@ export class AuthService {
   }
 
   /**
-   * 强制同步认证状态
-   * 用于解决组件间认证状态不同步的问题
+   * 验证并更新会话状态
+   * @param retryCount 重试次数
    */
-  public forceSyncAuthState(): void {
-    console.log('[AuthService] 强制同步认证状态');
-    
-    // 检查本地存储状态
+  private async validateAndUpdateSession(retryCount = 0): Promise<void> {
     try {
-      const persistedState = localStorage.getItem(AUTH_STATE_KEY);
-      const sessionState = sessionStorage.getItem(SESSION_STATE_KEY);
+      const url = new URL(window.location.href);
+      const hasAuthSession = url.searchParams.has('auth_session');
       
-      if ((persistedState && JSON.parse(persistedState).isAuthenticated) || sessionState === 'true') {
-        // 本地存储显示已登录，但内存状态可能不同步
-        if (!memoryAuthState.isAuthenticated) {
-          console.log('[AuthService] 本地存储显示已登录，但内存状态未同步，正在更新');
-          this.setAuthState({
-            isAuthenticated: true,
-            lastAuthTime: Date.now()
-          });
-        }
-      } else {
-        // 本地存储显示未登录，但内存状态可能仍显示登录
-        if (memoryAuthState.isAuthenticated) {
-          console.log('[AuthService] 本地存储显示未登录，但内存状态仍显示登录，正在更新');
-          this.setAuthState({
-            isAuthenticated: false,
-            lastAuthTime: Date.now()
-          });
+      // 如果是新登录，启用登录保护
+      if (hasAuthSession && retryCount === 0) {
+        this.enableLoginProtection();
+        console.log('[AuthService] 检测到新登录，等待会话建立');
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      }
+
+      const { data: { session }, error } = await this.supabase.auth.getSession();
+      
+      if (error) {
+        console.error('[AuthService] 获取会话出错:', error);
+        if (retryCount < 5) {
+          const delay = Math.min(1000 * (retryCount + 1), 5000);
+          console.log(`[AuthService] 会话检查失败，${delay/1000}秒后重试(${retryCount + 1}/5)`);
+          setTimeout(() => {
+            this.validateAndUpdateSession(retryCount + 1);
+          }, delay);
+          return;
         }
       }
       
-      // 确保状态一致，通知所有订阅者
-      this.notifySubscribers();
-    } catch (e) {
-      console.warn('[AuthService] 强制同步认证状态失败:', e);
+      if (!session) {
+        // 如果处于登录保护期，则忽略无效会话结果
+        if (this.loginProtectionEnabled && Date.now() < this.loginProtectionExpiry) {
+          console.log('[AuthService] 登录保护期内，忽略无效会话结果');
+          // 继续重试，直到保护期结束
+          if (retryCount < 10) {
+            setTimeout(() => {
+              this.validateAndUpdateSession(retryCount + 1);
+            }, 1000);
+          }
+          return;
+        }
+        
+        if (hasAuthSession && retryCount < 5) {
+          const delay = Math.min(1000 * (retryCount + 1), 5000);
+          console.log(`[AuthService] 新会话未就绪，${delay/1000}秒后重试(${retryCount + 1}/5)`);
+          setTimeout(() => {
+            this.validateAndUpdateSession(retryCount + 1);
+          }, delay);
+          return;
+        }
+        
+        // 如果是新登录但始终无法获取会话，保持已登录状态
+        if (hasAuthSession) {
+          console.log('[AuthService] 无法获取新会话，但保持登录状态');
+          return;
+        }
+        
+        console.log('[AuthService] 会话无效，设置未登录状态');
+        this.setAuthState({
+          isAuthenticated: false,
+          lastAuthTime: Date.now()
+        });
+        return;
+      }
+      
+      console.log('[AuthService] 会话有效，设置登录状态');
+      this.setAuthState({
+        isAuthenticated: true,
+        session,
+        lastAuthTime: Date.now()
+      });
+    } catch (error) {
+      console.error('[AuthService] 检查会话状态失败:', error);
+      if (retryCount < 5) {
+        const delay = Math.min(1000 * (retryCount + 1), 5000);
+        setTimeout(() => {
+          this.validateAndUpdateSession(retryCount + 1);
+        }, delay);
+      }
     }
   }
 
   /**
-   * 刷新会话状态
+   * 强制同步认证状态
    */
-  public async refreshSessionStatus(): Promise<boolean> {
-    // 先检查本地存储，确保状态一致
-    this.forceSyncAuthState();
+  public forceSyncAuthState(): void {
+    console.log('[AuthService] 强制同步认证状态');
     
-    // 如果本地存储显示未登录，则无需进行API请求
-    const persistedState = localStorage.getItem(AUTH_STATE_KEY);
-    const sessionState = sessionStorage.getItem(SESSION_STATE_KEY);
-    
-    if (!persistedState && sessionState !== 'true') {
-      console.log('[AuthService] 本地存储显示未登录，跳过会话刷新');
-      return false;
+    if (!this.isClientSide()) {
+      console.log('[AuthService] 服务器端环境，跳过状态同步');
+      return;
     }
     
-    // 继续进行正常的会话刷新流程
     try {
-      // 如果已有刷新请求进行中，返回该请求的结果
-      if (isRefreshingSession && refreshPromise) {
-        console.log('[AuthService] 会话刷新已在进行中，复用现有请求');
-        return refreshPromise;
+      // 检查URL中的auth_session参数
+      const url = new URL(window.location.href);
+      const hasAuthSession = url.searchParams.has('auth_session');
+      
+      if (hasAuthSession) {
+        console.log('[AuthService] 检测到auth_session参数，设置认证状态并启用保护期');
+        this.enableLoginProtection();
+        this.setAuthState({
+          isAuthenticated: true,
+          lastAuthTime: Date.now()
+        });
+        
+        // 延迟处理当前URL中的auth_session参数
+        setTimeout(() => {
+          // 清除URL中的auth_session参数，避免刷新重复处理
+          if (window.history && window.history.replaceState) {
+            const cleanUrl = url.toString().replace(/[\?&]auth_session=[^&]+/, '');
+            window.history.replaceState({}, document.title, cleanUrl);
+            console.log('[AuthService] 已清除URL中的auth_session参数');
+          }
+          
+          // 延迟启动会话验证
+          setTimeout(() => {
+            this.validateAndUpdateSession();
+          }, 2000);
+        }, 1000);
+        
+        return;
       }
       
-      isRefreshingSession = true;
-      refreshPromise = (async () => {
-        try {
-          console.log('[AuthService] 开始刷新会话状态');
-          
-          // 检查本地缓存是否有效
-          if (isAuthCacheValid()) {
-            console.log('[AuthService] 认证缓存有效，跳过API请求');
-            return memoryAuthState.isAuthenticated;
-          }
-          
-          // 通过API检查会话状态
-          const isValid = await this.checkServerSession();
-          console.log(`[AuthService] 服务器会话检查结果: ${isValid ? '有效' : '无效'}`);
-          
-          // 如果会话无效但内存状态仍为已认证，则清除认证状态
-          if (!isValid && memoryAuthState.isAuthenticated) {
-            console.log('[AuthService] 会话无效但内存状态为已认证，清除认证状态');
-            this.clearAuthState();
-            return false;
-          }
-          
-          return isValid;
-        } catch (error) {
-          console.error('[AuthService] 刷新会话状态失败:', error);
-          
-          // 保守策略：出错时不更改当前认证状态
-          return memoryAuthState.isAuthenticated;
-        } finally {
-          isRefreshingSession = false;
-          refreshPromise = null;
-        }
-      })();
+      // 检查本地存储状态
+      const persistedState = storage.getItem(AUTH_STATE_KEY);
+      const sessionState = sessionStorage.getItem('temp_auth_state');
+      const forceLoggedOut = storage.getItem('force_logged_out') === 'true';
+      const isLoggedOut = sessionStorage.getItem('isLoggedOut') === 'true';
       
-      return await refreshPromise;
-    } catch (error) {
-      console.error('[AuthService] 启动会话刷新失败:', error);
-      isRefreshingSession = false;
-      refreshPromise = null;
-      return memoryAuthState.isAuthenticated;
+      // 如果有登出标记，则强制设置未登录状态
+      if (forceLoggedOut || isLoggedOut) {
+        console.log('[AuthService] 检测到登出标记，设置未登录状态');
+        this.setAuthState({
+          isAuthenticated: false,
+          lastAuthTime: Date.now()
+        });
+        return;
+      }
+      
+      // 如果本地存储显示已登录
+      if ((persistedState && JSON.parse(persistedState).isAuthenticated) || sessionState === 'true') {
+        console.log('[AuthService] 本地存储显示已登录，同步状态');
+        this.validateAndUpdateSession();
+      }
+    } catch (e) {
+      console.warn('[AuthService] 强制同步认证状态失败:', e);
     }
   }
 
@@ -899,6 +963,27 @@ export class AuthService {
     } catch (error) {
       console.error('[AuthService] 检查服务器会话时出错:', error);
       return false;
+    }
+  }
+
+  async checkSession(): Promise<boolean> {
+    await this.refreshSession();
+    return this.isAuthenticated();
+  }
+
+  private enableLoginProtection() {
+    this.loginProtectionEnabled = true;
+    this.loginProtectionExpiry = Date.now() + this.LOGIN_PROTECTION_DURATION;
+    console.log(`[AuthService] 已启用登录保护期，持续15秒，到期时间: ${new Date(this.loginProtectionExpiry).toISOString()}`);
+  }
+
+  private markSessionState(isAuthenticated: boolean) {
+    try {
+      const timestamp = Date.now();
+      localStorage.setItem('last_auth_state', isAuthenticated ? 'true' : 'false');
+      localStorage.setItem('last_auth_time', timestamp.toString());
+    } catch (e) {
+      console.warn('[AuthService] 无法写入会话状态标记', e);
     }
   }
 }
