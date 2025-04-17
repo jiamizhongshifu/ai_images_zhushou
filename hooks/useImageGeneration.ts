@@ -578,23 +578,6 @@ export default function useImageGeneration(
       console.warn('[useImageGeneration] 会话刷新失败，但继续生成流程:', e);
     }
     
-    // 尝试清除可能存在的登出标记
-    try {
-      if (typeof localStorage !== 'undefined') {
-        localStorage.removeItem('force_logged_out');
-        localStorage.removeItem('logged_out');
-      }
-      if (typeof sessionStorage !== 'undefined') {
-        sessionStorage.removeItem('isLoggedOut');
-      }
-      if (typeof document !== 'undefined') {
-        document.cookie = 'force_logged_out=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
-        document.cookie = 'logged_out=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
-      }
-    } catch (e) {
-      console.warn('[useImageGeneration] 清除登出标记失败:', e);
-    }
-    
     // 检查用户是否已验证 - 使用authService直接验证
     const authState = authService.getAuthState();
     if (!authState?.isAuthenticated) {
@@ -613,69 +596,6 @@ export default function useImageGeneration(
 
     // 生成请求ID，用于防止重复提交
     const requestId = uuidv4();
-    // 使用sessionStorage存储最近的请求ID和时间戳
-    try {
-      if (typeof sessionStorage !== 'undefined') {
-        const lastRequestData = sessionStorage.getItem('last_image_request');
-        if (lastRequestData) {
-          const lastRequest = JSON.parse(lastRequestData);
-          const timeSinceLastRequest = Date.now() - lastRequest.timestamp;
-          
-          // 如果5秒内有相同参数的请求，阻止重复提交
-          if (timeSinceLastRequest < 5000 && isSameRequest(lastRequest.params, options)) {
-            logger.warn(`[任务重复] 检测到5秒内重复提交，拒绝新请求`);
-            console.log(`[任务重复] 检测到5秒内重复提交，拒绝新请求，间隔: ${timeSinceLastRequest}ms`);
-            toast("请勿频繁提交相同请求", { icon: '⚠️' });
-            return null;
-          }
-        }
-        
-        // 记录当前请求
-        sessionStorage.setItem('last_image_request', JSON.stringify({
-          id: requestId,
-          timestamp: Date.now(),
-          params: options
-        }));
-      }
-    } catch (e) {
-      console.warn('[useImageGeneration] 检查或记录最近请求失败:', e);
-    }
-
-    // 检查是否有重复任务
-    const tasks = getAllPendingTasks();
-    if (tasks.length > 0 && !options.forced) {
-      const duplicateTask = tasks.find(task => {
-        return isSameRequest(task.params, options);
-      });
-
-      if (duplicateTask) {
-        logger.warn(`[任务重复] 发现重复任务，当前已有${tasks.length}个活跃任务`);
-        console.log(`[任务重复] 检测到重复参数：${JSON.stringify(options)}, 当前已有${tasks.length}个任务`);
-        toast("相似任务正在处理中", { icon: '⚠️' });
-        return null;
-      }
-    }
-
-    // 检查提交频率
-    if (!options.forced && lastSubmitTimeRef.current) {
-      const now = Date.now();
-      const diff = now - lastSubmitTimeRef.current;
-      if (diff < 2000) { // 2秒内不能重复提交，改为2秒，更严格的控制
-        logger.warn(`[任务重复] 提交过于频繁，间隔 ${diff}ms`);
-        console.log(`[任务重复] 提交过于频繁：上次 ${lastSubmitTimeRef.current}, 当前 ${now}, 间隔 ${diff}ms`);
-        toast("请勿频繁提交", { icon: '⚠️' });
-        return null;
-      }
-    }
-    
-    // 检查提交时间间隔 
-    const now = Date.now();
-    if (now - lastSubmitTimeRef.current < SUBMIT_LOCK_TIMEOUT) {
-      console.log('[useImageGeneration] 提交过于频繁，拒绝请求');
-      console.log(`[useImageGeneration] 上次提交时间: ${new Date(lastSubmitTimeRef.current).toISOString()}, 当前时间: ${new Date(now).toISOString()}`);
-      notify(`操作太频繁，请等待${Math.ceil(SUBMIT_LOCK_TIMEOUT/1000)}秒后再试`, 'info');
-      return null;
-    }
     
     // 验证参数
     if (!prompt.trim() && !image && (!style || style === '自定义')) {
@@ -687,42 +607,7 @@ export default function useImageGeneration(
     // 所有条件检查通过后，才设置提交锁定
     console.log('[useImageGeneration] 所有检查通过，设置提交锁定');
     TaskSyncManager.setSubmitLock();
-    lastSubmitTimeRef.current = now;
-    
-    // 检查是否有未完成的相同任务
-    const pendingTask = checkPendingTask();
-    if (pendingTask && isSameRequest(pendingTask, options)) {
-      console.log(`[useImageGeneration] 检测到未完成的相同任务: ${pendingTask.taskId}`);
-      notify("继续处理之前的相同请求...", 'info');
-      
-      // 更新时间戳
-      lastSubmitTimeRef.current = now;
-      
-      // 更新状态
-      setError(null);
-      setIsGenerating(true);
-      setStatus('generating' as GenerationStatus);
-      setCurrentTaskId(pendingTask.taskId);
-      startTimeRef.current = pendingTask.timestamp;
-      
-      // 基于等待时间更新进度
-      const waitTime = Math.floor((Date.now() - pendingTask.timestamp) / 1000);
-      const [stage, percentage] = calculateStageFromWaitTime(waitTime);
-      updateGenerationStage(stage, percentage);
-      
-      // 开始恢复轮询
-      startEnhancedPollingTaskStatus(pendingTask.taskId);
-      
-      // 记录到跨标签页同步管理器
-      TaskSyncManager.recordTask({
-        taskId: pendingTask.taskId,
-        timestamp: Date.now(),
-        status: 'processing',
-        params: options
-      });
-      
-      return { taskId: pendingTask.taskId };
-    }
+    lastSubmitTimeRef.current = Date.now();
     
     // 开始新的任务生成流程
     setError(null);
@@ -738,10 +623,8 @@ export default function useImageGeneration(
       await new Promise(resolve => setTimeout(resolve, 500));
       updateGenerationStage('configuring', 10);
       
-      // 使用配置文件中的辅助函数生成完整提示词
-      const fullPrompt = style ? 
-        generatePromptWithStyle(style, prompt.trim()) : 
-        prompt.trim();
+      // 使用原始提示词，不在这里添加风格和比例信息
+      const basePrompt = prompt.trim();
       
       // 检查并压缩图片
       let processedImage = image;
@@ -765,41 +648,18 @@ export default function useImageGeneration(
               }
             }
 
-            // 第一步：如果尺寸过大，先调整分辨率
-            const img = new Image();
-            await new Promise((resolve, reject) => {
-              img.onload = resolve;
-              img.onerror = reject;
-              img.src = image;
-            });
-
-            let finalMaxWidth = MAX_IMAGE_WIDTH;
-            let finalMaxHeight = MAX_IMAGE_HEIGHT;
-            
-            // 如果图片尺寸超过限制，按比例缩小
-            if (img.width > MAX_IMAGE_WIDTH || img.height > MAX_IMAGE_HEIGHT) {
-              const ratio = Math.min(MAX_IMAGE_WIDTH / img.width, MAX_IMAGE_HEIGHT / img.height);
-              finalMaxWidth = Math.round(img.width * ratio);
-              finalMaxHeight = Math.round(img.height * ratio);
-            }
-
             // 压缩图片
             processedImage = await compressImage(
               image,
               {
-                maxWidth: finalMaxWidth,
-                maxHeight: finalMaxHeight,
+                maxWidth: MAX_IMAGE_WIDTH,
+                maxHeight: MAX_IMAGE_HEIGHT,
                 quality: targetQuality
               }
             );
             
             const newSize = estimateBase64Size(processedImage);
             console.log(`[useImageGeneration] 压缩完成，新大小: ~${newSize}KB (压缩率: ${(newSize/estimatedSize*100).toFixed(1)}%)`);
-            
-            // 如果压缩后仍然超过限制，但已经是最低质量，继续使用
-            if (newSize > MAX_IMAGE_SIZE_KB) {
-              console.warn(`[useImageGeneration] 警告：压缩后仍超过${MAX_IMAGE_SIZE_KB}KB，但将继续处理`);
-            }
           } catch (compressError) {
             console.error('[useImageGeneration] 图片压缩失败:', compressError);
             throw new Error('图片处理失败，请重试或选择其他图片');
@@ -809,17 +669,17 @@ export default function useImageGeneration(
       
       // 准备API请求数据
       const requestData = {
-        prompt: fullPrompt,
+        prompt: basePrompt,
         image: processedImage || undefined,
         style: style !== "自定义" ? style : undefined,
         aspectRatio,
         standardRatio: standardAspectRatio,
-        requestId // 添加请求ID到请求数据，服务器端可以用它来防止重复处理
+        requestId
       };
       
-      // 更详细的日志，包括完整的图片信息
+      // 更详细的日志
       console.log('[useImageGeneration] 开始生成图片，参数详情:');
-      console.log(`- 提示词: ${fullPrompt.length > 100 ? fullPrompt.substring(0, 100) + '...' : fullPrompt}`);
+      console.log(`- 提示词: ${basePrompt.length > 100 ? basePrompt.substring(0, 100) + '...' : basePrompt}`);
       console.log(`- 风格: ${requestData.style || '(自定义)'}`);
       console.log(`- 比例: ${aspectRatio || '(默认)'} / 标准比例: ${standardAspectRatio || '(默认)'}`);
       console.log(`- 请求ID: ${requestId}`);
@@ -854,7 +714,7 @@ export default function useImageGeneration(
               'X-Request-Id': requestId
             },
             body: JSON.stringify({ 
-              prompt: fullPrompt,
+              prompt: basePrompt,
               image: processedImage,
               style,
               aspectRatio,
