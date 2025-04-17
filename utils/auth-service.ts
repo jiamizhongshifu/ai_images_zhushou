@@ -5,6 +5,13 @@
 import { createClient, SupabaseClient, Session, User, AuthChangeEvent } from '@supabase/supabase-js'
 import { Database } from '../types/supabase'
 import { supabaseClient } from './supabase-client'
+import {
+  validateSessionWithRetry,
+  getCachedSession,
+  invalidateSessionCache,
+  saveAuthStateForRecovery,
+  clearAuthRecoveryState
+} from './session-validator'
 
 // 认证状态类型定义
 export interface AuthState {
@@ -16,6 +23,7 @@ export interface AuthState {
   email?: string;
   user?: User | null;
   session?: Session | null;
+  sessionProtectionEndTime?: number;
 }
 
 // 存储类型枚举
@@ -550,35 +558,37 @@ export class AuthService implements AuthServiceInterface {
   }
 
   /**
-   * 刷新会话
-   * @returns 是否成功刷新会话
+   * 刷新会话状态
    */
   async refreshSession(): Promise<void> {
     try {
-      const { data: { session }, error } = await this.supabase.auth.getSession();
-      
-      if (error || !session) {
-        this.setAuthState({
-          isAuthenticated: false,
-          session: null,
-          lastAuthTime: Date.now()
-        });
-        return;
-      }
+      const isValid = await validateSessionWithRetry(
+        () => this.getSession()
+      );
       
       this.setAuthState({
-        isAuthenticated: true,
-        session,
+        isAuthenticated: isValid,
         lastAuthTime: Date.now()
       });
+      
+      if (!isValid) {
+        console.warn('[AuthService] 会话验证失败，设置未登录状态');
+      }
     } catch (error) {
-      console.error('Failed to refresh session:', error);
+      console.error('[AuthService] 刷新会话失败:', error);
       this.setAuthState({
         isAuthenticated: false,
-        session: null,
         lastAuthTime: Date.now()
       });
     }
+  }
+
+  /**
+   * 强制刷新会话（跳过缓存）
+   */
+  async forceRefreshSession(): Promise<void> {
+    invalidateSessionCache();
+    await this.refreshSession();
   }
 
   /**

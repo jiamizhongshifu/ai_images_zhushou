@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { cacheService, CACHE_PREFIXES } from '@/utils/cache-service';
 import { toast } from 'sonner';
 import { throttle } from '@/lib/utils';
+import { authService } from '@/utils/auth-service';
 
 // 缓存键和过期时间
 const HISTORY_CACHE_KEY = CACHE_PREFIXES.HISTORY + ':recent';
@@ -61,6 +62,39 @@ export interface UseImageHistoryResult {
   hasMore: boolean; // 新增是否有更多数据
   batchSize: number; // 新增批次大小
 }
+
+// 本地历史记录项接口
+interface LocalHistoryItem {
+  id: string;
+  imageUrl: string;
+  timestamp: number;
+  pendingSync: boolean;
+}
+
+// 同步单个历史记录项
+const syncHistoryItem = async (item: LocalHistoryItem): Promise<void> => {
+  try {
+    // 调用API同步历史记录
+    const response = await fetch('/api/history/sync', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        taskId: item.id,
+        imageUrl: item.imageUrl,
+        timestamp: item.timestamp
+      })
+    });
+    
+    if (!response.ok) {
+      throw new Error(`同步失败: ${response.statusText}`);
+    }
+  } catch (error) {
+    console.error(`[useImageHistory] 同步历史记录${item.id}失败:`, error);
+    throw error;
+  }
+};
 
 /**
  * 自定义Hook用于获取和管理图片历史记录
@@ -598,6 +632,58 @@ export default function useImageHistory(initialBatchSize = DEFAULT_BATCH_SIZE): 
       isMounted.current = false;
     };
   }, [throttledFetchHistory]);
+
+  // 同步本地历史记录
+  const syncLocalHistory = async (forceRefresh?: boolean) => {
+    try {
+      const localHistory = JSON.parse(localStorage.getItem('local_task_history') || '[]') as LocalHistoryItem[];
+      const pendingItems = localHistory.filter(item => item.pendingSync);
+      
+      if (pendingItems.length === 0) return;
+      
+      console.log(`[useImageHistory] 发现${pendingItems.length}条待同步的本地历史记录`);
+      
+      // 检查认证状态
+      const session = await authService.getSession();
+      if (!session) {
+        console.log('[useImageHistory] 未登录，稍后再尝试同步本地历史');
+        return;
+      }
+      
+      // 同步每一条记录
+      for (const item of pendingItems) {
+        try {
+          await syncHistoryItem(item);
+          
+          // 标记为已同步
+          item.pendingSync = false;
+          console.log(`[useImageHistory] 历史记录 ${item.id} 同步成功`);
+        } catch (error) {
+          console.error(`[useImageHistory] 同步历史记录 ${item.id} 失败:`, error);
+        }
+      }
+      
+      // 保存更新后的本地历史
+      localStorage.setItem('local_task_history', JSON.stringify(localHistory));
+      console.log('[useImageHistory] 本地历史同步完成');
+      
+      // 如果需要强制刷新，则重新获取历史记录
+      if (forceRefresh) {
+        console.log('[useImageHistory] 强制刷新历史记录');
+        throttledFetchHistory(true, false);
+      }
+    } catch (error) {
+      console.error('[useImageHistory] 同步本地历史出错:', error);
+    }
+  };
+
+  // 在组件初始化和认证状态变化时尝试同步
+  useEffect(() => {
+    const isAuthenticated = !!authService.getSession();
+    if (isAuthenticated) {
+      syncLocalHistory();
+    }
+  }, []);
 
   return {
     images,

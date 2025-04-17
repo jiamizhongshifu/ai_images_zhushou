@@ -14,6 +14,7 @@ import LogoutHandler from "@/components/layout/logout-handler";
 import { Suspense } from 'react';
 import { UserStateProvider } from '@/app/components/providers/user-state-provider';
 import type { Metadata } from "next";
+import { SessionRecovery } from './_components/session-recovery';
 
 const defaultUrl = process.env.VERCEL_URL
   ? `https://${process.env.VERCEL_URL}`
@@ -116,6 +117,7 @@ export default function RootLayout({
             </UserStateProvider>
           </ToastProvider>
         </ThemeProvider>
+        <SessionRecovery />
       </body>
     </html>
   );
