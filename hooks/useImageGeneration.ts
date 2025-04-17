@@ -52,7 +52,7 @@ const HISTORY_CACHE_KEY = CACHE_PREFIXES.HISTORY + ':recent';
 // 添加常量配置
 const SUBMIT_LOCK_TIMEOUT = 5000; // 5秒内不允许重复提交
 
-export type GenerationStatus = 'idle' | 'loading' | 'success' | 'error';
+export type GenerationStatus = 'idle' | 'generating' | 'success' | 'error';
 
 export interface GenerationOptions {
   prompt: string;
@@ -176,11 +176,23 @@ export default function useImageGeneration(
   };
 
   // 更新生成阶段
-  const updateGenerationStage = (stage: GenerationStage, percentage: number) => {
+  const updateGenerationStage = useCallback((stage: GenerationStage, percentage: number) => {
     setGenerationStage(stage);
     setGenerationPercentage(percentage);
-    console.log(`[useImageGeneration] 生成阶段: ${stage}, 进度: ${percentage}%`);
-  };
+    
+    // 同时更新本地存储中的任务状态
+    if (currentTaskId) {
+      const task = getPendingTask(currentTaskId);
+      if (task) {
+        savePendingTask({
+          ...task,
+          status: stage as TaskStatus,
+          progress: percentage,
+          lastUpdated: Date.now()
+        });
+      }
+    }
+  }, [currentTaskId]);
 
   // 基于等待时间动态计算显示的阶段和进度
   const calculateStageFromWaitTime = (waitTime: number): [GenerationStage, number] => {
@@ -495,6 +507,60 @@ export default function useImageGeneration(
     return () => clearTimeout(timer);
   }, [t]);
 
+  // 添加初始化时的任务状态检查
+  useEffect(() => {
+    const checkAndRestoreTask = () => {
+      const pendingTask = checkPendingTask();
+      if (pendingTask && shouldRecoverTask(pendingTask)) {
+        console.log(`[useImageGeneration] 检测到未完成的任务: ${pendingTask.taskId}, 状态: ${pendingTask.status}`);
+        
+        // 恢复任务状态
+        setCurrentTaskId(pendingTask.taskId);
+        setIsGenerating(true);
+        setStatus('generating' as GenerationStatus);
+        
+        // 根据任务状态设置生成阶段和进度
+        let stage: GenerationStage = 'preparing';
+        let progress = 5;
+        
+        switch (pendingTask.status) {
+          case 'processing':
+            stage = 'processing';
+            progress = 60;
+            break;
+          case 'pending':
+            stage = 'queuing';
+            progress = 25;
+            break;
+          case 'created':
+            stage = 'preparing';
+            progress = 5;
+            break;
+          case 'recovering':
+            stage = 'processing';
+            progress = 40;
+            break;
+          default:
+            stage = 'preparing';
+            progress = 5;
+        }
+
+        // 如果任务有自己的进度信息，使用任务的进度
+        if (typeof pendingTask.progress === 'number') {
+          progress = pendingTask.progress;
+        }
+        
+        updateGenerationStage(stage, progress);
+        
+        // 开始轮询任务状态
+        startEnhancedPollingTaskStatus(pendingTask.taskId);
+      }
+    };
+
+    // 页面加载时立即检查
+    checkAndRestoreTask();
+  }, []);
+
   // 生成图片 - 调用异步API
   const generateImage = useCallback(async (options: GenerationOptions): Promise<{taskId: string} | null> => {
     const { prompt, image, style, aspectRatio, standardAspectRatio } = options;
@@ -635,7 +701,7 @@ export default function useImageGeneration(
       // 更新状态
       setError(null);
       setIsGenerating(true);
-      setStatus('loading');
+      setStatus('generating' as GenerationStatus);
       setCurrentTaskId(pendingTask.taskId);
       startTimeRef.current = pendingTask.timestamp;
       
@@ -661,7 +727,7 @@ export default function useImageGeneration(
     // 开始新的任务生成流程
     setError(null);
     setIsGenerating(true);
-    setStatus('loading');
+    setStatus('generating' as GenerationStatus);
     startTimeRef.current = Date.now();
     
     // 重置进度状态

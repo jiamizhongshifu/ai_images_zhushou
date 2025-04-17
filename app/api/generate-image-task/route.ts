@@ -1195,7 +1195,7 @@ export async function POST(request: NextRequest) {
           // 2. 从头构建提示词，不依赖原始输入，避免重复风格
           finalPrompt = "生成图像";
           
-          // 3. 只添加一次风格名称
+          // 3. 只添加一次风格名称，不添加额外描述
           if (styleName) {
             finalPrompt += `，${styleName}风格`;
           }
@@ -1213,18 +1213,16 @@ export async function POST(request: NextRequest) {
               finalPrompt += "，保持正方形比例";
             }
           }
-          
+
           // 5. 如果用户有其他非风格的提示内容，添加到末尾
           if (promptText && !promptText.includes("生成图像") && 
              (!styleName || !promptText.toLowerCase().includes(styleName.toLowerCase()))) {
-            // 移除可能的风格名称避免重复 (包括错误拼写)
             let cleanPrompt = promptText;
-            if (style === "吉普力") {
-              cleanPrompt = cleanPrompt.replace(/吉普力风格/g, "").replace(/吉普力/g, "");
-              cleanPrompt = cleanPrompt.replace(/吉卜力风格/g, "").replace(/吉卜力/g, "");
-            } else if (style) {
-              cleanPrompt = cleanPrompt.replace(new RegExp(`${style}风格`, 'g'), "");
-              cleanPrompt = cleanPrompt.replace(new RegExp(`${style}`, 'g'), "");
+            
+            // 移除可能的风格名称避免重复
+            if (styleName) {
+              cleanPrompt = cleanPrompt.replace(new RegExp(`${styleName}风格`, 'g'), "")
+                                     .replace(new RegExp(`${styleName}`, 'g'), "");
             }
             
             // 清理多余逗号和空白

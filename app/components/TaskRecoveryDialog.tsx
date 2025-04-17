@@ -11,7 +11,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Clock, RefreshCw, AlertCircle } from "lucide-react";
-import { PendingTask, TaskStatus } from "@/utils/taskRecovery";
+import { PendingTask, TaskStatus, shouldRecoverTask } from "@/utils/taskRecovery";
 
 interface TaskRecoveryDialogProps {
   onRecover: (task: PendingTask) => Promise<void> | void;
@@ -38,15 +38,20 @@ export default function TaskRecoveryDialog({
         if (!tasks || tasks.length === 0) return;
         
         // 查找最近的任务
-        const latestTask = tasks.sort((a, b) => b.timestamp - a.timestamp)[0];
+        const latestTask = tasks
+          .filter(task => shouldRecoverTask(task)) // 使用shouldRecoverTask函数过滤
+          .sort((a, b) => b.timestamp - a.timestamp)[0];
         
-        // 检查任务是否不太旧（24小时内）
-        if (Date.now() - latestTask.timestamp < 24 * 60 * 60 * 1000) {
+        // 如果找到需要恢复的任务，显示对话框
+        if (latestTask) {
+          console.log(`[TaskRecoveryDialog] 发现需要恢复的任务: ${latestTask.taskId}`);
           setPendingTask(latestTask);
           setOpen(true);
+        } else {
+          console.log('[TaskRecoveryDialog] 没有需要恢复的任务');
         }
       } catch (error) {
-        console.error('检查未完成任务出错:', error);
+        console.error('[TaskRecoveryDialog] 检查未完成任务出错:', error);
       }
     };
     

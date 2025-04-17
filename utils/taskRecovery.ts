@@ -37,6 +37,7 @@ export interface PendingTask {
   error?: string;
   errorMessage?: string;
   auto_recovering?: boolean; // 标记任务是否正在自动恢复中
+  progress?: number; // 任务进度，0-100
 }
 
 /**
@@ -153,17 +154,50 @@ export function isTaskActive(task: PendingTask): boolean {
  * 增强的任务恢复检查
  */
 export function shouldRecoverTask(task: PendingTask): boolean {
-  // 只有pending或processing状态的任务才应该被恢复
-  if (!['pending', 'processing', 'created'].includes(task.status)) {
+  // 检查任务状态
+  if (!task) {
+    console.log('[任务恢复] 任务对象为空');
+    return false;
+  }
+
+  // 检查任务是否已完成
+  if (task.status === 'completed' || task.status === 'failed' || task.status === 'cancelled') {
+    console.log(`[任务恢复] 任务 ${task.taskId} 已完成/失败/取消，无需恢复`);
     return false;
   }
   
-  // 任务不应该太旧
+  // 检查任务是否正在恢复中
+  if (task.auto_recovering) {
+    console.log(`[任务恢复] 任务 ${task.taskId} 正在自动恢复中，跳过手动恢复`);
+    return false;
+  }
+  
+  // 检查任务状态是否需要恢复
+  const recoverableStates = ['pending', 'processing', 'created'];
+  if (!recoverableStates.includes(task.status)) {
+    console.log(`[任务恢复] 任务 ${task.taskId} 状态 ${task.status} 不需要恢复`);
+    return false;
+  }
+  
+  // 检查任务是否过期
   const taskAge = Date.now() - task.timestamp;
-  if (taskAge > 12 * 60 * 60 * 1000) { // 12小时
+  const maxAge = 12 * 60 * 60 * 1000; // 12小时
+  if (taskAge > maxAge) {
+    console.log(`[任务恢复] 任务 ${task.taskId} 已过期 (${taskAge}ms > ${maxAge}ms)`);
     return false;
   }
   
+  // 检查最后更新时间
+  if (task.lastUpdated) {
+    const timeSinceUpdate = Date.now() - task.lastUpdated;
+    const maxUpdateAge = 5 * 60 * 1000; // 5分钟
+    if (timeSinceUpdate < maxUpdateAge) {
+      console.log(`[任务恢复] 任务 ${task.taskId} 最近有更新 (${timeSinceUpdate}ms < ${maxUpdateAge}ms)，暂不恢复`);
+      return false;
+    }
+  }
+  
+  console.log(`[任务恢复] 任务 ${task.taskId} 需要恢复，当前状态: ${task.status}`);
   return true;
 }
 
@@ -285,10 +319,7 @@ function createImageFingerprint(imageBase64: string | null | undefined): string 
  * 增强版 - 判断两个请求是否相同
  * 考虑更多因素进行精确匹配
  */
-export function isSameRequest(
-  taskOrParams: any, 
-  newParams: any
-): boolean {
+export function isSameRequest(taskOrParams: any, newParams: any): boolean {
   // 获取参数对象，无论是从任务中还是直接参数
   const oldParams = taskOrParams.params || taskOrParams;
   
@@ -307,4 +338,4 @@ export function isSameRequest(
   
   // 至少有一个不同才返回false
   return isSamePrompt && isSameStyle && isSameRatio && isSameImageState;
-} 
+}

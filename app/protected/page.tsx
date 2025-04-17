@@ -286,12 +286,29 @@ export default function ProtectedPage() {
   // 处理任务恢复
   const handleTaskRecover = async (task: PendingTask) => {
     try {
+      // 重置错误状态
+      setError("");
+      
       // 设置当前任务ID，以便TaskStatusListener可以处理
       setCurrentTaskId(task.taskId);
+      
+      // 如果有提示词，设置到输入框
+      if (task.params?.prompt) {
+        setPrompt(task.params.prompt);
+      }
+      
+      // 如果有风格，设置选中的风格
+      if (task.params?.style) {
+        setActiveStyle(task.params.style);
+      }
+      
+      // 恢复任务
       await recoverTask(task.taskId);
     } catch (error) {
       console.error("恢复任务失败:", error);
       showNotification("恢复任务失败", "error");
+      // 恢复失败时重置状态
+      setCurrentTaskId(null);
     }
   };
 
