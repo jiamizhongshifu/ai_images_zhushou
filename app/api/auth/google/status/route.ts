@@ -56,7 +56,4 @@ export async function POST(request: NextRequest) {
       error: '服务器处理错误' 
     }, { status: 500 });
   }
-}
-
-// 导出状态存储以供其他路由使用
-export { pendingAuths }; 
+} 
