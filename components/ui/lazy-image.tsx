@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, ImgHTMLAttributes } from 'react';
+import React, { useState, useEffect, useRef, ImgHTMLAttributes, useCallback } from 'react';
 import { Loader2, ImageIcon } from 'lucide-react';
 
 // 全局预加载队列管理
@@ -8,11 +8,27 @@ const PreloadManager = {
   maxConcurrent: 5,
   abortControllers: new Map<string, AbortController>(),
   
-  // 添加到预加载队列
-  add(url: string): void {
+  add(url: string, priority = false): void {
     if (!url || this.queue.includes(url) || this.inProgress.has(url)) return;
-    this.queue.push(url);
-    this.processQueue();
+    
+    // 高优先级图片添加到队列头部
+    if (priority) {
+      this.queue.unshift(url);
+    } else {
+      this.queue.push(url);
+    }
+    
+    // 如果是高优先级且当前加载数未达到上限，立即开始加载
+    if (priority && this.inProgress.size < this.maxConcurrent) {
+      this.processQueue();
+    }
+    
+    // 使用 requestIdleCallback 在空闲时处理队列
+    if (typeof window !== 'undefined' && 'requestIdleCallback' in window) {
+      (window as any).requestIdleCallback(() => this.processQueue());
+    } else {
+      setTimeout(() => this.processQueue(), 0);
+    }
   },
   
   // 处理队列
@@ -27,25 +43,59 @@ const PreloadManager = {
   
   // 预加载图片
   preloadImage(url: string): void {
+    // 检查黑名单
+    if (ImageBlacklist.has(url)) {
+      console.log(`[PreloadManager] 跳过已知失败的图片: ${url}`);
+      return;
+    }
+    
     this.inProgress.add(url);
     
     const controller = new AbortController();
     this.abortControllers.set(url, controller);
     
+    // 添加超时处理
+    const timeoutId = setTimeout(() => {
+      console.warn(`[PreloadManager] 图片加载超时: ${url}`);
+      controller.abort();
+      this.abortControllers.delete(url);
+      this.inProgress.delete(url);
+      this.processQueue();
+    }, 30000); // 30秒超时
+    
     const img = new Image();
     img.src = url;
     
     const handleComplete = () => {
+      clearTimeout(timeoutId);
       this.inProgress.delete(url);
       this.abortControllers.delete(url);
       this.processQueue();
+      
+      // 添加到缓存
+      if (img.complete && !img.onerror) {
+        ImageCache.add(url, {
+          width: img.naturalWidth,
+          height: img.naturalHeight
+        });
+      }
+    };
+    
+    const handleError = () => {
+      clearTimeout(timeoutId);
+      handleComplete();
+      
+      // 检查是否为403错误，如果是则直接加入黑名单
+      if (url.includes('openai.com')) {
+        ImageBlacklist.add(url);
+        console.warn(`[PreloadManager] OpenAI图片加载失败，已加入黑名单: ${url}`);
+      }
     };
     
     img.onload = handleComplete;
-    img.onerror = handleComplete;
+    img.onerror = handleError;
   },
   
-  // 清理指定URL的预加载
   abort(url: string): void {
     const controller = this.abortControllers.get(url);
     if (controller) {
@@ -56,7 +106,6 @@ const PreloadManager = {
     this.inProgress.delete(url);
   },
   
-  // 清理所有预加载
   abortAll(): void {
     this.abortControllers.forEach(controller => controller.abort());
     this.abortControllers.clear();
@@ -116,8 +165,16 @@ class LRUCache<K, V> {
 }
 
 // 图片缓存管理 - 使用LRU缓存
-const ImageCache = {
-  cache: new LRUCache<string, {loaded: boolean, timestamp: number}>(100), // 最多缓存100张图片
+export interface ImageCacheEntry {
+  loaded: boolean;
+  timestamp: number;
+  width?: number;
+  height?: number;
+  error?: boolean;
+}
+
+export const ImageCache = {
+  cache: new LRUCache<string, ImageCacheEntry>(100),
   maxAge: 30 * 60 * 1000, // 缓存30分钟
   
   has(url: string): boolean {
@@ -130,11 +187,19 @@ const ImageCache = {
       return false;
     }
     
-    return entry.loaded;
+    return entry.loaded && !entry.error;
   },
   
-  add(url: string): void {
-    this.cache.put(url, {loaded: true, timestamp: Date.now()});
+  add(url: string, metadata?: Partial<ImageCacheEntry>): void {
+    this.cache.put(url, {
+      loaded: true,
+      timestamp: Date.now(),
+      ...metadata
+    });
+  },
+  
+  getMetadata(url: string): ImageCacheEntry | undefined {
+    return this.cache.get(url);
   },
   
   remove(url: string): void {
@@ -148,6 +213,7 @@ const ImageCache = {
 
 // 如果在浏览器环境，设置定期清理缓存
 if (typeof window !== 'undefined') {
+  // 每5分钟清理过期缓存
   setInterval(() => {
     const now = Date.now();
     const urls = ImageCache.cache.getKeys();
@@ -158,6 +224,49 @@ if (typeof window !== 'undefined') {
       }
     });
   }, 5 * 60 * 1000);
+  
+  // 页面卸载时清理所有预加载任务
+  window.addEventListener('beforeunload', () => {
+    PreloadManager.abortAll();
+  });
+  
+  // 页面隐藏时暂停预加载
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      PreloadManager.abortAll();
+    }
+  });
+  
+  // 网络状态变化时调整预加载策略
+  window.addEventListener('online', () => {
+    PreloadManager.maxConcurrent = 5;
+  });
+  
+  window.addEventListener('offline', () => {
+    PreloadManager.maxConcurrent = 1;
+  });
+}
+
+// 使用 Intersection Observer Hook
+function useIntersectionObserver<T extends Element>(
+  elementRef: React.RefObject<T | null>,
+  callback: () => void,
+  options = {}
+) {
+  useEffect(() => {
+    if (!elementRef.current) return;
+    
+    const observer = new IntersectionObserver(([entry]) => {
+      if (entry.isIntersecting) {
+        callback();
+        observer.disconnect();
+      }
+    }, options);
+    
+    observer.observe(elementRef.current);
+    
+    return () => observer.disconnect();
+  }, [elementRef, callback, options]);
 }
 
 interface LazyImageProps extends Omit<ImgHTMLAttributes<HTMLImageElement>, 'onLoad' | 'onError'> {
@@ -173,10 +282,75 @@ interface LazyImageProps extends Omit<ImgHTMLAttributes<HTMLImageElement>, 'onLo
   onImageError?: () => void;
   blurEffect?: boolean;
   fadeIn?: boolean;
-  priority?: boolean; // 高优先级图片，立即加载
-  retryCount?: number; // 加载失败重试次数
-  retryDelay?: number; // 重试延迟(毫秒)
+  priority?: boolean;
+  retryCount?: number;
+  retryDelay?: number;
+  observerOptions?: IntersectionObserverInit;
 }
+
+// 图片黑名单管理器
+export const ImageBlacklist = {
+  key: 'image_blacklist',
+  timeout: 24 * 60 * 60 * 1000, // 24小时后重试
+  
+  getList(): Set<string> {
+    if (typeof window === 'undefined') return new Set();
+    
+    try {
+      const data = localStorage.getItem(this.key);
+      if (!data) return new Set();
+      
+      const items = JSON.parse(data) as Array<{url: string; timestamp: number}>;
+      const now = Date.now();
+      
+      // 清理过期项
+      const validItems = items.filter(item => now - item.timestamp < this.timeout);
+      if (validItems.length !== items.length) {
+        this.saveList(new Set(validItems.map(item => item.url)));
+      }
+      
+      return new Set(validItems.map(item => item.url));
+    } catch (e) {
+      console.error('[ImageBlacklist] 读取黑名单失败:', e);
+      return new Set();
+    }
+  },
+  
+  saveList(urls: Set<string>): void {
+    if (typeof window === 'undefined') return;
+    
+    try {
+      const items = Array.from(urls).map(url => ({
+        url,
+        timestamp: Date.now()
+      }));
+      localStorage.setItem(this.key, JSON.stringify(items));
+    } catch (e) {
+      console.error('[ImageBlacklist] 保存黑名单失败:', e);
+    }
+  },
+  
+  add(url: string): void {
+    const list = this.getList();
+    list.add(url);
+    this.saveList(list);
+  },
+  
+  has(url: string): boolean {
+    return this.getList().has(url);
+  },
+  
+  remove(url: string): void {
+    const list = this.getList();
+    list.delete(url);
+    this.saveList(list);
+  },
+  
+  clear(): void {
+    if (typeof window === 'undefined') return;
+    localStorage.removeItem(this.key);
+  }
+};
 
 /**
  * 优化的懒加载图片组件
@@ -196,253 +370,182 @@ export function LazyImage({
   blurEffect = true,
   fadeIn = true,
   priority = false,
-  retryCount = 2, // 默认重试2次
-  retryDelay = 2000, // 默认延迟2秒
+  retryCount = 2,
+  retryDelay = 2000,
+  observerOptions = {},
   ...props
 }: LazyImageProps) {
+  const [isLoading, setIsLoading] = useState(true);
+  const [isError, setIsError] = useState(false);
+  const [currentSrc, setCurrentSrc] = useState<string | undefined>(undefined);
+  const [retries, setRetries] = useState(0);
+  const imageRef = useRef<HTMLImageElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const observerRef = useRef<IntersectionObserver | null>(null);
-  const imageRef = useRef<HTMLImageElement | null>(null);
-  const imageLoadedRef = useRef<boolean>(false);
-  const onImageLoadRef = useRef<(() => void) | undefined>(onImageLoad);
-  const onImageErrorRef = useRef<(() => void) | undefined>(onImageError);
-  const retryAttemptsRef = useRef<number>(0);
-  const abortControllerRef = useRef<AbortController | null>(null);
   
-  const [loaded, setLoaded] = useState<boolean>(false);
-  const [error, setError] = useState<boolean>(false);
-  const [inView, setInView] = useState<boolean>(priority);
-  const [imageSrc, setImageSrc] = useState<string>(src);
-  
-  // 当src变化时，重置状态
-  useEffect(() => {
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-    }
-    
-    imageLoadedRef.current = false;
-    retryAttemptsRef.current = 0;
-    setLoaded(false);
-    setError(false);
-    setImageSrc(src);
-    
-    // 如果图片已在视口内，立即尝试加载
-    if (inView) {
-      loadImage(src);
-    }
-  }, [src]);
-  
-  // 更新回调引用以避免无限循环
-  useEffect(() => {
-    onImageLoadRef.current = onImageLoad;
-    onImageErrorRef.current = onImageError;
-  }, [onImageLoad, onImageError]);
-  
-  // 计算指数退避延迟
+  // 指数退避重试延迟计算，添加上限
   const getExponentialDelay = (attempt: number, baseDelay: number): number => {
-    return Math.min(baseDelay * Math.pow(2, attempt - 1), 10000); // 最大延迟10秒
+    return Math.min(baseDelay * Math.pow(1.5, attempt), 10000); // 使用1.5作为基数，最大10秒
   };
   
-  // 修改retryLoadImage函数
-  const retryLoadImage = (url: string) => {
-    if (retryAttemptsRef.current < retryCount) {
-      retryAttemptsRef.current += 1;
-      console.log(`[LazyImage] 图片加载失败，第 ${retryAttemptsRef.current} 次重试: ${url}`);
-      
-      // 使用指数退避延迟
-      const currentDelay = getExponentialDelay(retryAttemptsRef.current, retryDelay);
-      
-      setTimeout(() => {
-        // 尝试使用图片代理
-        if (retryAttemptsRef.current > 1 && url.includes('openai.com')) {
-          const proxyUrl: string = `/api/image-proxy?url=${encodeURIComponent(url)}&source=openai`;
-          console.log(`[LazyImage] 尝试使用代理URL: ${proxyUrl}`);
-          setImageSrc(proxyUrl);
-          loadImage(proxyUrl);
-        } else {
-          // 添加时间戳防止缓存
-          const cacheBustUrl: string = url.includes('?') ? 
-            `${url}&_retry=${Date.now()}` : 
-            `${url}?_retry=${Date.now()}`;
-          setImageSrc(cacheBustUrl);
-          loadImage(cacheBustUrl);
-        }
-      }, currentDelay);
-    } else {
-      setError(true);
-      if (onImageErrorRef.current) {
-        onImageErrorRef.current();
-      }
+  // 重试加载图片
+  const retryLoadImage = useCallback((url: string) => {
+    // 检查黑名单
+    if (ImageBlacklist.has(url)) {
+      setIsError(true);
+      setIsLoading(false);
+      onImageError?.();
+      return;
     }
-  };
-  
-  // 加载图片的核心函数
-  const loadImage = (imageUrl: string | undefined) => {
-    if (!imageUrl) return;
     
-    // 如果已经加载完成，不再重复加载
-    if (imageLoadedRef.current) return;
-    
-    // 检查缓存
-    if (ImageCache.has(imageUrl)) {
-      console.log(`[LazyImage] 使用缓存的图片: ${imageUrl}`);
-      setLoaded(true);
-      imageLoadedRef.current = true;
-      if (onImageLoadRef.current) {
-        setTimeout(() => onImageLoadRef.current && onImageLoadRef.current(), 0);
+    if (retries >= retryCount) {
+      setIsError(true);
+      setIsLoading(false);
+      onImageError?.();
+      
+      // 如果是OpenAI图片且重试失败，加入黑名单
+      if (url.includes('openai.com')) {
+        ImageBlacklist.add(url);
       }
       return;
     }
     
-    // 创建新的abort controller
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
+    const delay = getExponentialDelay(retries, retryDelay);
+    setTimeout(() => {
+      setRetries(prev => prev + 1);
+      setCurrentSrc(undefined);
+      setTimeout(() => setCurrentSrc(url), 0);
+    }, delay);
+  }, [retries, retryCount, retryDelay, onImageError]);
+  
+  // 加载图片
+  const loadImage = useCallback((imageUrl: string | undefined) => {
+    if (!imageUrl) return;
+    
+    // 检查黑名单
+    if (ImageBlacklist.has(imageUrl)) {
+      setIsError(true);
+      setIsLoading(false);
+      onImageError?.();
+      return;
     }
-    abortControllerRef.current = new AbortController();
     
-    // 添加到预加载队列
-    PreloadManager.add(imageUrl);
+    setIsLoading(true);
+    setIsError(false);
     
-    // 创建新的Image元素
+    // 检查缓存
+    if (ImageCache.has(imageUrl)) {
+      setIsLoading(false);
+      setCurrentSrc(imageUrl);
+      onImageLoad?.();
+      return;
+    }
+    
+    // 预加载图片
+    PreloadManager.add(imageUrl, priority);
+    
     const img = new Image();
-    imageRef.current = img;
+    
+    // 添加超时处理
+    const timeoutId = setTimeout(() => {
+      console.warn(`[LazyImage] 图片加载超时: ${imageUrl}`);
+      img.src = '';
+      retryLoadImage(imageUrl);
+    }, 30000); // 30秒超时
     
     img.onload = () => {
-      if (imageLoadedRef.current) return;
-      
-      console.log(`[LazyImage] 图片加载成功: ${imageUrl}`);
-      imageLoadedRef.current = true;
-      setLoaded(true);
-      setError(false);
-      ImageCache.add(imageUrl);
-      
-      if (onImageLoadRef.current) {
-        setTimeout(() => onImageLoadRef.current && onImageLoadRef.current(), 0);
-      }
+      clearTimeout(timeoutId);
+      setIsLoading(false);
+      setCurrentSrc(imageUrl);
+      ImageCache.add(imageUrl, {
+        width: img.naturalWidth,
+        height: img.naturalHeight
+      });
+      onImageLoad?.();
     };
     
     img.onerror = () => {
-      console.error(`[LazyImage] 图片加载失败: ${imageUrl}`);
-      
-      // 尝试重试
+      clearTimeout(timeoutId);
+      // 如果是OpenAI图片且返回403，直接加入黑名单
+      if (imageUrl.includes('openai.com')) {
+        ImageBlacklist.add(imageUrl);
+        setIsError(true);
+        setIsLoading(false);
+        onImageError?.();
+        return;
+      }
       retryLoadImage(imageUrl);
     };
     
     img.src = imageUrl;
-  };
+  }, [priority, onImageLoad, retryLoadImage, onImageError]);
   
-  // 优化交叉观察器
-  useEffect(() => {
-    if (priority) {
-      setInView(true);
-      return;
-    }
-    
-    const observer = new IntersectionObserver((entries) => {
-      entries.forEach((entry) => {
-        if (entry.isIntersecting) {
-          setInView(true);
-          // 一旦元素可见，停止观察
-          if (containerRef.current) {
-            observer.unobserve(containerRef.current);
-          }
-        }
-      });
-    }, {
-      rootMargin: '300px', // 提前300px开始加载
-      threshold: 0.01
-    });
-    
-    if (containerRef.current) {
-      observer.observe(containerRef.current);
-    }
-    
-    observerRef.current = observer;
-    
-    return () => {
-      observer.disconnect();
-    };
-  }, [priority]); // 仅在priority变化时重新设置观察器
-  
-  // 当元素进入视口时加载图片
-  useEffect(() => {
-    if (inView && !imageLoadedRef.current && !error) {
-      loadImage(imageSrc);
-    }
-  }, [inView, imageSrc, error]);
-  
-  // 组件卸载时清理
-  useEffect(() => {
-    return () => {
-      if (abortControllerRef.current) {
-        abortControllerRef.current.abort();
-      }
-      
-      if (imageRef.current) {
-        imageRef.current.onload = null;
-        imageRef.current.onerror = null;
-      }
-      
-      if (src) {
-        PreloadManager.abort(src);
-      }
-    };
-  }, [src]);
-  
-  // 基础图片样式
-  const baseImageClass = `${className} ${fadeIn ? 'transition-opacity duration-500' : ''}`;
-  
-  // 图片加载状态样式
-  const imageClass = `${baseImageClass} ${
-    !loaded ? 'opacity-0' : 'opacity-100'
-  }`;
-  
-  // 默认的加载状态元素
-  const defaultLoadingElement = (
-    <div className={`flex items-center justify-center bg-muted/30 ${loadingClassName}`}>
-      <Loader2 className="w-6 h-6 text-primary/60 animate-spin" />
-    </div>
+  // 使用 Intersection Observer 处理懒加载
+  useIntersectionObserver<HTMLDivElement>(
+    containerRef,
+    () => loadImage(src),
+    observerOptions
   );
   
-  // 默认的错误状态元素
-  const defaultErrorElement = (
-    <div className={`flex items-center justify-center bg-muted/30 ${errorClassName}`}>
-      <div className="flex flex-col items-center">
-        <ImageIcon className="w-6 h-6 text-destructive/60 mb-1" />
-        <p className="text-xs text-destructive/80">加载失败</p>
+  // 清理函数
+  useEffect(() => {
+    return () => {
+      if (currentSrc) {
+        PreloadManager.abort(currentSrc);
+      }
+    };
+  }, [currentSrc]);
+  
+  // 渲染加载状态
+  if (isLoading) {
+    return (
+      <div
+        ref={containerRef}
+        className={`relative ${loadingClassName || placeholderClassName}`}
+        style={{ minHeight: '100px' }}
+      >
+        {loadingElement || (
+          <div className="absolute inset-0 flex items-center justify-center">
+            <Loader2 className="w-6 h-6 animate-spin" />
+          </div>
+        )}
       </div>
-    </div>
-  );
+    );
+  }
   
+  // 渲染错误状态
+  if (isError) {
+    return (
+      <div
+        ref={containerRef}
+        className={`relative ${errorClassName || placeholderClassName}`}
+        style={{ minHeight: '100px' }}
+      >
+        {errorElement || (
+          <div className="absolute inset-0 flex items-center justify-center">
+            <ImageIcon className="w-6 h-6" />
+          </div>
+        )}
+      </div>
+    );
+  }
+  
+  // 渲染图片
   return (
-    <div
-      ref={containerRef}
-      className={`relative w-full h-full overflow-hidden ${blurEffect && loaded ? 'after:absolute after:inset-0 after:bg-gradient-to-t after:from-black/5 after:to-transparent' : ''}`}
-    >
-      {/* 图片加载状态 */}
-      {inView && !loaded && !error && (
-        <div className="absolute inset-0 flex items-center justify-center">
-          {loadingElement || defaultLoadingElement}
-        </div>
-      )}
-      
-      {/* 图片错误状态 */}
-      {error && (
-        <div className="absolute inset-0 flex items-center justify-center">
-          {errorElement || defaultErrorElement}
-        </div>
-      )}
-      
-      {/* 实际图片 - 仅当在视口内才渲染 */}
-      {inView && (
-        <img
-          src={imageSrc}
-          alt={alt}
-          className={imageClass}
-          loading={priority ? 'eager' : 'lazy'}
-          {...props}
-        />
-      )}
+    <div ref={containerRef} className="relative">
+      <img
+        ref={imageRef}
+        src={currentSrc}
+        alt={alt}
+        className={`
+          ${className}
+          ${blurEffect ? 'filter blur-0 transition-all duration-300' : ''}
+          ${fadeIn ? 'opacity-100 transition-opacity duration-300' : ''}
+        `}
+        style={{
+          opacity: currentSrc ? 1 : 0,
+        }}
+        {...props}
+      />
     </div>
   );
 }

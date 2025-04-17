@@ -405,7 +405,7 @@ class AuthService {
                   if (parsed && parsed.access_token) {
                     sessionData = parsed.access_token;
       }
-    } catch (e) {
+        } catch (e) {
                   // 非JSON，直接使用原始值
                 }
                 
@@ -418,7 +418,7 @@ class AuthService {
                 cookiesToClear.forEach(name => {
                   document.cookie = `${name}=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT`;
                 });
-      } catch (e) {
+    } catch (e) {
                 console.warn('[AuthService] 处理会话数据失败:', e);
               }
             }
@@ -439,7 +439,7 @@ class AuthService {
             // 降级到内存存储
             memoryStorage[key] = value;
           }
-        } catch (e) {
+      } catch (e) {
           console.warn('[AuthService] 存储写入失败:', e);
           // 确保即使在错误情况下也能存储
           try {
@@ -466,7 +466,7 @@ class AuthService {
               } else if (this.storageType === 'cookie') {
                 document.cookie = `${key}=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT`;
               }
-            } catch (e) {
+      } catch (e) {
               console.warn('[AuthService] 从存储删除失败:', e);
             }
           }
@@ -480,7 +480,7 @@ class AuthService {
   private async handleAuthChange(event: AuthChangeEvent, session: Session | null) {
     console.log(`[AuthService] 认证状态变化: ${event}`, session?.user?.email);
     
-    const now = Date.now();
+      const now = Date.now();
     
     try {
       switch (event) {
@@ -521,7 +521,7 @@ class AuthService {
           }
           break;
         }
-      } catch (error) {
+    } catch (error) {
       console.error('[AuthService] 处理认证状态变化时出错:', error);
       await this.handleError(error, 'handleAuthChange');
     }
@@ -676,11 +676,11 @@ class AuthService {
               window.location.search.includes('auth_session')) {
             console.log('[AuthService] 多次重试仍然失败，建议刷新页面');
           }
-        } else {
+      } else {
           // 验证成功或不需要重试，重置状态
           this.sessionValidationAttempts = valid ? 0 : this.sessionValidationAttempts;
-        }
-      } catch (error) {
+      }
+    } catch (error) {
         await this.handleError(error, 'refreshSession');
       } finally {
         // 如果不是因为需要重试而延迟释放锁，则在这里释放
@@ -743,7 +743,7 @@ class AuthService {
           document.cookie = 'sb-refresh-token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
           document.cookie = 'sb-access-token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
           document.cookie = 'sb-auth-token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
-    } catch (e) {
+      } catch (e) {
           console.warn('[AuthService] 清除存储失败:', e);
         }
       }
@@ -812,7 +812,7 @@ class AuthService {
       }
       
       return null;
-    } catch (error) {
+        } catch (error) {
       console.error('[AuthService] getUserInfo 执行出错:', error);
       return null;
     }

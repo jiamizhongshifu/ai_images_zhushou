@@ -3,12 +3,13 @@
 import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
-import { Loader2, AlertCircle, ChevronRight } from "lucide-react";
+import { Loader2, AlertCircle, ChevronRight, ImageIcon, Download, X, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { generatePromptWithStyle } from "@/app/config/styles";
 import { ResponsiveContainer, ResponsiveSection, ResponsiveGrid } from "@/components/ui/responsive-container";
-import { GenerationStage } from "@/components/ui/skeleton-generation";
+import { GenerationStage, ImageGenerationSkeleton } from "@/components/ui/skeleton-generation";
+import { LazyImage } from "@/components/ui/lazy-image";
 import GeneratedImageGallery from "@/components/creation/generated-image-gallery";
 
 // 导入创作页组件
@@ -332,6 +333,9 @@ export default function ProtectedPage() {
   const displayError = error || generationError;
   const isInitializing = isLoadingCredits && generatedImages.length === 0;
 
+  // 添加预览状态
+  const [previewImage, setPreviewImage] = useState<string | null>(null);
+
   return (
     <div className="flex-1 w-full flex flex-col items-center">
       {/* 添加任务状态监听器 */}
@@ -422,17 +426,115 @@ export default function ProtectedPage() {
               </div>
             </div>
             <div className="p-6 pt-0 font-nunito">
-              {/* 生成结果展示 - 更新为包含骨架屏和进度显示 */}
-              {generatedImages.length > 0 && (
-                <GeneratedImageGallery
-                  images={generatedImages}
-                  isLoading={false}
-                  onImageLoad={handleImageLoad}
-                  onImageError={handleImageError}
-                  onDownloadImage={downloadImage}
-                  onDeleteImage={handleDeleteGeneratedImage}
-                  hideViewMoreButton={true}
-                />
+              {/* 生成结果展示 */}
+              {(isGenerating || generatedImages.length > 0) && (
+                <div className="grid grid-cols-4 gap-4">
+                  {/* 显示生成中的骨架屏 */}
+                  {isGenerating && (
+                    <div className="aspect-square w-full">
+                      <ImageGenerationSkeleton 
+                        isGenerating={isGenerating}
+                        stage={generationStage}
+                        percentage={generationPercentage}
+                      />
+                    </div>
+                  )}
+                  
+                  {/* 已生成的图片，根据是否正在生成来决定显示数量 */}
+                  {generatedImages
+                    .slice(0, isGenerating ? 3 : 4)
+                    .map((imageUrl, index) => (
+                    <div key={imageUrl + index} className="aspect-square w-full">
+                      <div 
+                        className="aspect-square relative bg-card/40 border border-border rounded-xl overflow-hidden shadow-ghibli-sm hover:shadow-ghibli transition-all duration-300 cursor-pointer w-full h-full"
+                        onClick={() => setPreviewImage(imageUrl)}
+                      >
+                        <LazyImage
+                          src={getImageUrl(imageUrl)}
+                          alt={`生成的图片 ${index + 1}`}
+                          onImageLoad={() => handleImageLoad(imageUrl)}
+                          onImageError={() => handleImageError(imageUrl)}
+                          className="w-full h-full object-cover"
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+              
+              {/* 空状态提示 */}
+              {!isGenerating && generatedImages.length === 0 && (
+                <div className="py-14 flex flex-col items-center justify-center">
+                  <div className="bg-card/60 p-6 rounded-xl border border-border flex flex-col items-center shadow-ghibli-sm">
+                    <div className="bg-muted/50 rounded-full p-3 mb-3">
+                      <ImageIcon className="h-6 w-6 text-primary/60" />
+                    </div>
+                    <p className="text-foreground/80 text-center">尚未生成任何图片</p>
+                    <p className="text-muted-foreground text-sm text-center mt-1">上传图片并选择风格开始创作</p>
+                  </div>
+                </div>
+              )}
+              
+              {/* 图片预览模态框 */}
+              {previewImage && (
+                <div 
+                  className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in"
+                  onClick={() => setPreviewImage(null)}
+                >
+                  <div className="relative max-w-4xl max-h-[90vh] w-full animate-scale-in" onClick={(e) => e.stopPropagation()}>
+                    {/* 关闭按钮 */}
+                    <div className="absolute -top-12 right-0 flex justify-end">
+                      <Button 
+                        variant="ghost" 
+                        size="icon" 
+                        className="h-10 w-10 rounded-full bg-background/20 text-white hover:bg-background/40 backdrop-blur-sm"
+                        onClick={() => setPreviewImage(null)}
+                      >
+                        <X className="h-5 w-5" />
+                      </Button>
+                    </div>
+                    
+                    {/* 图片预览 */}
+                    <div className="bg-card/95 backdrop-blur-md rounded-xl overflow-hidden shadow-ghibli border border-border/50">
+                      <div className="relative aspect-auto max-h-[80vh] flex items-center justify-center p-4">
+                        <img 
+                          src={getImageUrl(previewImage)} 
+                          alt="预览图片"
+                          className="max-w-full max-h-[70vh] object-contain"
+                        />
+                      </div>
+                      
+                      {/* 图片操作栏 */}
+                      <div className="p-4 flex justify-between items-center border-t border-border/50">
+                        <div className="truncate text-sm text-muted-foreground font-quicksand">
+                          预览图片
+                        </div>
+                        
+                        <div className="flex gap-2">
+                          <Button 
+                            variant="outline" 
+                            size="sm" 
+                            className="bg-primary/10 text-primary hover:bg-primary/20 border-none shadow-ghibli-sm hover:shadow-ghibli transition-all duration-300"
+                            onClick={() => downloadImage(previewImage)}
+                          >
+                            <Download className="h-4 w-4 mr-1" />
+                            <span>下载</span>
+                          </Button>
+                          
+                          <Button 
+                            variant="destructive" 
+                            size="sm" 
+                            className="shadow-ghibli-sm hover:shadow-ghibli transition-all duration-300"
+                            onClick={() => handleDeleteGeneratedImage(previewImage)}
+                          >
+                            <Trash2 className="h-4 w-4 mr-1" />
+                            <span>删除</span>
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
               )}
             </div>
           </div>

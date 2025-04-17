@@ -235,10 +235,10 @@ export function ImageGenerationSkeleton({
   
   return (
     <div 
-      className="ghibli-image-container aspect-square relative overflow-hidden rounded-xl border border-border/60 shadow-ghibli-sm hover:shadow-ghibli transition-all duration-300 bg-gradient-to-br from-card to-background cursor-pointer"
+      className="aspect-square relative bg-card/40 border border-border rounded-xl overflow-hidden shadow-ghibli-sm hover:shadow-ghibli transition-all duration-300 cursor-pointer w-full h-full"
       onClick={() => setShowDetails(!showDetails)}
     >
-      <div className="absolute inset-0 flex flex-col items-center justify-center p-4">
+      <div className="absolute inset-0 flex flex-col items-center justify-center p-4 bg-gradient-to-br from-card to-background">
         {/* 中心旋转图标 */}
         <div className="relative mb-4">
           <div className="absolute inset-0 flex items-center justify-center">
