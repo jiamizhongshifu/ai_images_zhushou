@@ -2,7 +2,6 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import SafeGoogleLogin from '@/app/components/safe-google-login';
 import { safeSetItem, safeGetItem } from '@/app/lib/mock-storage';
 
 export function LoginFormWrapper() {
@@ -40,11 +39,7 @@ export function LoginFormWrapper() {
   return (
     <div className="w-full">
       <div className="space-y-4">
-        <SafeGoogleLogin 
-          onSuccess={onLoginSuccess} 
-          buttonText="使用Google账号登录"
-          className="w-full"
-        />
+        {/* 暂时移除Google登录按钮 */}
       </div>
     </div>
   );
