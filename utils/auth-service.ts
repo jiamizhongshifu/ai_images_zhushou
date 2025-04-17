@@ -5,13 +5,7 @@
 import { createClient, SupabaseClient, Session, User, AuthChangeEvent } from '@supabase/supabase-js'
 import { Database } from '../types/supabase'
 import { supabaseClient } from './supabase-client'
-import {
-  validateSessionWithRetry,
-  getCachedSession,
-  invalidateSessionCache,
-  saveAuthStateForRecovery,
-  clearAuthRecoveryState
-} from './session-validator'
+import { shouldIgnoreSessionChange } from './auth-resilience'
 
 // 认证状态类型定义
 export interface AuthState {
@@ -23,7 +17,6 @@ export interface AuthState {
   email?: string;
   user?: User | null;
   session?: Session | null;
-  sessionProtectionEndTime?: number;
 }
 
 // 存储类型枚举
@@ -250,7 +243,7 @@ export class AuthService implements AuthServiceInterface {
   // 添加登录保护期相关变量
   private loginProtectionEnabled = false;
   private loginProtectionExpiry = 0;
-  private readonly LOGIN_PROTECTION_DURATION = 15000; // 15秒保护期
+  private readonly LOGIN_PROTECTION_DURATION = 900000; // 15分钟保护期
 
   constructor() {
     this.initAuthState();
@@ -319,6 +312,12 @@ export class AuthService implements AuthServiceInterface {
       });
       this.markSessionState(true);
     } else if (event === 'SIGNED_OUT') {
+      // 检查是否应忽略此次会话变更（例如任务进行中）
+      if (shouldIgnoreSessionChange()) {
+        console.log('[AuthService] 检测到长时间任务进行中，忽略登出事件');
+        return;
+      }
+      
       this.setAuthState({
         isAuthenticated: false,
         session: null,
@@ -558,37 +557,35 @@ export class AuthService implements AuthServiceInterface {
   }
 
   /**
-   * 刷新会话状态
+   * 刷新会话
+   * @returns 是否成功刷新会话
    */
   async refreshSession(): Promise<void> {
     try {
-      const isValid = await validateSessionWithRetry(
-        () => this.getSession()
-      );
+      const { data: { session }, error } = await this.supabase.auth.getSession();
+      
+      if (error || !session) {
+        this.setAuthState({
+          isAuthenticated: false,
+          session: null,
+          lastAuthTime: Date.now()
+        });
+        return;
+      }
       
       this.setAuthState({
-        isAuthenticated: isValid,
+        isAuthenticated: true,
+        session,
         lastAuthTime: Date.now()
       });
-      
-      if (!isValid) {
-        console.warn('[AuthService] 会话验证失败，设置未登录状态');
-      }
     } catch (error) {
-      console.error('[AuthService] 刷新会话失败:', error);
+      console.error('Failed to refresh session:', error);
       this.setAuthState({
         isAuthenticated: false,
+        session: null,
         lastAuthTime: Date.now()
       });
     }
-  }
-
-  /**
-   * 强制刷新会话（跳过缓存）
-   */
-  async forceRefreshSession(): Promise<void> {
-    invalidateSessionCache();
-    await this.refreshSession();
   }
 
   /**
@@ -984,7 +981,7 @@ export class AuthService implements AuthServiceInterface {
   private enableLoginProtection() {
     this.loginProtectionEnabled = true;
     this.loginProtectionExpiry = Date.now() + this.LOGIN_PROTECTION_DURATION;
-    console.log(`[AuthService] 已启用登录保护期，持续15秒，到期时间: ${new Date(this.loginProtectionExpiry).toISOString()}`);
+    console.log(`[AuthService] 已启用登录保护期，持续15分钟，到期时间: ${new Date(this.loginProtectionExpiry).toISOString()}`);
   }
 
   private markSessionState(isAuthenticated: boolean) {

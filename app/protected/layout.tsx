@@ -50,8 +50,8 @@ export default function ProtectedLayout({
   return (
     <div className="flex min-h-screen flex-col">
       <main className="flex-1">
-        {children}
+          {children}
       </main>
     </div>
   );
-}
+} 

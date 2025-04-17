@@ -10,6 +10,26 @@ let authConnectionFailureCount = 0;
 const MAX_AUTH_FAILURES = 3;
 const AUTH_FAILURE_WINDOW = 5 * 60 * 1000; // 5分钟
 
+// 任务活跃状态标记 - 标记当前是否有长时间任务在进行
+let activeTaskInProgress = false;
+
+/**
+ * 设置任务活跃状态
+ * @param isActive 任务是否活跃
+ */
+export const setTaskActive = (isActive: boolean): void => {
+  activeTaskInProgress = isActive;
+  console.log(`[认证弹性] 长时间任务状态标记为: ${isActive ? '活跃' : '非活跃'}`);
+};
+
+/**
+ * 检查是否应忽略会话状态变更
+ * @returns 是否应忽略
+ */
+export const shouldIgnoreSessionChange = (): boolean => {
+  return activeTaskInProgress;
+};
+
 /**
  * 设置认证连接问题标记
  */
@@ -128,6 +148,13 @@ const resetAuthConnectionFailures = () => {
 const checkAuthConnection = async (): Promise<boolean> => {
   try {
     console.log('[认证弹性] 检查认证服务连接状态...');
+    
+    // 如果有长时间任务进行中，延迟会话状态检查的影响
+    if (activeTaskInProgress) {
+      console.log('[认证弹性] 检测到长时间任务进行中，暂时忽略会话状态检查');
+      return true; // 假定连接正常，避免触发过多的连接重试
+    }
+    
     await refreshSession();
     console.log('[认证弹性] 认证服务连接正常');
     resetAuthConnectionFailures();
