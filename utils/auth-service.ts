@@ -794,3 +794,9 @@ export const authService = AuthService.getInstance();
 export const refreshSession = () => authService.refreshSession();
 export const forceSyncAuthState = () => authService.forceSyncAuthState(); 
 export const getAuthState = () => authService.getAuthState();
+export const signOut = async () => {
+  const authService = AuthService.getInstance();
+  const supabase = authService.getSupabaseClient();
+  await supabase.auth.signOut();
+  await authService.clearAuthState();
+};
