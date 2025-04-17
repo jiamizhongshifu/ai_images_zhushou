@@ -22,7 +22,7 @@ interface ImageGenerationSkeletonProps {
   isGenerating: boolean;
   stage?: GenerationStage;
   percentage?: number;
-  onStageChange?: (stage: string, percentage: number) => void;
+  onStageChange?: (stage: GenerationStage, percentage: number) => void;
 }
 
 export function ImageGenerationSkeleton({ 
@@ -214,7 +214,7 @@ export function ImageGenerationSkeleton({
         
         // 触发阶段变更回调
         if (onStageChange) {
-          onStageChange(GENERATION_STAGES[currentIndex].id, GENERATION_STAGES[currentIndex].percentage);
+          onStageChange(GENERATION_STAGES[currentIndex].id as GenerationStage, GENERATION_STAGES[currentIndex].percentage);
         }
       }, 2000);
       

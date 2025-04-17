@@ -21,7 +21,7 @@ function debounce(fn: Function, ms: number) {
   };
 }
 
-interface GeneratedImageGalleryProps {
+export interface GeneratedImageGalleryProps extends React.PropsWithChildren {
   images: string[];
   isLoading: boolean;
   onImageLoad: (imageUrl: string) => void;
@@ -34,11 +34,11 @@ interface GeneratedImageGalleryProps {
   isGenerating?: boolean;
   generationStage?: GenerationStage;
   generationPercentage?: number;
-  onStageChange?: (stage: string, percentage: number) => void;
-  getImageUrl?: (url: string) => string; // 可选的图像URL处理函数
+  onStageChange?: (stage: GenerationStage, percentage: number) => void;
+  getImageUrl?: (url: string) => string;
 }
 
-export default function GeneratedImageGallery({
+const GeneratedImageGallery = React.forwardRef<HTMLDivElement, GeneratedImageGalleryProps>(({
   images,
   isLoading,
   onImageLoad,
@@ -53,7 +53,7 @@ export default function GeneratedImageGallery({
   generationPercentage,
   onStageChange,
   getImageUrl
-}: GeneratedImageGalleryProps) {
+}, ref) => {
   const router = useRouter();
   const [previewImage, setPreviewImage] = useState<string | null>(null);
   const [loadedImages, setLoadedImages] = useState<Record<string, boolean>>({});
@@ -442,4 +442,6 @@ export default function GeneratedImageGallery({
       )}
     </div>
   );
-} 
+});
+
+export default GeneratedImageGallery; 

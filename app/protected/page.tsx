@@ -8,12 +8,13 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { generatePromptWithStyle } from "@/app/config/styles";
 import { ResponsiveContainer, ResponsiveSection, ResponsiveGrid } from "@/components/ui/responsive-container";
+import { GenerationStage } from "@/components/ui/skeleton-generation";
+import GeneratedImageGallery from "@/components/creation/generated-image-gallery";
 
 // 导入创作页组件
 import ImageUploader from "@/components/creation/image-uploader";
 import StyleSelector from "@/components/creation/style-selector";
 import PromptInput from "@/components/creation/prompt-input";
-import GeneratedImageGallery from "@/components/creation/generated-image-gallery";
 
 // 导入自定义hooks
 import useUserCredits from "@/hooks/useUserCredits";
@@ -30,6 +31,13 @@ const CreditRechargeDialog = dynamic(
   () => import("@/components/payment/credit-recharge-dialog"),
   { ssr: false, loading: () => null }
 );
+
+// 定义生成状态的类型
+type GenerationStatus = {
+  isGenerating: boolean;
+  generationStage?: GenerationStage;
+  generationPercentage?: number;
+};
 
 export default function ProtectedPage() {
   const router = useRouter();
@@ -313,6 +321,13 @@ export default function ProtectedPage() {
     }
   };
 
+  // 合并生成状态
+  const generationStatus: GenerationStatus = {
+    isGenerating,
+    generationStage,
+    generationPercentage
+  };
+
   // 结合错误信息
   const displayError = error || generationError;
   const isInitializing = isLoadingCredits && generatedImages.length === 0;
@@ -416,9 +431,6 @@ export default function ProtectedPage() {
                   onImageError={handleImageError}
                   onDownloadImage={downloadImage}
                   onDeleteImage={handleDeleteGeneratedImage}
-                  isGenerating={isGenerating}
-                  generationStage={generationStage}
-                  generationPercentage={generationPercentage}
                   hideViewMoreButton={true}
                 />
               )}
