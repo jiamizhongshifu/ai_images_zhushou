@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import { Loader2, AlertCircle, ChevronRight, ImageIcon, Download, X, Trash2 } from "lucide-react";
@@ -230,19 +230,23 @@ export default function ProtectedPage() {
   };
   
   // 处理任务完成回调
-  const handleTaskCompleted = (imageUrl: string) => {
-    console.log(`任务完成，收到图片URL: ${imageUrl}`);
+  const handleTaskCompleted = useCallback((imageUrl: string) => {
+    console.log(`[ProtectedPage] 任务完成，收到图片URL: ${imageUrl}`);
     
-    // 更新生成的图片列表
+    // 更新生成的图片列表，保持原有图片顺序
     if (imageUrl) {
-      const newImages = [imageUrl, ...generatedImages.filter(url => url !== imageUrl)];
-      setGeneratedImages(newImages);
+      setGeneratedImages((prev: string[]) => {
+        // 如果图片已存在，不重复添加
+        if (prev.includes(imageUrl)) {
+          return prev;
+        }
+        return [imageUrl, ...prev];
+      });
     }
     
-    // 清除当前任务ID - 不再在这里刷新点数和历史记录
-    // 生成完成刷新逻辑已经移至generationStage监听的useEffect中
+    // 清除当前任务ID
     setCurrentTaskId(null);
-  };
+  }, [setGeneratedImages]);
   
   // 处理任务错误回调
   const handleTaskError = (errorMessage: string) => {
@@ -429,21 +433,32 @@ export default function ProtectedPage() {
               {/* 生成结果展示 */}
               {(isGenerating || generatedImages.length > 0) && (
                 <div className="grid grid-cols-4 gap-4">
-                  {/* 显示生成中的骨架屏 */}
-                  {isGenerating && (
-                    <div className="aspect-square w-full">
+                  {/* 显示生成中的骨架屏或最新生成的图片 */}
+                  <div className="aspect-square w-full">
+                    {isGenerating ? (
                       <ImageGenerationSkeleton 
                         isGenerating={isGenerating}
                         stage={generationStage}
                         percentage={generationPercentage}
                       />
-                    </div>
-                  )}
+                    ) : generatedImages[0] && (
+                      <div 
+                        className="aspect-square relative bg-card/40 border border-border rounded-xl overflow-hidden shadow-ghibli-sm hover:shadow-ghibli transition-all duration-300 cursor-pointer w-full h-full"
+                        onClick={() => setPreviewImage(generatedImages[0])}
+                      >
+                        <LazyImage
+                          src={getImageUrl(generatedImages[0])}
+                          alt="最新生成的图片"
+                          onImageLoad={() => handleImageLoad(generatedImages[0])}
+                          onImageError={() => handleImageError(generatedImages[0])}
+                          className="w-full h-full object-cover"
+                        />
+                      </div>
+                    )}
+                  </div>
                   
-                  {/* 已生成的图片，根据是否正在生成来决定显示数量 */}
-                  {generatedImages
-                    .slice(0, isGenerating ? 3 : 4)
-                    .map((imageUrl, index) => (
+                  {/* 显示历史图片，根据是否在生成中决定显示数量 */}
+                  {generatedImages.slice(isGenerating ? 0 : 1, isGenerating ? 3 : 4).map((imageUrl, index) => (
                     <div key={imageUrl + index} className="aspect-square w-full">
                       <div 
                         className="aspect-square relative bg-card/40 border border-border rounded-xl overflow-hidden shadow-ghibli-sm hover:shadow-ghibli transition-all duration-300 cursor-pointer w-full h-full"
@@ -451,7 +466,7 @@ export default function ProtectedPage() {
                       >
                         <LazyImage
                           src={getImageUrl(imageUrl)}
-                          alt={`生成的图片 ${index + 1}`}
+                          alt={`生成的图片 ${index + (isGenerating ? 1 : 2)}`}
                           onImageLoad={() => handleImageLoad(imageUrl)}
                           onImageError={() => handleImageError(imageUrl)}
                           className="w-full h-full object-cover"

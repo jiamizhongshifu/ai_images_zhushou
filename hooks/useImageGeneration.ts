@@ -69,7 +69,7 @@ export interface UseImageGenerationResult {
   isGenerating: boolean;
   error: string | null;
   generateImage: (options: GenerationOptions) => Promise<{taskId: string} | null>;
-  setGeneratedImages: (images: string[]) => void;
+  setGeneratedImages: React.Dispatch<React.SetStateAction<string[]>>;
   addGeneratedImage: (imageUrl: string) => void;
   generationStage: GenerationStage;
   generationPercentage: number;
