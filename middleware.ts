@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { updateSession } from "@/utils/supabase/middleware";
+import { createMiddlewareClient } from '@supabase/auth-helpers-nextjs';
 
 // 检测是否可能是浏览器扩展环境的辅助函数
 function isExtensionEnvironment(request: NextRequest): boolean {
@@ -23,10 +24,21 @@ function isExtensionEnvironment(request: NextRequest): boolean {
 // 身份验证中间件
 export async function middleware(request: NextRequest) {
   try {
-    // 如果是登录页面，直接放行，避免重定向循环
-    if (request.nextUrl.pathname === '/sign-in') {
-      console.log('[中间件] 检测到登录页面，直接放行');
-      return NextResponse.next();
+    // 创建中间件客户端
+    const supabase = createMiddlewareClient({ req: request, res: NextResponse.next() });
+    
+    // 获取当前会话
+    const { data: { session } } = await supabase.auth.getSession();
+    
+    // 获取请求URL
+    const requestUrl = new URL(request.url);
+    const isSignInPage = requestUrl.pathname === '/sign-in';
+    
+    // 如果用户已登录且访问登录页面，重定向到保护页面
+    if (session && isSignInPage) {
+      console.log('[Middleware] 用户已登录，从登录页重定向到保护页面');
+      const redirectUrl = new URL('/protected', request.url);
+      return NextResponse.redirect(redirectUrl);
     }
     
     // 检查是否有强制跳过中间件的标记
@@ -107,8 +119,8 @@ export async function middleware(request: NextRequest) {
     // 使用Supabase会话更新逻辑
     return await updateSession(request);
   } catch (error) {
-    console.error('[中间件错误]', error);
-    // 发生错误时，直接放行请求，避免中间件错误阻止页面访问
+    console.error('[Middleware] 处理请求时出错:', error);
+    // 发生错误时继续处理请求
     return NextResponse.next();
   }
 }
@@ -116,6 +128,8 @@ export async function middleware(request: NextRequest) {
 // 中间件匹配配置
 export const config = {
   matcher: [
+    '/sign-in',
+    '/protected/:path*',
     // 排除静态资源和API路由
     "/((?!_next/static|_next/image|favicon.ico|api/|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
   ],
