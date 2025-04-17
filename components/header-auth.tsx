@@ -7,7 +7,7 @@ import { signOut as authSignOut, isAuthenticated, getAuthState } from "@/utils/a
 export default function HeaderAuth() {
   const router = useRouter();
   const [isLoading, setIsLoading] = useState(true);
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [isUserAuthenticated, setIsUserAuthenticated] = useState(false);
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const supabase = createClient();
   // 添加防抖控制引用
@@ -31,7 +31,7 @@ export default function HeaderAuth() {
         // 如果有任何登出标记，优先处理为未登录
         if (hasLogoutCookie || isLoggedOut || loggedOutCookie) {
           console.log('[HeaderAuth] 检测到登出标记，强制设置为未登录状态');
-          setIsAuthenticated(false);
+          setIsUserAuthenticated(false);
           setUserEmail(null);
           setIsLoading(false);
           // 标记已完成验证
@@ -46,7 +46,7 @@ export default function HeaderAuth() {
       // 检查系统认证状态
       if (authState.isAuthenticated === false) {
         console.log('[HeaderAuth] 认证服务显示用户未登录');
-        setIsAuthenticated(false);
+        setIsUserAuthenticated(false);
         setUserEmail(null);
         setIsLoading(false);
         hasValidatedRef.current = true;
@@ -62,11 +62,11 @@ export default function HeaderAuth() {
           console.log('[HeaderAuth] 用户验证失败或无有效用户:', error?.message);
           // 登出状态下清除所有残留状态
           setLocalLogoutState();
-          setIsAuthenticated(false);
+          setIsUserAuthenticated(false);
           setUserEmail(null);
         } else {
           console.log('[HeaderAuth] 用户验证成功:', user.email);
-          setIsAuthenticated(true);
+          setIsUserAuthenticated(true);
           setUserEmail(user.email || null);
         }
         
@@ -76,7 +76,7 @@ export default function HeaderAuth() {
     } catch (error) {
       console.error('[HeaderAuth] 验证状态检查失败:', error);
       // 错误时默认为未登录状态
-      setIsAuthenticated(false);
+      setIsUserAuthenticated(false);
       setUserEmail(null);
     } finally {
       setIsLoading(false);
@@ -125,7 +125,7 @@ export default function HeaderAuth() {
         if (urlParams.has('logged_out') || urlParams.has('logout') || urlParams.has('force_logout')) {
           console.log('[HeaderAuth] 检测到URL中的登出参数');
           setLocalLogoutState();
-          setIsAuthenticated(false);
+          setIsUserAuthenticated(false);
           hasValidatedRef.current = true;
         }
       } catch (error) {
@@ -148,7 +148,7 @@ export default function HeaderAuth() {
       await authSignOut();
       
       // 强制设置前端状态
-      setIsAuthenticated(false);
+      setIsUserAuthenticated(false);
       setUserEmail(null);
       
       // 设置本地登出状态
@@ -170,7 +170,7 @@ export default function HeaderAuth() {
     return <Button variant="outline">加载中...</Button>;
   }
 
-  return isAuthenticated ? (
+  return isUserAuthenticated ? (
     <div className="flex items-center gap-4">
       Hey, {userEmail}!
       <Button variant="outline" onClick={signOut}>
