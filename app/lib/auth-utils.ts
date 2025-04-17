@@ -120,7 +120,10 @@ export function checkAuthEnvironment(): boolean {
   }
   
   if (isBrowserRestricted) {
-    toast.warning("检测到浏览器可能限制第三方Cookie，这可能影响社交登录。");
+    toast("检测到浏览器可能限制第三方Cookie，这可能影响登录功能。", {
+      icon: '⚠️',
+      duration: 5000
+    });
   }
   
   return storageOk;
