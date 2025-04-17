@@ -28,7 +28,6 @@ import { notify } from '@/utils/notification';
 import { trackPromptUsage } from '@/utils/tracking';
 import { authService } from '@/utils/auth-service';
 import logger from '@/utils/logger';
-import { useSession } from 'next-auth/react';
 import { v4 as uuidv4 } from 'uuid';
 import { showNotification } from '@/utils/notification';
 
@@ -95,22 +94,16 @@ export default function useImageGeneration(
   const [generationStage, setGenerationStage] = useState<GenerationStage>('preparing');
   const [generationPercentage, setGenerationPercentage] = useState<number>(0);
   
-  // 任务ID和监控引用
   const [currentTaskId, setCurrentTaskId] = useState<string | null>(null);
   const startTimeRef = useRef<number>(0);
-  const pollingCancelRef = useRef<() => void>(() => {}); // 用于取消轮询
+  const pollingCancelRef = useRef<() => void>(() => {});
 
   const { triggerCreditRefresh } = useUserState();
-
-  // 添加提交锁定 - 已弃用，使用 TaskSyncManager.hasSubmissionLock() 替代
-  // @deprecated 使用 TaskSyncManager.hasSubmissionLock() 和 TaskSyncManager.setSubmitLock() 替代
   const submissionLockRef = useRef<boolean>(false);
   const lastSubmitTimeRef = useRef<number>(0);
 
   const { t } = useTranslation('image');
   const router = useRouter();
-
-  const session = useSession();
 
   // 页面加载时清理过期任务
   useEffect(() => {

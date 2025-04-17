@@ -1,6 +1,6 @@
 "use client";
 
-import React, { createContext, useState, useEffect, useContext, useCallback, useRef, Suspense } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef, Suspense } from 'react';
 import { createClient } from '@/utils/supabase/client';
 import { authService } from '@/utils/auth-service';
 import { creditService } from '@/utils/credit-service';
@@ -20,7 +20,7 @@ interface UserStateContextType {
 // 创建上下文
 const UserStateContext = createContext<UserStateContextType>({
   credits: null,
-  isLoading: false,
+  isLoading: true,
   isAuthenticated: false,
   refreshUserState: async () => {},
   triggerCreditRefresh: async () => {},
@@ -63,7 +63,7 @@ interface UserStateProviderProps {
 
 function UserStateProviderContent({ children }: UserStateProviderProps) {
   const [credits, setCredits] = useState<number | null>(null);
-  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
   const [lastFetchTime, setLastFetchTime] = useState<number>(0);
   const [isInitializing, setIsInitializing] = useState<boolean>(true);

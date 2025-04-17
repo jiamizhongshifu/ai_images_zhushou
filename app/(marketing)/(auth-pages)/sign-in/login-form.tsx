@@ -35,100 +35,44 @@ export default function LoginForm({ message }: LoginFormProps) {
   
   // 处理登录成功后的重定向
   const redirectToProtected = async () => {
-    const loginTime = Date.now();
-    
-    // 清除所有登出标记并设置认证标记
     try {
-      console.log('[登录表单] 设置认证状态并清除登出标记');
+      console.log('[登录表单] 开始重定向流程');
       
-      // 1. 清除登出标记
+      // 1. 清除任何可能的登出标记
       localStorage.removeItem('force_logged_out');
+      localStorage.removeItem('logged_out');
       sessionStorage.removeItem('isLoggedOut');
+      document.cookie = 'force_logged_out=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
       
       // 2. 设置认证标记
-      localStorage.setItem('auth_valid', 'true');
-      localStorage.setItem('auth_time', loginTime.toString());
+      const loginTime = Date.now().toString();
       localStorage.setItem('wasAuthenticated', 'true');
-      sessionStorage.setItem('activeAuth', 'true');
+      localStorage.setItem('auth_time', loginTime);
+      document.cookie = 'user_authenticated=true; path=/; max-age=86400';
       
-      // 3. 直接设置认证cookie，确保所有页面立即识别登录状态
-      const cookieOptions = '; path=/; max-age=86400; SameSite=Lax';
-      document.cookie = `user_authenticated=true${cookieOptions}`;
-      document.cookie = `auth_time=${loginTime}${cookieOptions}`;
+      // 3. 获取重定向参数
+      const urlParams = new URLSearchParams(window.location.search);
+      const redirectParam = urlParams.get('redirect');
       
-      // 4. 清除所有登出相关cookie
-      const expireOptions = '; path=/; max-age=0; expires=Thu, 01 Jan 1970 00:00:00 GMT';
-      document.cookie = `logged_out=${expireOptions}`;
-      document.cookie = `force_logged_out=${expireOptions}`;
-      document.cookie = `isLoggedOut=${expireOptions}`;
+      // 4. 刷新用户状态
+      await refreshUserState({ forceRefresh: true, showLoading: false });
       
-      // 5. 在本地而不是通过API清除登出标记，避免异步请求和页面刷新竞争
-      console.log('[登录表单] 本地清除登出标记，不再调用API');
+      // 5. 确定重定向目标
+      let redirectTarget = redirectParam || '/protected';
       
-      // 新增：强制同步认证状态，确保立即更新
-      console.log('[登录表单] 强制同步认证状态');
-      try {
-        await forceSyncAuthState();
-        
-        // 强制触发用户状态更新，包括积分刷新
-        console.log('[登录表单] 通知全局状态提供者更新用户状态');
-        await refreshUserState({ forceRefresh: true, showLoading: false });
-      } catch (syncError) {
-        console.warn('[登录表单] 同步认证状态出错:', syncError);
-      }
+      // 6. 添加认证参数
+      redirectTarget = `${redirectTarget}${redirectTarget.includes('?') ? '&' : '?'}auth_session=${loginTime}&auth_time=${loginTime}`;
       
-      // 6. 检查Supabase会话状态 - 使用推荐的getUser方法
-      const supabase = createClient();
-      try {
-        console.log('[登录表单] 使用getUser验证Supabase用户状态');
-        const { data: userData, error } = await supabase.auth.getUser();
-        
-        if (userData && userData.user) {
-          console.log('[登录表单] 验证Supabase用户有效:', userData.user.id);
-        } else {
-          console.warn('[登录表单] 未检测到有效Supabase用户:', error);
-        }
-      } catch (e) {
-        console.error('[登录表单] 检查Supabase用户出错:', e);
-      }
+      console.log(`[登录表单] 准备重定向到: ${redirectTarget}`);
       
-      // 7. 添加显式延迟，确保状态更新和API调用有足够时间完成
-      console.log('[登录表单] 添加延迟以确保认证状态同步');
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
-      // 8. 再次确认状态 - 二次确认是否已正确获取用户信息
-      try {
-        await refreshUserState({ forceRefresh: true, showLoading: false });
-        console.log('[登录表单] 状态同步确认完成，准备重定向');
-      } catch (error) {
-        console.warn('[登录表单] 二次状态同步失败:', error);
-      }
+      // 7. 使用window.location.href进行导航
+      window.location.href = redirectTarget;
       
     } catch (error) {
-      console.warn('[登录表单] 设置认证状态失败:', error);
+      console.error('[登录表单] 重定向过程出错:', error);
+      // 出错时使用基本重定向
+      window.location.href = '/protected';
     }
-    
-    // 确定重定向目标，简化URL参数
-    // 使用auth_session参数代替auth_time，更简洁
-    let redirectTarget = `/protected?auth_session=${loginTime}`;
-    
-    // 如果存在重定向参数，优先使用该参数
-    if (redirectParam) {
-      // 检查是否为受保护路径，需要添加登录参数
-      if (redirectParam.startsWith('/protected')) {
-        redirectTarget = `${redirectParam}?auth_session=${loginTime}`;
-      } else {
-        // 非受保护路径，直接跳转但仍添加时间参数用于追踪
-        redirectTarget = `${redirectParam}?auth_session=${loginTime}`;
-      }
-      console.log(`[登录表单] 使用自定义重定向目标: ${redirectTarget}`);
-    } else {
-      console.log(`[登录表单] 使用默认保护页面重定向: ${redirectTarget}`);
-    }
-    
-    // 使用Router.push代替window.location.href，避免整页刷新
-    console.log('[登录表单] 使用router.push进行客户端导航');
-    router.push(redirectTarget);
   };
 
   // 处理表单提交
@@ -165,17 +109,20 @@ export default function LoginForm({ message }: LoginFormProps) {
       
       try {
         // 调用登录action
-        await signInAction(formData);
+        const result = await signInAction(formData);
         
         // 登录成功，重定向到受保护页面
         console.log('[客户端登录] 登录操作成功完成');
+        
+        // 不管服务器端的重定向结果如何，我们都主动进行客户端重定向
         redirectToProtected();
+        
       } catch (error: any) {
         console.error("[客户端登录] 登录请求错误:", error);
         
         // 检查是否是重定向错误（这通常意味着登录成功）
         if (error.message && error.message.includes('NEXT_REDIRECT')) {
-          console.log('[客户端登录] 检测到重定向响应，可能是登录成功');
+          console.log('[客户端登录] 检测到重定向响应，执行客户端重定向');
           redirectToProtected();
           return;
         }
@@ -191,7 +138,6 @@ export default function LoginForm({ message }: LoginFormProps) {
       localStorage.removeItem('auth_valid');
       localStorage.removeItem('auth_time');
     } finally {
-      // 如果没有成功导航走，重置提交状态
       setIsSubmitting(false);
     }
   };

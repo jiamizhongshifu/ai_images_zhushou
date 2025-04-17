@@ -2,17 +2,19 @@
  * 统一认证服务 - 提供多层次存储和优雅降级的认证状态管理
  */
 
-import { createClient } from "@/utils/supabase/client";
+import { createClient, SupabaseClient, Session, User } from '@supabase/supabase-js'
+import { Database } from '../types/supabase'
 
 // 认证状态类型定义
 export interface AuthState {
   isAuthenticated: boolean;
-  lastAuthTime: number;
+  lastAuthTime: number | undefined;
   expiresAt?: number;
   userId?: string;
   sessionId?: string;
   email?: string;
   lastVerified?: number;
+  user?: User;
 }
 
 // 存储类型枚举
@@ -213,19 +215,19 @@ const AUTH_SESSION_TOKEN_KEY = 'sb-auth-token-persistent';
 /**
  * 认证服务类 - 提供统一的认证状态管理
  */
-class AuthService {
+export class AuthService {
   private static instance: AuthService;
   private subscribers: Array<(state: AuthState) => void> = [];
-  private supabase = createClient();
+  private supabase: SupabaseClient<Database>;
   private isInitializing = false;
   private lastApiAuthCheck = 0;
   private apiAuthTTL = 60 * 1000; // 1分钟的API认证检查间隔
 
-  // 私有构造函数，确保单例
-  private constructor() {
+  constructor() {
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+    const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+    this.supabase = createClient<Database>(supabaseUrl, supabaseKey);
     this.initAuthState();
-    // 监听认证状态变化
-    this.setupAuthListener();
   }
 
   /**
@@ -244,133 +246,76 @@ class AuthService {
   private async initAuthState(): Promise<void> {
     try {
       this.isInitializing = true;
-      
-      // 首先检查是否存在持久化的认证状态
-      if (typeof window !== 'undefined') {
-        try {
-          // 检查localStorage中的认证状态
-          const persistedState = localStorage.getItem(AUTH_STATE_KEY);
-          if (persistedState) {
-            try {
-              const parsedState = JSON.parse(persistedState);
-              if (parsedState && parsedState.isAuthenticated) {
-                console.log('[AuthService] 从持久化存储恢复认证状态');
-                // 立即更新内存状态，确保页面加载时已有认证状态
-                this.setAuthState({
-                  isAuthenticated: true,
-                  lastAuthTime: Date.now()
-                });
-              }
-            } catch (e) {
-              console.warn('[AuthService] 解析持久化认证状态失败:', e);
-            }
-          }
-          
-          // 检查sessionStorage中的临时会话状态
-          const sessionState = sessionStorage.getItem(SESSION_STATE_KEY);
-          if (sessionState === 'true' && !memoryAuthState.isAuthenticated) {
-            console.log('[AuthService] 从会话存储恢复认证状态');
-            this.setAuthState({
-              isAuthenticated: true,
-              lastAuthTime: Date.now()
-            });
-          }
-        } catch (e) {
-          console.warn('[AuthService] 检查持久化认证状态失败:', e);
-        }
-      }
-      
-      // 检查强制登出标记
+      console.log('[AuthService] 开始初始化认证状态');
+
+      // 检查是否有强制登出标记
       if (this.checkForcedLogoutState()) {
-        console.log('[AuthService] 检测到登出标记，状态为未登录');
-        memoryAuthState.isAuthenticated = false;
-        this.notifySubscribers();
+        console.log('[AuthService] 检测到强制登出标记，设置未登录状态');
+        this.setAuthState({ isAuthenticated: false });
         return;
       }
+
+      // 检查会话状态
+      const { data: { session } } = await this.supabase.auth.getSession();
+      const isAuthenticated = !!session;
       
-      // 其他现有逻辑...
-      console.log('[AuthService] 未找到存储的认证状态，使用默认状态');
+      console.log('[AuthService] 会话检查结果:', isAuthenticated ? '已登录' : '未登录');
       
-      // 主动检查会话状态
-      console.log('[AuthService] 主动检查 Supabase 会话状态');
-      await this.checkServerSession();
-    } catch (e) {
-      console.error('[AuthService] 初始化认证状态出错:', e);
+      // 同步更新所有存储
+      this.setAuthState({ 
+        isAuthenticated,
+        lastAuthTime: isAuthenticated ? Date.now() : undefined
+      });
+
+      // 设置监听器
+      this.supabase.auth.onAuthStateChange((event, session) => {
+        console.log('[AuthService] 认证状态变化:', event);
+        this.handleAuthChange(event, session);
+      });
+
+    } catch (error) {
+      console.error('[AuthService] 初始化认证状态出错:', error);
+      this.setAuthState({ isAuthenticated: false });
     } finally {
       this.isInitializing = false;
     }
   }
 
-  /**
-   * 主动检查服务器会话状态
-   */
-  private async checkServerSession(): Promise<boolean> {
-    try {
-      const { data, error } = await this.supabase.auth.getSession();
-      
-      if (error) {
-        console.error('[AuthService] 获取会话失败:', error.message);
-        return false;
-      }
-      
-      hasCheckedServerSession = true;
-      
-      if (data && data.session) {
-        const session = data.session;
-        console.log(`[AuthService] 检测到有效会话，用户 ID: ${session.user.id.substring(0, 8)}...`);
-        
-        // 更新认证状态
-        this.setAuthState({
-          isAuthenticated: true,
-          lastAuthTime: Date.now(),
-          userId: session.user.id,
-          sessionId: session.user.id,
-          email: session.user.email,
-          expiresAt: new Date(session.expires_at || '').getTime(),
-          lastVerified: Date.now()
-        });
-        
-        return true;
-      }
-      
-      console.log('[AuthService] 无有效会话');
-      return false;
-    } catch (error) {
-      console.error('[AuthService] 检查服务器会话时出错:', error);
-      return false;
-    }
-  }
-
-  /**
-   * 设置 Supabase 认证监听器
-   */
-  private setupAuthListener(): void {
-    try {
-      const { data: authListener } = this.supabase.auth.onAuthStateChange(
-        (event, session) => {
-          console.log(`[AuthService] 认证状态变化: ${event}`);
-          
-          if (session?.user) {
-            console.log(`[AuthService] 新会话用户: ${session.user.id.substring(0, 8)}...`);
-            
-            // 更新认证状态
-            this.setAuthState({
-              isAuthenticated: true,
-              lastAuthTime: Date.now(),
-              userId: session.user.id,
-              sessionId: session.user.id,
-              email: session.user.email,
-              expiresAt: new Date(session.expires_at || '').getTime(),
-              lastVerified: Date.now()
-            });
-          } else if (event === 'SIGNED_OUT') {
-            console.log('[AuthService] 用户已登出');
-            this.clearAuthState();
-          }
+  private handleAuthChange(event: string, session: Session | null): void {
+    console.log('[AuthService] 处理认证状态变化:', event, session);
+    
+    switch (event) {
+      case 'SIGNED_IN':
+        if (session) {
+          this.setAuthState({ 
+            isAuthenticated: true,
+            lastAuthTime: Date.now(),
+            userId: session.user.id,
+            email: session.user.email || undefined,
+            user: session.user
+          });
         }
-      );
-    } catch (error) {
-      console.error('[AuthService] 设置认证监听器时出错:', error);
+        break;
+      case 'SIGNED_OUT':
+        this.setAuthState({ 
+          isAuthenticated: false,
+          lastAuthTime: undefined,
+          userId: undefined,
+          email: undefined,
+          user: undefined
+        });
+        break;
+      case 'TOKEN_REFRESHED':
+        if (session) {
+          this.setAuthState({ 
+            isAuthenticated: true,
+            lastAuthTime: Date.now(),
+            userId: session.user.id,
+            email: session.user.email || undefined,
+            user: session.user
+          });
+        }
+        break;
     }
   }
 
@@ -413,15 +358,11 @@ class AuthService {
    * 检查强制登出标记
    */
   private checkForcedLogoutState(): boolean {
-    if (!this.isClientSide()) return false;
-    
     try {
-      const forcedLogout = localStorage.getItem('force_logged_out') === 'true';
-      const sessionLogout = sessionStorage.getItem('isLoggedOut') === 'true';
-      
-      return forcedLogout || sessionLogout;
+      const forcedLogout = localStorage.getItem('force_logged_out') === 'true' ||
+                          sessionStorage.getItem('isLoggedOut') === 'true';
+      return forcedLogout;
     } catch (e) {
-      console.warn('[AuthService] 检查登出标记失败:', e);
       return false;
     }
   }
@@ -466,40 +407,25 @@ class AuthService {
   /**
    * 设置认证状态并通知订阅者
    */
-  private setAuthState(partialState: Partial<AuthState>): void {
-    memoryAuthState = {
-      ...memoryAuthState,
-      ...partialState
+  private setAuthState(state: Partial<AuthState>): void {
+    console.log('[AuthService] 设置认证状态:', state);
+    
+    // 更新内存状态
+    memoryAuthState = { 
+      ...memoryAuthState, 
+      ...state,
+      lastAuthTime: state.isAuthenticated ? (state.lastAuthTime || Date.now()) : undefined
     };
-    
-    // 如果设置为已认证状态，同时保存到持久化存储
-    if (partialState.isAuthenticated === true) {
-      try {
-        // 保存到localStorage以便在页面刷新后恢复
-        localStorage.setItem(AUTH_STATE_KEY, JSON.stringify({
-          isAuthenticated: true,
-          timestamp: Date.now()
-        }));
-        
-        // 同时保存到sessionStorage作为备份
-        sessionStorage.setItem(SESSION_STATE_KEY, 'true');
-        
-        console.log('[AuthService] 已将认证状态保存到持久化存储');
-      } catch (e) {
-        console.warn('[AuthService] 保存认证状态到持久化存储失败:', e);
-      }
-    } else if (partialState.isAuthenticated === false) {
-      // 如果设置为未认证状态，清除持久化存储
-      try {
-        localStorage.removeItem(AUTH_STATE_KEY);
-        sessionStorage.removeItem(SESSION_STATE_KEY);
-        console.log('[AuthService] 已清除持久化存储中的认证状态');
-      } catch (e) {
-        console.warn('[AuthService] 清除持久化存储中的认证状态失败:', e);
-      }
+
+    // 同步到localStorage
+    try {
+      localStorage.setItem(AUTH_STATE_KEY, JSON.stringify(memoryAuthState));
+      sessionStorage.setItem(SESSION_STATE_KEY, memoryAuthState.isAuthenticated ? 'true' : 'false');
+    } catch (e) {
+      console.warn('[AuthService] 保存认证状态到存储失败:', e);
     }
-    
-    // 通知所有订阅者
+
+    // 通知订阅者
     this.notifySubscribers();
   }
 
@@ -611,122 +537,31 @@ class AuthService {
    * @returns 是否成功刷新会话
    */
   async refreshSession(): Promise<boolean> {
-    console.log('[AuthService] 尝试刷新会话');
-    
-    // 如果已经有刷新请求在进行中，复用那个Promise
-    if (isRefreshingSession && refreshPromise) {
-      console.log('[AuthService] 已有刷新请求在进行中，复用现有Promise');
-      return refreshPromise;
-    }
-    
-    isRefreshingSession = true;
-    refreshPromise = (async () => {
-      try {
-        // 如果内存状态已认证且未过期，直接返回成功
-        if (memoryAuthState.isAuthenticated && 
-            memoryAuthState.expiresAt && 
-            memoryAuthState.expiresAt > Date.now()) {
-          console.log('[AuthService] 内存中有有效会话，跳过API刷新');
-          return true;
-        }
-        
-        // 创建Supabase客户端
-        const supabase = await createClient();
-        
-        // 先检查当前会话
-        const sessionResult = await supabase.auth.getSession();
-        if (sessionResult.data?.session) {
-          console.log('[AuthService] 获取到有效会话，无需刷新');
-          
-          const session = sessionResult.data.session;
-          this.setAuthState({
-            isAuthenticated: true,
-            lastVerified: Date.now(),
-            userId: session.user.id,
-            email: session.user.email,
-            expiresAt: new Date(session.expires_at || '').getTime()
-          });
-          
-          return true;
-        }
-        
-        // 如果没有有效会话，尝试刷新
-        console.log('[AuthService] 无有效会话，尝试刷新会话');
-        const { data, error } = await supabase.auth.refreshSession();
-        
-        if (error) {
-          // 如果是会话丢失错误，尝试自动降级到getUserInfo
-          if (error.message?.includes('Auth session missing')) {
-            console.log('[AuthService] 会话丢失，尝试获取用户信息');
-            const userInfo = await this.getUserInfo();
-            
-            if (userInfo) {
-              console.log('[AuthService] 通过用户信息恢复会话');
-              this.setAuthState({ 
-                isAuthenticated: true,
-                userId: userInfo.id,
-                email: userInfo.email
-              });
-              return true;
-            } else {
-              console.log('[AuthService] 用户信息获取失败，认证失败');
-              this.setAuthState({ isAuthenticated: false });
-              return false;
-            }
-          } else {
-            console.error('[AuthService] 刷新会话失败:', error.message);
-            this.setAuthState({ isAuthenticated: false });
-            return false;
-          }
-        }
-        
-        if (data && data.session) {
-          console.log('[AuthService] 会话刷新成功');
-          this.setAuthState({
-            isAuthenticated: true,
-            lastVerified: Date.now(),
-            userId: data.session.user.id,
-            email: data.session.user.email,
-            expiresAt: new Date(data.session.expires_at || '').getTime()
-          });
-          
-          return true;
-        } else {
-          console.log('[AuthService] 会话刷新后无效');
-          this.setAuthState({ isAuthenticated: false });
-          return false;
-        }
-      } catch (error) {
-        console.error('[AuthService] 刷新会话过程中出错:', error);
-        
-        // 尝试通过用户信息恢复作为最后手段
-        try {
-          const userInfo = await this.getUserInfo();
-          if (userInfo) {
-            console.log('[AuthService] 通过用户信息恢复会话(错误恢复)');
-            this.setAuthState({ 
-              isAuthenticated: true,
-              userId: userInfo.id,
-              email: userInfo.email
-            });
-            return true;
-          }
-        } catch (innerError) {
-          console.error('[AuthService] 恢复尝试也失败:', innerError);
-        }
-        
-        this.setAuthState({ isAuthenticated: false });
+    try {
+      const { data: { session }, error } = await this.supabase.auth.getSession();
+      
+      if (error || !session) {
+        console.log('[AuthService] 刷新会话失败:', error?.message || '无会话');
+        this.setAuthState({ 
+          isAuthenticated: false,
+          lastAuthTime: 0
+        });
         return false;
-      } finally {
-        // 重置标记，允许下一次刷新
-        setTimeout(() => {
-          isRefreshingSession = false;
-          refreshPromise = null;
-        }, 1000); // 1秒后才允许新的刷新请求
       }
-    })();
-    
-    return refreshPromise;
+
+      this.setAuthState({ 
+        isAuthenticated: true,
+        lastAuthTime: Date.now()
+      });
+      return true;
+    } catch (error) {
+      console.error('[AuthService] 刷新会话时出错:', error);
+      this.setAuthState({ 
+        isAuthenticated: false,
+        lastAuthTime: 0
+      });
+      return false;
+    }
   }
 
   /**
@@ -747,11 +582,6 @@ class AuthService {
    */
   public subscribe(callback: (state: AuthState) => void): () => void {
     this.subscribers.push(callback);
-    
-    // 立即通知当前状态
-    callback(this.getAuthState());
-    
-    // 返回取消订阅函数
     return () => {
       this.subscribers = this.subscribers.filter(cb => cb !== callback);
     };
@@ -761,14 +591,7 @@ class AuthService {
    * 通知所有订阅者
    */
   private notifySubscribers(): void {
-    const state = this.getAuthState();
-    this.subscribers.forEach(callback => {
-      try {
-        callback(state);
-      } catch (error) {
-        console.error('[AuthService] 通知订阅者时出错:', error);
-      }
-    });
+    this.subscribers.forEach(callback => callback(memoryAuthState));
   }
 
   /**
@@ -1047,6 +870,35 @@ class AuthService {
       isRefreshingSession = false;
       refreshPromise = null;
       return memoryAuthState.isAuthenticated;
+    }
+  }
+
+  public async getSession(): Promise<Session | null> {
+    try {
+      const { data: { session }, error } = await this.supabase.auth.getSession();
+      
+      if (error) {
+        console.error('[AuthService] 获取会话失败:', error);
+        return null;
+      }
+      
+      return session;
+    } catch (error) {
+      console.error('[AuthService] 获取会话时出错:', error);
+      return null;
+    }
+  }
+
+  async checkServerSession(): Promise<boolean> {
+    try {
+      const { data: { session }, error } = await this.supabase.auth.getSession();
+      if (error || !session) {
+        return false;
+      }
+      return true;
+    } catch (error) {
+      console.error('[AuthService] 检查服务器会话时出错:', error);
+      return false;
     }
   }
 }
