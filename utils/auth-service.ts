@@ -785,6 +785,38 @@ class AuthService {
       throw error; // 向上传播错误以便调用者处理
     }
   }
+
+  public async getUserInfo(): Promise<User | null> {
+    try {
+      // 首先检查内存中的用户信息
+      if (this.memoryAuthState.user) {
+        return this.memoryAuthState.user;
+      }
+
+      // 如果内存中没有，尝试从 Supabase 获取
+      const { data: { user }, error } = await this.supabase.auth.getUser();
+      
+      if (error) {
+        console.error('[AuthService] 获取用户信息失败:', error.message);
+        return null;
+      }
+      
+      if (user) {
+        // 更新内存状态
+        await this.updateAuthState({
+          user,
+          userId: user.id,
+          email: user.email
+        });
+        return user;
+      }
+      
+      return null;
+    } catch (error) {
+      console.error('[AuthService] getUserInfo 执行出错:', error);
+      return null;
+    }
+  }
 }
 
 // 创建单例实例
