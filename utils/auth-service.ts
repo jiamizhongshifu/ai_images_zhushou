@@ -44,7 +44,7 @@ class AuthService {
   private static instance: AuthService | null = null;
   private supabase: SupabaseClient<Database>;
   private memoryAuthState: AuthState & StorageState = {
-    isAuthenticated: false,
+  isAuthenticated: false,
     session: null,
     user: null,
     email: null,
@@ -187,8 +187,8 @@ class AuthService {
       this.supabase.auth.onAuthStateChange(async (event, session) => {
         if (!this.initialized && event === 'INITIAL_SESSION') {
           this.initialized = true;
-          return;
-        }
+      return;
+    }
         await this.handleAuthChange(event, session);
       });
 
@@ -287,7 +287,7 @@ class AuthService {
         if (typeof document !== 'undefined') {
           try {
             document.cookie = 'storage_limitation=true; path=/; max-age=3600; SameSite=Lax';
-          } catch (e) {
+        } catch (e) {
             // 忽略cookie设置错误
           }
         }
@@ -303,7 +303,7 @@ class AuthService {
           this.storageType = 'localStorage';
           console.log('[AuthService] 使用localStorage存储');
           return;
-        } catch (e) {
+    } catch (e) {
           console.warn('[AuthService] localStorage不可用:', e);
         }
       }
@@ -375,15 +375,15 @@ class AuthService {
                   return decodeURIComponent(cookieValue);
                 }
               }
-              return null;
-            }
+      return null;
+    }
           } catch (e) {
             console.warn('[AuthService] 从存储读取失败:', e);
           }
           
           // 返回内存中的值作为后备
           return memoryStorage[key] || null;
-        } catch (e) {
+    } catch (e) {
           console.warn('[AuthService] 存储读取失败:', e);
           return null;
         }
@@ -404,8 +404,8 @@ class AuthService {
                   const parsed = JSON.parse(value);
                   if (parsed && parsed.access_token) {
                     sessionData = parsed.access_token;
-                  }
-                } catch (e) {
+      }
+    } catch (e) {
                   // 非JSON，直接使用原始值
                 }
                 
@@ -418,7 +418,7 @@ class AuthService {
                 cookiesToClear.forEach(name => {
                   document.cookie = `${name}=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT`;
                 });
-              } catch (e) {
+      } catch (e) {
                 console.warn('[AuthService] 处理会话数据失败:', e);
               }
             }
@@ -434,7 +434,7 @@ class AuthService {
             } else if (this.storageType === 'cookie') {
               document.cookie = `${key}=${encodeURIComponent(value)}; path=/; max-age=86400; SameSite=Lax`;
             }
-          } catch (e) {
+      } catch (e) {
             console.warn('[AuthService] 存储到存储失败:', e);
             // 降级到内存存储
             memoryStorage[key] = value;
@@ -520,8 +520,8 @@ class AuthService {
             });
           }
           break;
-      }
-    } catch (error) {
+        }
+      } catch (error) {
       console.error('[AuthService] 处理认证状态变化时出错:', error);
       await this.handleError(error, 'handleAuthChange');
     }
@@ -715,7 +715,7 @@ class AuthService {
     try {
       // 重置内存中的认证状态
       await this.updateAuthState({
-        isAuthenticated: false,
+            isAuthenticated: false,
         session: null,
         user: null,
         userId: null,
@@ -743,7 +743,7 @@ class AuthService {
           document.cookie = 'sb-refresh-token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
           document.cookie = 'sb-access-token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
           document.cookie = 'sb-auth-token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
-        } catch (e) {
+    } catch (e) {
           console.warn('[AuthService] 清除存储失败:', e);
         }
       }
@@ -792,5 +792,5 @@ export const authService = AuthService.getInstance();
 
 // 导出常用方法
 export const refreshSession = () => authService.refreshSession();
-export const forceSyncAuthState = () => authService.forceSyncAuthState();
+export const forceSyncAuthState = () => authService.forceSyncAuthState(); 
 export const getAuthState = () => authService.getAuthState();

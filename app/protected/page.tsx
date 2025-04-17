@@ -54,10 +54,12 @@ export default function ProtectedPage() {
   
   // 使用自定义hooks
   const { images, refetch: refreshHistory, deleteImage } = useImageHistory();
-  const { 
-    handleImageLoad, 
-    handleImageError, 
+  const {
+    handleImageLoad,
+    handleImageError,
+    retryImage,
     downloadImage,
+    getImageUrl,
     imageLoadRetries
   } = useImageHandling();
   
@@ -104,9 +106,35 @@ export default function ProtectedPage() {
     }
   }, [generationStage, refreshCredits, refreshHistory]);
   
-  // 初始加载时同步历史记录图片到生成状态
+  // 修改页面切换或路由变化监听函数，避免在返回时清空图片内容
   useEffect(() => {
+    const handleRouteChange = () => {
+      console.log('[ProtectedPage] 检测到路由变化，检查是否需要刷新图片状态');
+      
+      // 不再清空和重设图片状态，只在必要时刷新图片
+      if (generatedImages.length === 0) {
+        console.log('[ProtectedPage] 生成结果为空，尝试从历史加载图片');
+        refreshHistory(false).then(() => {
+          if (images.length > 0 && generatedImages.length === 0) {
+            console.log('[ProtectedPage] 从历史记录加载图片: ', images.length);
+            setGeneratedImages(images);
+          }
+        });
+      }
+    };
+    
+    // 监听路由变化
+    window.addEventListener('popstate', handleRouteChange);
+    return () => {
+      window.removeEventListener('popstate', handleRouteChange);
+    };
+  }, [generatedImages, images, refreshHistory, setGeneratedImages]);
+  
+  // 增强初始加载时同步历史记录图片到生成状态的逻辑
+  useEffect(() => {
+    // 只在首次加载或生成结果为空时从历史同步
     if (images.length > 0 && generatedImages.length === 0) {
+      console.log('[ProtectedPage] 初始化时从历史记录同步图片: ', images.length);
       setGeneratedImages(images);
     }
   }, [images, generatedImages.length, setGeneratedImages]);
@@ -157,6 +185,16 @@ export default function ProtectedPage() {
           setStandardAspectRatio(standardRatio);
           console.log(`标准化为: ${standardRatio}`);
   };
+  
+  // 在页面挂载和卸载时清理图片缓存状态
+  useEffect(() => {
+    console.log('[ProtectedPage] 页面加载，准备处理图片');
+    
+    // 页面卸载时清理
+    return () => {
+      console.log('[ProtectedPage] 页面卸载，清理图片状态');
+    };
+  }, []);
   
   // 修改处理图片生成函数，保存任务ID
   const handleGenerateImage = async () => {
@@ -247,6 +285,32 @@ export default function ProtectedPage() {
   // 处理任务放弃
   const handleTaskDiscard = (taskId: string) => {
     discardTask(taskId);
+  };
+
+  // 添加删除生成图片的函数
+  const handleDeleteGeneratedImage = async (imageUrl: string): Promise<void> => {
+    if (!imageUrl) return Promise.resolve();
+    
+    try {
+      // 查找该图片是否存在于历史记录中
+      const targetItem = images.find(item => item === imageUrl);
+      
+      // 如果图片在历史记录中存在，使用 deleteImage 函数删除
+      if (targetItem) {
+        // 复用历史记录中的删除函数
+        await deleteImage({ image_url: imageUrl, id: "" }); // 使用最简单的结构匹配ImageHistoryItem接口
+      }
+      
+      // 不管图片是否在历史记录中，都从当前展示列表移除
+      const updatedImages = generatedImages.filter(url => url !== imageUrl);
+      setGeneratedImages(updatedImages);
+      
+      // 显示成功提示
+      showNotification("图片已删除", "success");
+    } catch (error) {
+      console.error("删除图片失败:", error);
+      showNotification("删除图片失败，请重试", "error");
+    }
   };
 
   // 结合错误信息
@@ -344,20 +408,20 @@ export default function ProtectedPage() {
             </div>
             <div className="p-6 pt-0 font-nunito">
               {/* 生成结果展示 - 更新为包含骨架屏和进度显示 */}
-              <GeneratedImageGallery
-                images={generatedImages.slice(0, 4)}
-                isLoading={isInitializing}
-                // @ts-ignore 使用ts-ignore跳过类型检查，因为我们已经确保这些属性在GeneratedImageGallery组件中可用
-                isGenerating={isGenerating}
-                generationStage={generationStage}
-                generationPercentage={generationPercentage}
-                onImageLoad={handleImageLoad}
-                onImageError={handleImageError}
-                onDownloadImage={downloadImage}
-                onDeleteImage={deleteImage}
-                hideViewMoreButton={true}
-                maxRows={1}
-              />
+              {generatedImages.length > 0 && (
+                <GeneratedImageGallery
+                  images={generatedImages}
+                  isLoading={false}
+                  onImageLoad={handleImageLoad}
+                  onImageError={handleImageError}
+                  onDownloadImage={downloadImage}
+                  onDeleteImage={handleDeleteGeneratedImage}
+                  isGenerating={isGenerating}
+                  generationStage={generationStage}
+                  generationPercentage={generationPercentage}
+                  hideViewMoreButton={true}
+                />
+              )}
             </div>
           </div>
         </div>

@@ -5,6 +5,7 @@ import { LazyImage } from "@/components/ui/lazy-image";
 import { ImageError, ImageLoading } from "@/components/ui/loading-states";
 import { useRouter } from "next/navigation";
 import { ImageGenerationSkeleton, GenerationStage } from "@/components/ui/skeleton-generation";
+import useImageHandling from "@/hooks/useImageHandling";
 
 // 一次性渲染的最大图片数量
 const MAX_VISIBLE_IMAGES = 12;
@@ -34,6 +35,7 @@ interface GeneratedImageGalleryProps {
   generationStage?: GenerationStage;
   generationPercentage?: number;
   onStageChange?: (stage: string, percentage: number) => void;
+  getImageUrl?: (url: string) => string; // 可选的图像URL处理函数
 }
 
 export default function GeneratedImageGallery({
@@ -49,7 +51,8 @@ export default function GeneratedImageGallery({
   isGenerating = false,
   generationStage,
   generationPercentage,
-  onStageChange
+  onStageChange,
+  getImageUrl
 }: GeneratedImageGalleryProps) {
   const router = useRouter();
   const [previewImage, setPreviewImage] = useState<string | null>(null);
@@ -57,11 +60,44 @@ export default function GeneratedImageGallery({
   const [errorImages, setErrorImages] = useState<Record<string, boolean>>({});
   const [visibleCount, setVisibleCount] = useState<number>(MAX_VISIBLE_IMAGES);
   const [activeImagesSet, setActiveImagesSet] = useState<Set<string>>(new Set());
+  const [imageProxyMap, setImageProxyMap] = useState<Record<string, string>>({});
+  
+  // 使用自定义钩子获取图片处理函数
+  const { getImageUrl: defaultGetImageUrl } = useImageHandling();
+  const resolveImageUrl = getImageUrl || defaultGetImageUrl;
   
   const gridRef = useRef<HTMLDivElement>(null);
   const observerRef = useRef<IntersectionObserver | null>(null);
   const loadMoreRef = useRef<HTMLDivElement>(null);
   const imageRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+  
+  // 监听图片代理成功事件
+  useEffect(() => {
+    const handleImageProxySuccess = (event: Event) => {
+      const customEvent = event as CustomEvent<{originalUrl: string, proxyUrl: string}>;
+      if (customEvent.detail) {
+        const { originalUrl, proxyUrl } = customEvent.detail;
+        
+        // 更新代理图片映射
+        setImageProxyMap(prev => ({
+          ...prev,
+          [originalUrl]: proxyUrl
+        }));
+        
+        // 触发重新渲染
+        setLoadedImages(prev => ({
+          ...prev,
+          [originalUrl]: true
+        }));
+      }
+    };
+    
+    document.addEventListener('imageProxySuccess', handleImageProxySuccess);
+    
+    return () => {
+      document.removeEventListener('imageProxySuccess', handleImageProxySuccess);
+    };
+  }, []);
   
   // 判断是否显示骨架屏 - 修改为始终在生成过程中显示
   const shouldShowSkeleton = isGenerating;
@@ -177,6 +213,13 @@ export default function GeneratedImageGallery({
           delete newState[imageUrl];
           return newState;
         });
+        
+        // 清除代理映射
+        setImageProxyMap(prev => {
+          const newState = {...prev};
+          delete newState[imageUrl];
+          return newState;
+        });
       }
     } catch (error) {
       console.error("删除图片失败:", error);
@@ -194,6 +237,23 @@ export default function GeneratedImageGallery({
     setErrorImages(prev => ({...prev, [imageUrl]: true}));
     onImageError(imageUrl);
   }, [onImageError]);
+
+  // 处理图片下载 - 使用支持代理的URL
+  const handleDownload = useCallback((originalUrl: string) => {
+    const urlToDownload = imageProxyMap[originalUrl] || resolveImageUrl(originalUrl);
+    onDownloadImage(urlToDownload);
+  }, [onDownloadImage, imageProxyMap, resolveImageUrl]);
+
+  // 获取代理或原始URL的方法
+  const getDisplayUrl = useCallback((originalUrl: string) => {
+    // 如果存在代理映射，优先使用
+    if (imageProxyMap[originalUrl]) {
+      return imageProxyMap[originalUrl];
+    }
+    
+    // 否则使用解析URL方法
+    return resolveImageUrl(originalUrl);
+  }, [imageProxyMap, resolveImageUrl]);
 
   // 构建CSS类名
   const gridClassName = isLargerSize 
@@ -248,118 +308,82 @@ export default function GeneratedImageGallery({
               <div className="bg-muted/50 rounded-full p-3 mb-3">
                 <ImageIcon className="h-6 w-6 text-primary/60" />
               </div>
-              <p className="text-foreground/80 mb-1.5 font-quicksand">暂无生成的图片</p>
-              <p className="text-xs text-muted-foreground">上传照片并选择风格，开始创作</p>
+              <p className="text-foreground/80 text-center">尚未生成任何图片</p>
+              <p className="text-muted-foreground text-sm text-center mt-1">上传图片并选择风格开始创作</p>
             </div>
           </div>
         )}
         
-        {/* 优化后的图片渲染 - 只渲染可见范围内的图片 */}
-        {displayImages.map((imageUrl, index) => (
-          <div
-            key={`${imageUrl}-${index}`}
-            className="ghibli-image-container aspect-square relative overflow-hidden rounded-xl border border-border/40 cursor-pointer shadow-ghibli-sm hover:shadow-ghibli transition-all duration-300 hover:border-border/60 animate-fade-in"
-            onClick={() => setPreviewImage(imageUrl)}
-            ref={(node) => imageRefCallback(node, imageUrl)}
-          >
-            {/* 图片加载中状态 */}
-            {!loadedImages[imageUrl] && !errorImages[imageUrl] && (
-              <div className="absolute inset-0 flex items-center justify-center bg-muted/60 backdrop-blur-sm z-10">
-                <ImageLoading message="加载中..." />
-              </div>
-            )}
-            
-            {/* 图片加载错误状态 */}
-            {errorImages[imageUrl] && (
-              <div className="absolute inset-0 flex flex-col items-center justify-center bg-muted/60 backdrop-blur-sm z-10">
-                <ImageError message="加载失败" />
-              </div>
-            )}
-            
-            <div className="w-full h-full relative">
-              {/* 仅当图片在视口中或已被加载，才加载图片 */}
-              {(activeImagesSet.has(imageUrl) || loadedImages[imageUrl] || index < 4) && (
-                <LazyImage
-                  src={imageUrl}
-                  alt={`生成的图片 ${index + 1}`}
-                  className="object-cover w-full h-full transition-transform duration-700 hover:scale-[1.05]"
-                  onImageLoad={() => handleImageLoad(imageUrl)}
-                  onImageError={() => handleImageError(imageUrl)}
-                  fadeIn={true}
-                  blurEffect={true}
-                  // 设置最前面几张图片为高优先级
-                  priority={index < 4}
-                />
+        {/* 图片列表 */}
+        {!isLoading && displayImages.map((imageUrl, index) => {
+          const isActive = activeImagesSet.has(imageUrl);
+          const isVisible = isActive || !loadedImages[imageUrl];
+          const isError = errorImages[imageUrl];
+          const isLoaded = loadedImages[imageUrl];
+          
+          // 使用代理或处理后的URL
+          const displayUrl = getDisplayUrl(imageUrl);
+          
+          return (
+            <div 
+              key={imageUrl + index} 
+              className="aspect-square relative bg-card/40 border border-border rounded-xl overflow-hidden shadow-ghibli-sm hover:shadow-ghibli transition-all duration-300 cursor-pointer"
+              ref={node => imageRefCallback(node, imageUrl)}
+              onClick={() => setPreviewImage(imageUrl)}
+            >
+              {isVisible && !isError && (
+                <>
+                  {!isLoaded && <ImageLoading />}
+                  <LazyImage
+                    src={displayUrl}
+                    alt={`生成的图片 ${index + 1}`}
+                    onImageLoad={() => handleImageLoad(imageUrl)}
+                    onImageError={() => handleImageError(imageUrl)}
+                    className="w-full h-full object-cover"
+                  />
+                </>
               )}
-            </div>
-            
-            {/* 图片操作按钮 - 鼠标悬停时显示 */}
-            <div className="absolute bottom-0 left-0 right-0 p-2.5 bg-gradient-to-t from-black/80 to-transparent opacity-0 hover:opacity-100 transition-opacity duration-300 flex justify-end gap-2">
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-8 w-8 rounded-full bg-black/40 hover:bg-black/60 text-white shadow-ghibli-sm backdrop-blur-sm"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onDownloadImage(imageUrl);
-                }}
-                title="下载"
-              >
-                <Download className="h-3.5 w-3.5" />
-              </Button>
               
-              {onDeleteImage && (
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8 rounded-full bg-destructive/40 hover:bg-destructive/60 text-white shadow-ghibli-sm backdrop-blur-sm"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleDeleteImage(imageUrl);
-                  }}
-                  title="删除"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </Button>
-              )}
+              {isError && <ImageError />}
+            </div>
+          );
+        })}
+        
+        {/* 加载更多指示器 */}
+        {hasMoreImages && (
+          <div 
+            ref={loadMoreRef}
+            className="col-span-full py-6 flex justify-center"
+          >
+            <div className="animate-pulse flex items-center justify-center bg-card/50 p-3 rounded-xl border border-border">
+              <Loader2 className="h-5 w-5 animate-spin text-primary" />
+              <span className="ml-2 text-sm text-foreground/70">加载更多...</span>
             </div>
           </div>
-        ))}
+        )}
       </div>
       
-      {/* 加载更多指示器 */}
-      {hasMoreImages && (
-        <div 
-          ref={loadMoreRef}
-          className="w-full flex justify-center items-center py-8 mt-4 opacity-80 cursor-pointer"
-          onClick={handleLoadMore}
-        >
-          <div className="flex flex-col items-center">
-            <Loader2 className="h-5 w-5 animate-spin text-primary mb-1" />
-            <p className="text-sm text-primary">加载更多图片</p>
-          </div>
-        </div>
-      )}
-      
-      {/* 查看更多按钮 - 只在需要时显示 */}
-      {!hideViewMoreButton && !isLoading && images.length > 0 && (
-        <div className="flex justify-end mt-5">
-          <Button 
-            variant="outline" 
-            size="sm" 
-            className="bg-primary/10 text-primary hover:bg-primary/20 border-none shadow-ghibli-sm hover:shadow-ghibli transition-all duration-300"
+      {/* 查看更多按钮，仅在有图片且隐藏按钮为false时显示 */}
+      {!hideViewMoreButton && images.length > 0 && (
+        <div className="mt-6 flex justify-center">
+          <Button
             onClick={handleViewMore}
+            variant="outline"
+            className="group border-primary/40 hover:border-primary hover:bg-primary/10 shadow-ghibli-sm hover:shadow-ghibli transition-all duration-300 hover:translate-y-[-1px]"
           >
-            查看更多
-            <ChevronRight className="ml-1 h-4 w-4" />
+            查看全部图片历史
+            <ChevronRight className="ml-1 h-4 w-4 group-hover:translate-x-1 transition-transform duration-300" />
           </Button>
         </div>
       )}
       
       {/* 图片预览模态框 */}
       {previewImage && (
-        <div className="fixed inset-0 bg-black/85 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-fade-in">
-          <div className="relative max-w-4xl max-h-[90vh] w-full animate-scale-in">
+        <div 
+          className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in"
+          onClick={() => setPreviewImage(null)}
+        >
+          <div className="relative max-w-4xl max-h-[90vh] w-full animate-scale-in" onClick={(e) => e.stopPropagation()}>
             {/* 关闭按钮 */}
             <div className="absolute -top-12 right-0 flex justify-end">
               <Button 
@@ -375,46 +399,39 @@ export default function GeneratedImageGallery({
             {/* 图片预览 */}
             <div className="bg-card/95 backdrop-blur-md rounded-xl overflow-hidden shadow-ghibli border border-border/50">
               <div className="relative aspect-auto max-h-[80vh] flex items-center justify-center p-4">
-                <LazyImage
-                  src={previewImage}
+                <img 
+                  src={getDisplayUrl(previewImage)} 
                   alt="预览图片"
                   className="max-w-full max-h-[70vh] object-contain"
-                  fadeIn={true}
-                  blurEffect={true}
-                  priority={true}
                 />
               </div>
               
               {/* 图片操作栏 */}
-              <div className="bg-card/90 border-t border-border/30 p-4 flex justify-between items-center">
-                <div className="text-sm text-muted-foreground">
-                  {/* 显示当前预览的是第几张图片，总共几张 */}
-                  {images.indexOf(previewImage) !== -1 && (
-                    <span>图片 {images.indexOf(previewImage) + 1} / {images.length}</span>
-                  )}
+              <div className="p-4 flex justify-between items-center border-t border-border/50">
+                <div className="truncate text-sm text-muted-foreground font-quicksand">
+                  预览图片
                 </div>
+                
                 <div className="flex gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="bg-background/80 hover:bg-background/60 text-foreground"
-                    onClick={(e) => onDownloadImage(previewImage)}
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    className="bg-primary/10 text-primary hover:bg-primary/20 border-none shadow-ghibli-sm hover:shadow-ghibli transition-all duration-300"
+                    onClick={() => handleDownload(previewImage)}
                   >
                     <Download className="h-4 w-4 mr-1" />
-                    下载
+                    <span>下载</span>
                   </Button>
+                  
                   {onDeleteImage && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="bg-destructive/10 hover:bg-destructive/20 text-destructive border-destructive/20"
-                      onClick={() => {
-                        handleDeleteImage(previewImage);
-                        setPreviewImage(null);
-                      }}
+                    <Button 
+                      variant="destructive" 
+                      size="sm" 
+                      className="shadow-ghibli-sm hover:shadow-ghibli transition-all duration-300"
+                      onClick={() => handleDeleteImage(previewImage)}
                     >
                       <Trash2 className="h-4 w-4 mr-1" />
-                      删除
+                      <span>删除</span>
                     </Button>
                   )}
                 </div>
