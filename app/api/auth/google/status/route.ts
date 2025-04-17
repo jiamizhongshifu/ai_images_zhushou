@@ -1,16 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
-import { pendingAuths, getAuthState } from '../init/route';
-
-// 清理超过30分钟的登录状态
-const cleanupOldAuthStates = () => {
-  const now = Date.now();
-  pendingAuths.forEach((value, key) => {
-    if (now - value.timestamp > 30 * 60 * 1000) {
-      pendingAuths.delete(key);
-    }
-  });
-};
+import { pendingAuths, getAuthState, cleanupOldAuthStates } from '../auth-state';
 
 /**
  * 检查Google OAuth认证状态

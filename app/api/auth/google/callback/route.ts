@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getAuthState, updateAuthState, pendingAuths } from '../init/route';
+import { getAuthState, updateAuthState, pendingAuths } from '../auth-state';
 import { createClient } from '@/utils/supabase/server';
 
 // Google OAuth配置

@@ -1,11 +1,7 @@
-// 添加全局类型声明
-declare global {
-  var __GOOGLE_AUTH_SESSIONS: Map<string, any>;
-}
-
 import { NextRequest, NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { nanoid } from 'nanoid';
+import { pendingAuths, getAuthState, updateAuthState } from '../auth-state';
 
 // Google OAuth配置
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
@@ -17,31 +13,6 @@ const NEXT_PUBLIC_URL = process.env.NEXT_PUBLIC_URL || process.env.VERCEL_URL ||
 const REDIRECT_URI = IS_DEV 
   ? `http://localhost:3000/api/auth/google/callback` 
   : `https://imgtutu.ai/api/auth/google/callback`;
-
-// 存储待处理的认证状态
-const pendingAuths = new Map();
-
-// 确保全局认证会话存储存在
-if (typeof global !== 'undefined' && !global.__GOOGLE_AUTH_SESSIONS) {
-  global.__GOOGLE_AUTH_SESSIONS = new Map();
-  console.log('[GoogleAuth] 初始化全局会话存储');
-}
-
-/**
- * 获取认证状态（内部函数）
- */
-function getAuthState(sessionKey: string) {
-  return pendingAuths.get(sessionKey);
-}
-
-/**
- * 更新认证状态（内部函数）
- */
-function updateAuthState(sessionKey: string, update: any) {
-  const current = pendingAuths.get(sessionKey) || {};
-  pendingAuths.set(sessionKey, { ...current, ...update });
-  return pendingAuths.get(sessionKey);
-}
 
 /**
  * 初始化Google OAuth认证流程
