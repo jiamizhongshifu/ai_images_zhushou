@@ -10,6 +10,7 @@ import { generatePromptWithStyle } from "@/app/config/styles";
 import { ResponsiveContainer, ResponsiveSection, ResponsiveGrid } from "@/components/ui/responsive-container";
 import { GenerationStage, ImageGenerationSkeleton } from "@/components/ui/skeleton-generation";
 import { LazyImage } from "@/components/ui/lazy-image";
+import { ImageLoading, ImageError } from "@/components/ui/loading-states";
 import GeneratedImageGallery from "@/components/creation/generated-image-gallery";
 
 // 导入创作页组件
@@ -453,11 +454,11 @@ export default function ProtectedPage() {
                   {/* 显示生成中的骨架屏或最新生成的图片 */}
                   <div className="aspect-square w-full">
                     {isGenerating ? (
-                      <ImageGenerationSkeleton 
-                        isGenerating={isGenerating}
-                        stage={generationStage}
-                        percentage={generationPercentage}
-                      />
+                      <div className="aspect-square relative bg-card/40 border border-border rounded-xl overflow-hidden shadow-ghibli-sm hover:shadow-ghibli transition-all duration-300 w-full h-full">
+                        <div className="absolute inset-0 flex items-center justify-center bg-muted/60 backdrop-blur-sm z-10">
+                          <ImageLoading message="生成中..." />
+                        </div>
+                      </div>
                     ) : generatedImages[0] && (
                       <div 
                         className="aspect-square relative bg-card/40 border border-border rounded-xl overflow-hidden shadow-ghibli-sm hover:shadow-ghibli transition-all duration-300 cursor-pointer w-full h-full"
@@ -469,6 +470,18 @@ export default function ProtectedPage() {
                           onImageLoad={() => handleImageLoad(generatedImages[0])}
                           onImageError={() => handleImageError(generatedImages[0])}
                           className="w-full h-full object-cover"
+                          fadeIn={true}
+                          blurEffect={true}
+                          loadingElement={
+                            <div className="absolute inset-0 flex items-center justify-center bg-muted/60 backdrop-blur-sm z-10">
+                              <ImageLoading message="加载中..." />
+                            </div>
+                          }
+                          errorElement={
+                            <div className="absolute inset-0 flex flex-col items-center justify-center bg-muted/60 backdrop-blur-sm z-10">
+                              <ImageError message="加载失败" />
+                            </div>
+                          }
                         />
                       </div>
                     )}
@@ -487,6 +500,18 @@ export default function ProtectedPage() {
                           onImageLoad={() => handleImageLoad(imageUrl)}
                           onImageError={() => handleImageError(imageUrl)}
                           className="w-full h-full object-cover"
+                          fadeIn={true}
+                          blurEffect={true}
+                          loadingElement={
+                            <div className="absolute inset-0 flex items-center justify-center bg-muted/60 backdrop-blur-sm z-10">
+                              <ImageLoading message="加载中..." />
+                            </div>
+                          }
+                          errorElement={
+                            <div className="absolute inset-0 flex flex-col items-center justify-center bg-muted/60 backdrop-blur-sm z-10">
+                              <ImageError message="加载失败" />
+                            </div>
+                          }
                         />
                       </div>
                     </div>
