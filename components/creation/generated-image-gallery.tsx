@@ -102,8 +102,8 @@ const GeneratedImageGallery = React.forwardRef<HTMLDivElement, GeneratedImageGal
     };
   }, []);
   
-  // 判断是否显示骨架屏 - 修改为始终在生成过程中显示
-  const shouldShowSkeleton = isGenerating;
+  // 判断是否显示骨架屏
+  const shouldShowSkeleton = isGenerating || (generationStage && generationStage !== 'completed' && generationStage !== 'failed');
   
   // 计算要显示的图片
   let displayImages = images;
@@ -307,6 +307,7 @@ const GeneratedImageGallery = React.forwardRef<HTMLDivElement, GeneratedImageGal
             stage={generationStage}
             percentage={generationPercentage}
             onStageChange={onStageChange}
+            taskId={`task-${Date.now()}`}
           />
         </div>
       );
