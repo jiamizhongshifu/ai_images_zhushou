@@ -92,9 +92,12 @@ export function generateSign(params: Record<string, any>, key: string): string {
   // 2. 按照参数名ASCII码从小到大排序
   const sortedKeys = Object.keys(filteredParams).sort();
 
-  // 3. 拼接成URL键值对的格式
+  // 3. 拼接成URL键值对的格式 - 确保使用原始字符串，不进行URL编码
   const stringArray = sortedKeys.map(key => `${key}=${filteredParams[key]}`);
   const stringA = stringArray.join('&');
+  
+  // 调试输出
+  console.log('签名参数字符串:', stringA);
 
   // 4. 拼接商户密钥并进行MD5加密
   const stringSignTemp = stringA + key;
@@ -139,34 +142,49 @@ export function generatePaymentUrl(
     ? `${SITE_BASE_URL}/protected?order_no=${orderNo}&user_id=${userId}` 
     : `${SITE_BASE_URL}/protected?order_no=${orderNo}`;
   
-  // 确保传递所有必需参数，且参数值不为空
+  // 商品名称处理 - 不同支付方式有不同的处理策略
+  let productName = `AI图片助手-${credits}点数充值`;
+  
+  // 微信支付需要更严格的处理，只使用简单的ASCII字符
+  if (paymentType === PaymentType.WXPAY) {
+    // 对于微信支付，直接使用英文名称避免编码问题
+    productName = `AI Assistant-${credits} Credits`;
+  } else {
+    // 支付宝的处理方式，替换中文字符为编码
+    productName = productName.replace(/[^\x00-\x7F]/g, char => 
+      encodeURIComponent(char).replace(/%/g, '')
+    );
+  }
+  
   const params: Record<string, any> = {
     pid: ZPAY_PID,
     type: paymentType,
     out_trade_no: orderNo,
     notify_url: `${SITE_BASE_URL}/api/payment/webhook`,
     return_url: returnUrl,
-    name: `AI图片助手-${credits}点数充值`,
+    name: productName,
     money: amount.toFixed(2),
     sign_type: 'MD5',
     // 添加自定义参数，将用户ID信息传递到支付页面
     param: userId || ''
   };
   
-  // 确保没有空值参数
+  // 确保所有参数都是字符串类型，并且不包含特殊字符
   Object.keys(params).forEach(key => {
     if (params[key] === undefined || params[key] === null || params[key] === '') {
       console.error(`支付参数错误: ${key} 不能为空`);
     }
+    // 将所有参数转为字符串
+    params[key] = String(params[key]);
   });
 
   // 生成签名
   params.sign = generateSign(params, ZPAY_KEY);
 
   // 打印日志方便调试
-  console.log('支付参数:', params);
+  console.log(`${paymentType}支付参数:`, params);
 
-  // 构建URL查询参数
+  // 构建URL查询参数 - 正确进行URL编码
   const queryString = Object.keys(params)
     .map(key => `${encodeURIComponent(key)}=${encodeURIComponent(params[key])}`)
     .join('&');
