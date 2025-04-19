@@ -561,13 +561,13 @@ export default function ProtectedPage() {
         )}
       </div>
       
-      {/* 替换原有的预览模态框为统一的 ImagePreviewModal 组件 */}
+      {/* 图片预览模态框 */}
       <ImagePreviewModal
         isOpen={!!previewImage}
         imageUrl={previewImage}
         onClose={() => setPreviewImage(null)}
-        onDownload={() => previewImage && downloadImage(previewImage)}
-        onDelete={() => previewImage && handleDeleteGeneratedImage(previewImage)}
+        onDownload={previewImage ? () => downloadImage(previewImage) : undefined}
+        onDelete={previewImage ? () => handleDeleteGeneratedImage(previewImage) : undefined}
       />
     </div>
   );
