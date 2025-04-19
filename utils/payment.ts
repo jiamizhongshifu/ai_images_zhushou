@@ -80,28 +80,37 @@ export function generateOrderNo(): string {
  * @param key 商户密钥
  */
 export function generateSign(params: Record<string, any>, key: string): string {
-  // 1. 排除sign和sign_type参数，以及空值参数
-  const filteredParams: Record<string, any> = {};
-  Object.keys(params).forEach(k => {
-    const value = params[k];
-    if (k !== 'sign' && k !== 'sign_type' && value !== null && value !== undefined && value !== '') {
-      filteredParams[k] = value;
-    }
-  });
+  try {
+    // 1. 排除sign和sign_type参数，以及空值参数
+    const filteredParams: Record<string, any> = {};
+    Object.keys(params).forEach(k => {
+      const value = params[k];
+      if (k !== 'sign' && k !== 'sign_type' && value !== null && value !== undefined && value !== '') {
+        filteredParams[k] = value;
+      }
+    });
 
-  // 2. 按照参数名ASCII码从小到大排序
-  const sortedKeys = Object.keys(filteredParams).sort();
+    // 2. 按照参数名ASCII码从小到大排序(a-z)
+    const sortedKeys = Object.keys(filteredParams).sort();
 
-  // 3. 拼接成URL键值对的格式 - 确保使用原始字符串，不进行URL编码
-  const stringArray = sortedKeys.map(key => `${key}=${filteredParams[key]}`);
-  const stringA = stringArray.join('&');
-  
-  // 调试输出
-  console.log('签名参数字符串:', stringA);
-
-  // 4. 拼接商户密钥并进行MD5加密
-  const stringSignTemp = stringA + key;
-  return crypto.createHash('md5').update(stringSignTemp).digest('hex').toLowerCase();
+    // 3. 拼接成URL键值对的格式 - 文档明确说明"参数值不要进行url编码"
+    const stringArray = sortedKeys.map(key => `${key}=${filteredParams[key]}`);
+    const stringA = stringArray.join('&');
+    
+    // 4. 拼接商户密钥并进行MD5加密
+    // 注意：文档要求是 stringA + key，而不是追加到查询字符串中
+    const stringSignTemp = stringA + key;
+    
+    // 调试输出，但不包含敏感的key信息
+    console.log('待签名字符串(不含KEY):', stringA);
+    
+    // 5. MD5加密结果使用小写
+    const sign = crypto.createHash('md5').update(stringSignTemp).digest('hex').toLowerCase();
+    return sign;
+  } catch (error) {
+    console.error('生成签名出错:', error);
+    throw new Error(`生成支付签名失败: ${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 
 /**
@@ -110,11 +119,28 @@ export function generateSign(params: Record<string, any>, key: string): string {
  * @param key 商户密钥
  */
 export function verifySign(params: Record<string, any>, key: string): boolean {
-  const receivedSign = params.sign;
-  if (!receivedSign) return false;
+  try {
+    const receivedSign = params.sign;
+    if (!receivedSign) {
+      console.error('缺少签名参数');
+      return false;
+    }
 
-  const calculatedSign = generateSign(params, key);
-  return receivedSign === calculatedSign;
+    // 计算签名
+    const calculatedSign = generateSign(params, key);
+    
+    // 比较签名（不区分大小写）
+    const isValid = receivedSign.toLowerCase() === calculatedSign.toLowerCase();
+    
+    if (!isValid) {
+      console.error('签名不匹配。收到:', receivedSign, '计算:', calculatedSign);
+    }
+    
+    return isValid;
+  } catch (error) {
+    console.error('验证签名过程出错:', error);
+    return false;
+  }
 }
 
 /**
@@ -142,21 +168,18 @@ export function generatePaymentUrl(
     ? `${SITE_BASE_URL}/protected?order_no=${orderNo}&user_id=${userId}` 
     : `${SITE_BASE_URL}/protected?order_no=${orderNo}`;
   
-  // 商品名称处理 - 不同支付方式有不同的处理策略
-  let productName = `AI图片助手-${credits}点数充值`;
-  
-  // 微信支付需要更严格的处理，只使用简单的ASCII字符
+  // 商品名称处理 - 不进行任何URL编码，文档要求：参数值不要进行url编码
+  let productName = '';
   if (paymentType === PaymentType.WXPAY) {
-    // 对于微信支付，直接使用英文名称避免编码问题
+    // 对于微信支付，使用英文命名避免中文问题
     productName = `AI Assistant-${credits} Credits`;
   } else {
-    // 支付宝的处理方式，替换中文字符为编码
-    productName = productName.replace(/[^\x00-\x7F]/g, char => 
-      encodeURIComponent(char).replace(/%/g, '')
-    );
+    // 支付宝也使用英文命名避免中文问题
+    productName = `AI Assistant-${credits} Credits`;
   }
   
-  const params: Record<string, any> = {
+  // 创建参数对象 - 所有值都使用字符串格式
+  const params: Record<string, string> = {
     pid: ZPAY_PID,
     type: paymentType,
     out_trade_no: orderNo,
@@ -165,17 +188,14 @@ export function generatePaymentUrl(
     name: productName,
     money: amount.toFixed(2),
     sign_type: 'MD5',
-    // 添加自定义参数，将用户ID信息传递到支付页面
     param: userId || ''
   };
   
-  // 确保所有参数都是字符串类型，并且不包含特殊字符
+  // 检查空值参数
   Object.keys(params).forEach(key => {
     if (params[key] === undefined || params[key] === null || params[key] === '') {
       console.error(`支付参数错误: ${key} 不能为空`);
     }
-    // 将所有参数转为字符串
-    params[key] = String(params[key]);
   });
 
   // 生成签名
@@ -184,7 +204,7 @@ export function generatePaymentUrl(
   // 打印日志方便调试
   console.log(`${paymentType}支付参数:`, params);
 
-  // 构建URL查询参数 - 正确进行URL编码
+  // 构建URL查询参数 - 这时需要对URL做编码，但只针对最终URL
   const queryString = Object.keys(params)
     .map(key => `${encodeURIComponent(key)}=${encodeURIComponent(params[key])}`)
     .join('&');
@@ -234,18 +254,27 @@ export function parsePaymentNotification(data: Record<string, any>): {
     data.paid === '1' ||
     data.paid === 'true';
     
-  // 尝试验证签名，但不将其作为必要条件
-  let isValid = true;
+  // 验证签名 - 增强安全性
+  let isValid = false;
   
   try {
     if (data.sign) {
-      // 只有当提供了签名时才验证
+      // 根据文档，必须验证签名
       isValid = verifySign(data, ZPAY_KEY);
+      console.log('签名验证结果:', isValid ? '通过' : '失败');
+      
+      if (!isValid) {
+        // 记录失败原因，用于调试
+        const calculatedSign = generateSign(data, ZPAY_KEY);
+        console.error('签名验证失败。收到的签名:', data.sign, '计算的签名:', calculatedSign);
+      }
+    } else {
+      console.error('支付通知缺少签名参数');
+      isValid = false;
     }
   } catch (error) {
     console.error('验证签名过程中出错:', error);
-    // 签名验证失败时仍然继续处理
-    isValid = true;
+    isValid = false;
   }
   
   // 打印处理结果
