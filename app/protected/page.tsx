@@ -468,7 +468,11 @@ export default function ProtectedPage() {
                     {isGenerating ? (
                       <div className="aspect-square relative bg-card/40 border border-border rounded-xl overflow-hidden shadow-ghibli-sm hover:shadow-ghibli transition-all duration-300 w-full h-full">
                         <div className="absolute inset-0 flex items-center justify-center bg-muted/60 backdrop-blur-sm z-10">
-                          <ImageLoading message="生成中..." />
+                          <ImageGenerationSkeleton 
+                            stage={generationStage} 
+                            percentage={generationPercentage} 
+                            isGenerating={isGenerating}
+                          />
                         </div>
                       </div>
                     ) : generatedImages[0] && (
