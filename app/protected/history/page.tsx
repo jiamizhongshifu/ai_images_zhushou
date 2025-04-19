@@ -5,10 +5,12 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { Loader2, ImageIcon, ChevronLeft, ChevronRight } from "lucide-react";
-import GeneratedImageGallery from "@/components/creation/generated-image-gallery";
-import useImageHistory, { ImageHistoryItem } from "@/hooks/useImageHistory";
+import { ImagePreviewModal } from "@/components/ui/image-preview-modal";
+import { LazyImage } from "@/components/ui/lazy-image";
+import { ImageLoading, ImageError } from "@/components/ui/loading-states";
+import useImageHistory from "@/hooks/useImageHistory";
+import useImageHandling from "@/hooks/useImageHandling";
 import { cn } from "@/lib/utils";
-import useNotification from "@/hooks/useNotification";
 
 // 每页显示图片数量
 const ITEMS_PER_PAGE = 12;
@@ -33,7 +35,6 @@ function debounce<T extends (...args: any[]) => any>(
 
 export default function HistoryPage() {
   const router = useRouter();
-  const { showNotification } = useNotification();
   const {
     images,
     historyItems,
@@ -45,11 +46,14 @@ export default function HistoryPage() {
     hasMore
   } = useImageHistory();
   
+  const { getImageUrl, downloadImage } = useImageHandling();
+  
   // 页面状态
   const [currentPage, setCurrentPage] = useState(1);
   const [totalImages, setTotalImages] = useState(0);
   const [pageLoading, setPageLoading] = useState(false);
   const [initialLoadComplete, setInitialLoadComplete] = useState(false);
+  const [previewImage, setPreviewImage] = useState<string | null>(null);
   
   // 请求状态跟踪
   const isInitialLoading = useRef(false);
@@ -176,33 +180,8 @@ export default function HistoryPage() {
     toast.error("图片加载失败");
   }, []);
 
-  // 下载图片
-  const downloadImage = useCallback((imageUrl: string) => {
-    if (!imageUrl) return;
-    
-    toast.promise(
-      fetch(`/api/download-image?url=${encodeURIComponent(imageUrl)}`)
-        .then(res => res.blob())
-        .then(blob => {
-          const url = window.URL.createObjectURL(blob);
-          const a = document.createElement("a");
-          a.href = url;
-          a.download = `image-${Date.now()}.png`;
-          document.body.appendChild(a);
-          a.click();
-          window.URL.revokeObjectURL(url);
-          document.body.removeChild(a);
-        }),
-      {
-        loading: "正在下载图片...",
-        success: "图片下载成功",
-        error: "下载失败，请重试"
-      }
-    );
-  }, []);
-
   // 删除图片
-  const deleteHistoryImage = useCallback(async (imageUrl: string): Promise<void> => {
+  const handleDeleteImage = useCallback(async (imageUrl: string): Promise<void> => {
     if (!imageUrl) return Promise.resolve();
     
     // 查找要删除的条目
@@ -211,9 +190,6 @@ export default function HistoryPage() {
       toast.error("找不到要删除的图片记录");
       return Promise.resolve();
     }
-    
-    // 显示加载状态
-    const toastId = toast.loading("正在删除图片...");
     
     try {
       await deleteImage(targetItem);
@@ -231,13 +207,15 @@ export default function HistoryPage() {
         setTotalImages(prev => Math.max(0, prev - 1));
       }
       
-      // 更新toast状态
-      toast.success("图片已删除", { id: toastId });
+      // 关闭预览
+      setPreviewImage(null);
+      
+      // 显示成功提示
+      toast.success("图片已删除");
     } catch (error) {
       console.error("删除图片失败:", error);
-      // 更新toast状态为错误
-      toast.error("删除失败，请重试", { id: toastId });
-      throw error; // 重新抛出错误以便promise链处理
+      toast.error("删除失败，请重试");
+      throw error;
     }
   }, [deleteImage, currentPageImages, currentPage, fetchTotalCount]);
 
@@ -306,7 +284,7 @@ export default function HistoryPage() {
                   返回创作页面
                 </Button>
               </div>
-            ) : isLoading && !initialLoadComplete ? (
+            ) : isLoading ? (
               <div className="w-full flex flex-col items-center justify-center py-16">
                 <div className="bg-card/60 p-6 rounded-xl border border-border shadow-ghibli-sm">
                   <div className="flex flex-col items-center">
@@ -326,17 +304,6 @@ export default function HistoryPage() {
                   </div>
                 </div>
               </div>
-            ) : currentPageImages.length > 0 ? (
-              <GeneratedImageGallery
-                images={currentPageImages.map(item => item.image_url)}
-                isLoading={false}
-                onImageLoad={handleImageLoad}
-                onImageError={handleImageError}
-                onDownloadImage={downloadImage}
-                onDeleteImage={deleteHistoryImage}
-                hideViewMoreButton={true}
-                isLargerSize={false}
-              />
             ) : !images.length ? (
               <div className="w-full flex flex-col items-center justify-center py-16">
                 <div className="bg-muted/50 rounded-full p-4 mb-3">
@@ -353,19 +320,34 @@ export default function HistoryPage() {
                 </Button>
               </div>
             ) : (
-              <div className="w-full flex flex-col items-center justify-center py-16">
-                <div className="bg-muted/50 rounded-full p-4 mb-3">
-                  <ImageIcon className="h-8 w-8 text-muted-foreground/60" />
-                </div>
-                <p className="text-foreground/80 mb-2 font-quicksand text-lg">当前页暂无图片</p>
-                <p className="text-sm text-muted-foreground mb-4">请尝试其他页码或返回第一页</p>
-                <Button
-                  variant="outline"
-                  onClick={() => handlePageChange(1)}
-                  className="bg-primary/10 text-primary hover:bg-primary/20 border-none shadow-ghibli-sm hover:shadow-ghibli transition-all duration-300"
-                >
-                  返回第一页
-                </Button>
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
+                {currentPageImages.map((item, index) => (
+                  <div
+                    key={`${item.image_url}-${index}`}
+                    className="aspect-square relative overflow-hidden rounded-xl border border-border/40 cursor-pointer shadow-ghibli-sm hover:shadow-ghibli transition-all duration-300 hover:border-border/60"
+                    onClick={() => setPreviewImage(item.image_url)}
+                  >
+                    <LazyImage
+                      src={getImageUrl(item.image_url)}
+                      alt={`历史图片 ${index + 1}`}
+                      className="object-cover w-full h-full transition-transform duration-700 hover:scale-[1.05]"
+                      onImageLoad={handleImageLoad}
+                      onImageError={handleImageError}
+                      fadeIn={true}
+                      blurEffect={true}
+                      loadingElement={
+                        <div className="absolute inset-0 flex items-center justify-center bg-muted/60 backdrop-blur-sm z-10">
+                          <ImageLoading message="加载中..." />
+                        </div>
+                      }
+                      errorElement={
+                        <div className="absolute inset-0 flex flex-col items-center justify-center bg-muted/60 backdrop-blur-sm z-10">
+                          <ImageError message="加载失败" />
+                        </div>
+                      }
+                    />
+                  </div>
+                ))}
               </div>
             )}
             
@@ -445,6 +427,15 @@ export default function HistoryPage() {
           </Button>
         </div>
       </div>
+
+      {/* 图片预览模态框 */}
+      <ImagePreviewModal
+        isOpen={!!previewImage}
+        imageUrl={previewImage}
+        onClose={() => setPreviewImage(null)}
+        onDownload={previewImage ? () => downloadImage(previewImage) : undefined}
+        onDelete={previewImage ? () => handleDeleteImage(previewImage) : undefined}
+      />
     </div>
   );
 }

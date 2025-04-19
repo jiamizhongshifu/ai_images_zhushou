@@ -7,20 +7,12 @@ import { useRouter } from "next/navigation";
 import { ImageGenerationSkeleton, GenerationStage } from "@/components/ui/skeleton-generation";
 import useImageHandling from "@/hooks/useImageHandling";
 import { ImagePreviewModal } from "@/components/ui/image-preview-modal";
+import { debounce } from "@/lib/utils";
 
 // 一次性渲染的最大图片数量
 const MAX_VISIBLE_IMAGES = 12;
 // 滚动防抖时间（毫秒）
-const SCROLL_DEBOUNCE_TIME = 150;
-
-// 防抖函数
-function debounce(fn: Function, ms: number) {
-  let timer: NodeJS.Timeout;
-  return function(...args: any[]) {
-    clearTimeout(timer);
-    timer = setTimeout(() => fn(...args), ms);
-  };
-}
+const SCROLL_DEBOUNCE_TIME = 300;
 
 export interface GeneratedImageGalleryProps extends React.PropsWithChildren {
   images: string[];
@@ -202,28 +194,33 @@ const GeneratedImageGallery = React.forwardRef<HTMLDivElement, GeneratedImageGal
     if (!onDeleteImage) return;
     
     try {
-      if (confirm("确定要删除这张图片吗？此操作不可撤销。")) {
-        await onDeleteImage(imageUrl);
-        
-        // 如果当前预览的图片被删除，关闭预览
-        if (previewImage === imageUrl) {
-          setPreviewImage(null);
-        }
-        
-        // 清除加载状态
-        setLoadedImages(prev => {
-          const newState = {...prev};
-          delete newState[imageUrl];
-          return newState;
-        });
-        
-        // 清除代理映射
-        setImageProxyMap(prev => {
-          const newState = {...prev};
-          delete newState[imageUrl];
-          return newState;
-        });
+      await onDeleteImage(imageUrl);
+      
+      // 如果当前预览的图片被删除，关闭预览
+      if (previewImage === imageUrl) {
+        setPreviewImage(null);
       }
+      
+      // 清除加载状态
+      setLoadedImages(prev => {
+        const newState = {...prev};
+        delete newState[imageUrl];
+        return newState;
+      });
+      
+      // 清除代理映射
+      setImageProxyMap(prev => {
+        const newState = {...prev};
+        delete newState[imageUrl];
+        return newState;
+      });
+      
+      // 从活动图片集合中移除
+      setActiveImagesSet(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(imageUrl);
+        return newSet;
+      });
     } catch (error) {
       console.error("删除图片失败:", error);
     }
@@ -447,7 +444,8 @@ const GeneratedImageGallery = React.forwardRef<HTMLDivElement, GeneratedImageGal
         isOpen={!!previewImage}
         imageUrl={previewImage}
         onClose={() => setPreviewImage(null)}
-        onDownload={onDownloadImage}
+        onDownload={previewImage ? () => handleDownload(previewImage) : undefined}
+        onDelete={onDeleteImage && previewImage ? () => handleDeleteImage(previewImage) : undefined}
       />
     </div>
   );
