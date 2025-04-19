@@ -40,6 +40,15 @@ if (typeof window !== 'undefined') {
   setInterval(cleanupRecentRequests, 30000); // 每30秒清理一次
 }
 
+// 添加全局事件名称常量
+const IMAGE_DELETED_EVENT = 'imageDeleted';
+
+// 添加全局事件处理器类型
+type ImageDeletedEventDetail = {
+  imageUrl: string;
+  id: string;
+};
+
 export interface ImageHistoryItem {
   id: string;
   image_url: string;
@@ -494,7 +503,30 @@ export default function useImageHistory(initialBatchSize = DEFAULT_BATCH_SIZE): 
     }
   }, [batchSize, hasMore, isLoading, offset, validateImageUrl]);
 
-  // 删除历史记录中的图片
+  // 添加事件监听器
+  useEffect(() => {
+    const handleImageDeleted = (event: CustomEvent<ImageDeletedEventDetail>) => {
+      const { imageUrl, id } = event.detail;
+      
+      // 更新本地状态
+      setHistoryItems(prev => prev.filter((item: ImageHistoryItem) => item.id !== id));
+      setImages(prev => prev.filter((url: string) => url !== imageUrl));
+      
+      // 更新全局引用
+      allHistoryItems.current = allHistoryItems.current.filter(
+        (i: ImageHistoryItem) => i.id !== id
+      );
+    };
+
+    // 添加事件监听器
+    window.addEventListener(IMAGE_DELETED_EVENT, handleImageDeleted as EventListener);
+
+    return () => {
+      window.removeEventListener(IMAGE_DELETED_EVENT, handleImageDeleted as EventListener);
+    };
+  }, []);
+
+  // 修改 deleteImage 函数
   const deleteImage = useCallback(async (imageUrlOrItem: string | ImageHistoryItem): Promise<void> => {
     try {
       // 处理不同类型的参数
@@ -554,6 +586,18 @@ export default function useImageHistory(initialBatchSize = DEFAULT_BATCH_SIZE): 
       );
       
       toast.success('图片已删除');
+      
+      // 触发全局事件
+      const event = new CustomEvent<ImageDeletedEventDetail>(IMAGE_DELETED_EVENT, {
+        detail: {
+          imageUrl: imageUrl,
+          id: targetItem.id
+        }
+      });
+      window.dispatchEvent(event);
+
+      // 清除缓存
+      cacheService.delete(HISTORY_CACHE_KEY);
       
       // 如果删除后列表为空且有更多数据，自动加载下一批
       if (historyItems.length <= 1 && hasMore && !isLoading) {
