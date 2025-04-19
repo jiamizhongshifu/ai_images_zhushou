@@ -12,6 +12,7 @@ import { GenerationStage, ImageGenerationSkeleton } from "@/components/ui/skelet
 import { LazyImage } from "@/components/ui/lazy-image";
 import { ImageLoading, ImageError } from "@/components/ui/loading-states";
 import GeneratedImageGallery from "@/components/creation/generated-image-gallery";
+import { ImagePreviewModal } from "@/components/ui/image-preview-modal";
 
 // 导入创作页组件
 import ImageUploader from "@/components/creation/image-uploader";
@@ -318,26 +319,37 @@ export default function ProtectedPage() {
     discardTask(taskId);
   };
 
-  // 添加删除生成图片的函数
+  // 修改删除图片的函数，添加确认对话框
   const handleDeleteGeneratedImage = async (imageUrl: string): Promise<void> => {
     if (!imageUrl) return Promise.resolve();
     
     try {
+      // 添加确认对话框
+      if (!confirm("确定要删除这张图片吗？此操作不可撤销。")) {
+        return Promise.resolve();
+      }
+      
       // 查找该图片是否存在于历史记录中
       const targetItem = images.find(item => item === imageUrl);
       
       // 如果图片在历史记录中存在，使用 deleteImage 函数删除
       if (targetItem) {
-        // 复用历史记录中的删除函数
-        await deleteImage({ image_url: imageUrl, id: "" }); // 使用最简单的结构匹配ImageHistoryItem接口
+        // 复用历史记录中的删除函数，确保与数据库同步
+        await deleteImage({ image_url: imageUrl, id: "" });
       }
       
       // 不管图片是否在历史记录中，都从当前展示列表移除
       const updatedImages = generatedImages.filter(url => url !== imageUrl);
       setGeneratedImages(updatedImages);
       
+      // 关闭预览模态框
+      setPreviewImage(null);
+      
       // 显示成功提示
       showNotification("图片已删除", "success");
+      
+      // 刷新历史记录
+      await refreshHistory();
     } catch (error) {
       console.error("删除图片失败:", error);
       showNotification("删除图片失败，请重试", "error");
@@ -531,68 +543,6 @@ export default function ProtectedPage() {
                   </div>
                 </div>
               )}
-              
-              {/* 图片预览模态框 */}
-              {previewImage && (
-                <div 
-                  className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in"
-                  onClick={() => setPreviewImage(null)}
-                >
-                  <div className="relative max-w-4xl max-h-[90vh] w-full animate-scale-in" onClick={(e) => e.stopPropagation()}>
-                    {/* 关闭按钮 */}
-                    <div className="absolute -top-12 right-0 flex justify-end">
-                      <Button 
-                        variant="ghost" 
-                        size="icon" 
-                        className="h-10 w-10 rounded-full bg-background/20 text-white hover:bg-background/40 backdrop-blur-sm"
-                        onClick={() => setPreviewImage(null)}
-                      >
-                        <X className="h-5 w-5" />
-                      </Button>
-                    </div>
-                    
-                    {/* 图片预览 */}
-                    <div className="bg-card/95 backdrop-blur-md rounded-xl overflow-hidden shadow-ghibli border border-border/50">
-                      <div className="relative aspect-auto max-h-[80vh] flex items-center justify-center p-4">
-                        <img 
-                          src={getImageUrl(previewImage)} 
-                          alt="预览图片"
-                          className="max-w-full max-h-[70vh] object-contain"
-                        />
-                      </div>
-                      
-                      {/* 图片操作栏 */}
-                      <div className="p-4 flex justify-between items-center border-t border-border/50">
-                        <div className="truncate text-sm text-muted-foreground font-quicksand">
-                          预览图片
-                        </div>
-                        
-                        <div className="flex gap-2">
-                          <Button 
-                            variant="outline" 
-                            size="sm" 
-                            className="bg-primary/10 text-primary hover:bg-primary/20 border-none shadow-ghibli-sm hover:shadow-ghibli transition-all duration-300"
-                            onClick={() => downloadImage(previewImage)}
-                          >
-                            <Download className="h-4 w-4 mr-1" />
-                            <span>下载</span>
-                          </Button>
-                          
-                          <Button 
-                            variant="destructive" 
-                            size="sm" 
-                            className="shadow-ghibli-sm hover:shadow-ghibli transition-all duration-300"
-                            onClick={() => handleDeleteGeneratedImage(previewImage)}
-                          >
-                            <Trash2 className="h-4 w-4 mr-1" />
-                            <span>删除</span>
-                          </Button>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
             </div>
           </div>
         </div>
@@ -610,6 +560,15 @@ export default function ProtectedPage() {
           />
         )}
       </div>
+      
+      {/* 替换原有的预览模态框为统一的 ImagePreviewModal 组件 */}
+      <ImagePreviewModal
+        isOpen={!!previewImage}
+        imageUrl={previewImage}
+        onClose={() => setPreviewImage(null)}
+        onDownload={() => previewImage && downloadImage(previewImage)}
+        onDelete={() => previewImage && handleDeleteGeneratedImage(previewImage)}
+      />
     </div>
   );
 }

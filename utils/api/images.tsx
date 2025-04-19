@@ -12,6 +12,10 @@ interface ImageTaskResponse {
   imageUrl?: string;
   error?: string;
   waitTime?: number;
+  progress?: number;
+  stage?: string;
+  estimatedProgress?: number;
+  processingStage?: string;
 }
 
 // 创建图像生成任务
@@ -52,6 +56,8 @@ export function useImageGeneration(params: ImageGenerationParams | null) {
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [waitTime, setWaitTime] = useState<number>(0);
+  const [progress, setProgress] = useState<number>(0);
+  const [stage, setStage] = useState<string>('preparing');
 
   // 创建任务
   useEffect(() => {
@@ -64,6 +70,8 @@ export function useImageGeneration(params: ImageGenerationParams | null) {
         setStatus('pending');
         setError(null);
         setImageUrl(null);
+        setProgress(0);
+        setStage('preparing');
         
         const newTaskId = await createImageGenerationTask(params);
         
@@ -101,11 +109,29 @@ export function useImageGeneration(params: ImageGenerationParams | null) {
         setStatus(taskStatus.status);
         setWaitTime(taskStatus.waitTime || 0);
 
+        // 更新进度和阶段信息
+        if (taskStatus.progress !== undefined) {
+          setProgress(taskStatus.progress);
+        } else if (taskStatus.estimatedProgress !== undefined) {
+          // 如果没有实际进度但有估计进度，使用估计进度
+          setProgress(taskStatus.estimatedProgress);
+        }
+
+        if (taskStatus.stage) {
+          setStage(taskStatus.stage);
+        } else if (taskStatus.processingStage) {
+          // 后备方案：使用处理阶段
+          setStage(taskStatus.processingStage);
+        }
+
         if (taskStatus.status === 'completed' && taskStatus.imageUrl) {
           setImageUrl(taskStatus.imageUrl);
+          setProgress(100);
+          setStage('completed');
           clearInterval(intervalId);
         } else if (taskStatus.status === 'failed') {
           setError(taskStatus.error || '图像生成失败');
+          setStage('failed');
           clearInterval(intervalId);
         }
       } catch (err) {
@@ -119,8 +145,8 @@ export function useImageGeneration(params: ImageGenerationParams | null) {
     // 立即检查一次
     checkStatus();
     
-    // 每2秒检查一次任务状态
-    intervalId = setInterval(checkStatus, 2000);
+    // 每1.5秒检查一次任务状态，提高进度更新频率
+    intervalId = setInterval(checkStatus, 1500);
 
     return () => {
       isMounted = false;
@@ -134,6 +160,8 @@ export function useImageGeneration(params: ImageGenerationParams | null) {
     
     setStatus('idle');
     setTaskId(null);
+    setProgress(0);
+    setStage('preparing');
     // 让useEffect重新触发创建任务
   };
 
@@ -142,6 +170,8 @@ export function useImageGeneration(params: ImageGenerationParams | null) {
     imageUrl,
     error,
     waitTime,
+    progress,
+    stage,
     isLoading: status === 'pending' || status === 'processing',
     retry
   };

@@ -7,9 +7,10 @@ interface ImagePreviewModalProps {
   imageUrl: string | null;
   onClose: () => void;
   onDownload?: (url: string) => void;
+  onDelete?: (url: string) => void;
 }
 
-export function ImagePreviewModal({ isOpen, imageUrl, onClose, onDownload }: ImagePreviewModalProps) {
+export function ImagePreviewModal({ isOpen, imageUrl, onClose, onDownload, onDelete }: ImagePreviewModalProps) {
   if (!isOpen || !imageUrl) return null;
 
   return (
@@ -46,8 +47,18 @@ export function ImagePreviewModal({ isOpen, imageUrl, onClose, onDownload }: Ima
               预览图片
             </div>
             
-            {onDownload && (
-              <div className="flex gap-2">
+            <div className="flex gap-2">
+              {onDelete && (
+                <Button 
+                  variant="destructive" 
+                  size="sm" 
+                  className="shadow-ghibli-sm hover:shadow-ghibli transition-all duration-300"
+                  onClick={() => onDelete(imageUrl)}
+                >
+                  <span>删除</span>
+                </Button>
+              )}
+              {onDownload && (
                 <Button 
                   variant="outline" 
                   size="sm" 
@@ -57,8 +68,8 @@ export function ImagePreviewModal({ isOpen, imageUrl, onClose, onDownload }: Ima
                   <Download className="h-4 w-4 mr-1" />
                   <span>下载</span>
                 </Button>
-              </div>
-            )}
+              )}
+            </div>
           </div>
         </div>
       </div>
