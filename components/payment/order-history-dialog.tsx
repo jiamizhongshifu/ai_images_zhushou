@@ -146,15 +146,24 @@ export default function OrderHistoryDialog({ open, onOpenChange, onOrderUpdated 
   const formatTime = (timestamp: string): string => {
     if (!timestamp) return '-';
     try {
-      return new Date(timestamp).toLocaleString('zh-CN', {
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit',
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit'
-      });
+      const date = new Date(timestamp);
+      
+      // 检查日期是否有效
+      if (isNaN(date.getTime())) {
+        return timestamp;
+      }
+      
+      // 使用更友好的中文日期时间格式
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, '0');
+      const day = String(date.getDate()).padStart(2, '0');
+      const hour = String(date.getHours()).padStart(2, '0');
+      const minute = String(date.getMinutes()).padStart(2, '0');
+      const second = String(date.getSeconds()).padStart(2, '0');
+      
+      return `${year}-${month}-${day} ${hour}:${minute}:${second}`;
     } catch (e) {
+      console.error("日期格式化错误:", e, timestamp);
       return timestamp;
     }
   };
