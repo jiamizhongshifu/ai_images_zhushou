@@ -6,7 +6,7 @@ import {
   PaymentStatus, 
   PaymentType, 
   generateOrderNo, 
-  generatePaymentFormData 
+  generatePaymentUrl 
 } from '@/utils/payment';
 
 /**
@@ -18,7 +18,7 @@ import {
  * 
  * 返回:
  * - success: 是否成功
- * - data: { orderNo, paymentUrl, formData } - 表单数据用于POST提交
+ * - data: { orderNo, paymentUrl }
  * - error: 错误信息(如果有)
  */
 export async function POST(request: NextRequest) {
@@ -50,8 +50,8 @@ export async function POST(request: NextRequest) {
     // 生成订单号
     const orderNo = generateOrderNo();
     
-    // 生成支付表单数据（改用表单方式）
-    const paymentData = generatePaymentFormData(
+    // 生成支付URL
+    const paymentUrl = generatePaymentUrl(
       orderNo,
       creditPackage.price,
       creditPackage.credits,
@@ -82,13 +82,12 @@ export async function POST(request: NextRequest) {
       });
     }
     
-    // 返回订单号和支付数据
+    // 返回订单号和支付URL
     return new Response(JSON.stringify({ 
       success: true, 
       data: {
         orderNo,
-        paymentUrl: paymentData.url,
-        formData: paymentData.formData
+        paymentUrl
       }
     }), {
       status: 200,
