@@ -21,7 +21,7 @@ const supabase = createClient(
  * - success: 是否成功
  * - result: 处理结果
  */
-export async function POST(request: Request) {
+export async function POST(request: Request): Promise<Response> {
   try {
     const { order_no } = await request.json();
     if (!order_no) {
@@ -175,13 +175,13 @@ export async function POST(request: Request) {
           check_time: new Date().toISOString()
         });
         
-        return { 
+        return NextResponse.json({ 
           message: '订单已处理过点数', 
           order: { ...order, status: 'success', credits_updated: true }, 
           creditLogs: creditLogsExisting,
           hasExistingCredits: true,
           lastProcessTime: creditLogsExisting[0].created_at
-        };
+        });
       }
       
       // 如果订单已经是成功状态，再次检查点数记录
@@ -297,14 +297,26 @@ export async function POST(request: Request) {
   }
 }
 
-// 修改速率限制中间件的类型
+// GET 处理函数
 export const GET = withRateLimit(
   async (req: NextRequest) => {
-    const response = await POST(req);
-    if (!(response instanceof NextResponse)) {
-      return NextResponse.json(response);
+    const clonedRequest = new Request(req.url, {
+      method: 'POST',
+      headers: req.headers,
+      body: req.body
+    });
+    const response = await POST(clonedRequest);
+    // 确保返回 NextResponse
+    if (response instanceof NextResponse) {
+      return response;
     }
-    return response;
+    // 如果不是 NextResponse，将其转换为 NextResponse
+    const data = await response.json();
+    return NextResponse.json(data, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers
+    });
   },
   {
     limit: 10,
