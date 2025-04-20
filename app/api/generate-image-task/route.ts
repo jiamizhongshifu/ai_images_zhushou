@@ -889,7 +889,7 @@ async function validateImageRatio(imageUrl: string, task: ImageGenerationTask): 
       return Math.abs(actualRatio - 1) <= tolerance;
     }
   } catch (error) {
-    logger.error('验证图片比例时出错:', error);
+    logger.error(`验证图片比例时出错: ${error instanceof Error ? error.message : String(error)}`);
     return false;
   }
 }
