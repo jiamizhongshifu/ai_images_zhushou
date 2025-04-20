@@ -12,6 +12,7 @@ import { ChatCompletionMessageParam, ChatCompletionContentPart } from 'openai/re
 import { ChatCompletionUserMessageParam, ChatCompletionSystemMessageParam } from 'openai/resources/chat/completions';
 import crypto from 'crypto';
 import { reportProgress, TaskStages } from '@/utils/updateTaskProgress';
+import sharp from 'sharp';
 
 // 图片大小限制
 const MAX_REQUEST_SIZE_MB = 12; // 12MB
@@ -63,6 +64,26 @@ function checkImageSize(imageBase64: string): {isValid: boolean, error?: string}
     console.error('检查图片大小出错:', error);
     return { isValid: true }; // 出错时放行，由后续步骤处理
   }
+}
+
+// 定义图片生成任务的接口
+interface ImageGenerationTask {
+  id: string;                    // 任务ID
+  userId: string;               // 用户ID
+  prompt: string;               // 提示词
+  style?: string | null;        // 风格设置
+  aspectRatio?: string | null;  // 宽高比
+  standardAspectRatio?: string | null; // 标准宽高比
+  model?: string;              // 使用的模型
+  status: 'pending' | 'processing' | 'completed' | 'failed';  // 任务状态
+  imageUrl?: string;           // 生成的图片URL
+  error?: string;              // 错误信息
+  progress?: number;           // 生成进度
+  stage?: string;              // 当前阶段
+  createdAt: string;           // 创建时间
+  updatedAt: string;           // 更新时间
+  fingerprint?: string;        // 请求指纹
+  provider?: string;           // 服务提供商
 }
 
 // 定义TuziConfig类型
@@ -841,6 +862,38 @@ function parseProgressFromContent(content: string): { progress: number, stage: s
   return null;
 }
 
+// 添加比例验证函数
+async function validateImageRatio(imageUrl: string, task: ImageGenerationTask): Promise<boolean> {
+  try {
+    const response = await fetch(imageUrl);
+    const arrayBuffer = await response.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+    const dimensions = await sharp(buffer).metadata();
+    
+    if (!dimensions.width || !dimensions.height) {
+      return false;
+    }
+
+    const actualRatio = dimensions.width / dimensions.height;
+    
+    // 根据任务要求判断比例是否正确
+    if (task.aspectRatio === 'vertical') {
+      // 竖向图片，期望高度大于宽度，比例约为2:3或3:4
+      return actualRatio < 0.75; // 允许最大宽高比为3:4
+    } else if (task.aspectRatio === 'horizontal') {
+      // 横向图片，期望宽度大于高度，比例约为3:2或4:3
+      return actualRatio > 1.3; // 要求最小宽高比为4:3
+    } else {
+      // 正方形图片
+      const tolerance = 0.05;
+      return Math.abs(actualRatio - 1) <= tolerance;
+    }
+  } catch (error) {
+    logger.error('验证图片比例时出错:', error);
+    return false;
+  }
+}
+
 // 主API处理函数，优化为监控执行时间和支持降级策略
 export async function POST(request: NextRequest) {
   const requestStartTime = Date.now();
@@ -1125,11 +1178,11 @@ export async function POST(request: NextRequest) {
             const ratio = width / height;
             
             if (ratio > 1) {
-              finalPrompt += "，保持横向比例";
+              finalPrompt += `，生成${aspectRatio}的横向图片`;
             } else if (ratio < 1) {
-              finalPrompt += "，保持竖向比例";
+              finalPrompt += `，生成${aspectRatio}的竖向图片，宽度${width}，高度${height}`;
             } else {
-              finalPrompt += "，保持正方形比例";
+              finalPrompt += `，生成${aspectRatio}的正方形图片`;
             }
           }
           
@@ -1206,11 +1259,11 @@ export async function POST(request: NextRequest) {
             const ratio = width / height;
             
             if (ratio > 1) {
-              finalPrompt += "，保持横向比例";
+              finalPrompt += `，生成${aspectRatio}的横向图片`;
             } else if (ratio < 1) {
-              finalPrompt += "，保持竖向比例";
+              finalPrompt += `，生成${aspectRatio}的竖向图片，宽度${width}，高度${height}`;
             } else {
-              finalPrompt += "，保持正方形比例";
+              finalPrompt += `，生成${aspectRatio}的正方形图片`;
             }
           }
 
