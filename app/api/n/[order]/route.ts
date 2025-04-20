@@ -1,16 +1,22 @@
 import { NextRequest, NextResponse } from 'next/server';
 
+type RouteContext = {
+  params: {
+    order: string;
+  };
+};
+
 /**
  * 极简化支付通知处理API
  * 通过非常短的URL接收支付通知，然后转发到实际处理程序
  */
 export async function GET(
   request: NextRequest,
-  context: { params: { order: string } }
+  { params }: RouteContext
 ) {
   try {
     // 获取订单号
-    const orderNo = context.params.order;
+    const orderNo = params.order;
     
     // 记录通知
     console.log(`收到支付通知 [GET] 订单号: ${orderNo}`);
@@ -49,11 +55,11 @@ export async function GET(
  */
 export async function POST(
   request: NextRequest,
-  context: { params: { order: string } }
+  { params }: RouteContext
 ) {
   try {
     // 获取订单号
-    const orderNo = context.params.order;
+    const orderNo = params.order;
     
     // 记录通知
     console.log(`收到支付通知 [POST] 订单号: ${orderNo}`);
