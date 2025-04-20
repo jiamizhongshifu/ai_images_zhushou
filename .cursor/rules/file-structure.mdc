@@ -1,0 +1,41 @@
+---
+description:
+globs:
+alwaysApply: false
+---
+# 项目文件结构导航
+
+## 前端代码结构
+
+- [app/](mdc:app/) - Next.js App Router目录
+  - [api/](mdc:app/api/) - API路由
+  - [components/](mdc:app/components/) - App目录下的组件
+  - [contexts/](mdc:app/contexts/) - React上下文
+  - [lib/](mdc:app/lib/) - 工具函数库
+
+- [components/](mdc:components/) - 全局共享组件
+  - [ui/](mdc:components/ui/) - 基础UI组件
+  - [creation/](mdc:components/creation/) - 图像生成相关组件
+  - [layout/](mdc:components/layout/) - 布局组件
+  - [auth/](mdc:components/auth/) - 认证相关组件
+
+- [hooks/](mdc:hooks/) - 自定义React Hooks
+- [store/](mdc:store/) - Zustand状态管理
+- [types/](mdc:types/) - TypeScript类型定义
+- [utils/](mdc:utils/) - 全局工具函数
+- [lib/](mdc:lib/) - 第三方库集成
+
+## 后端与服务
+
+- [scripts/](mdc:scripts/) - 脚本文件，包括任务处理器
+- [middleware.ts](mdc:middleware.ts) - Next.js中间件 (认证与路由保护)
+- [next.config.js](mdc:next.config.js) - Next.js配置
+
+## 数据库
+
+- [sql/](mdc:sql/) - SQL文件与数据库函数
+  
+## 部署
+
+- [deployment/](mdc:deployment/) - 部署相关配置
+- [vercel.json](mdc:vercel.json) - Vercel部署配置

@@ -54,7 +54,7 @@ export async function verifyPaymentStatus(orderNo: string): Promise<boolean> {
       // 3. 调用您的支付网关的查询API
       try {
         // 集成实际支付网关的查询API
-        const queryUrl = `https://zpayz.cn/api/query_order`;
+        const queryUrl = `https://zpayz.cn/mapi/query.php`;
         
         // 准备查询参数
         const queryParams: Record<string, any> = {

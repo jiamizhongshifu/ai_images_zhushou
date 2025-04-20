@@ -1,0 +1,47 @@
+---
+description:
+globs:
+alwaysApply: false
+---
+# AI图像生成任务管理
+
+## 任务生命周期
+
+AI图像生成任务遵循以下状态流转：
+- `pending`: 等待处理
+- `processing`: 正在处理中
+- `completed`: 已完成
+- `failed`: 失败
+- `cancelled`: 已取消
+
+## 核心组件
+
+- [TaskProgressBar.jsx](mdc:components/TaskProgressBar.jsx) - 显示任务进度
+- [TaskCancellationStatus.tsx](mdc:components/TaskCancellationStatus.tsx) - 处理任务取消状态
+- [TaskRecoveryDialog.tsx](mdc:components/TaskRecoveryDialog.tsx) - 恢复中断的任务
+
+## 相关类型定义
+
+- [types/task.ts](mdc:types/task.ts) - 任务相关类型定义
+- [types/creation.d.ts](mdc:types/creation.d.ts) - 图像生成相关类型
+
+## 任务处理流程
+
+1. 前端提交任务请求 (通过API路由)
+2. 后端创建任务记录，状态为`pending`
+3. 任务处理器 ([scripts/task-processor.mjs](mdc:scripts/task-processor.mjs)) 轮询并处理待处理任务
+4. 通过API调用生成图像
+5. 更新任务状态和结果
+
+## 任务取消流程
+
+1. 用户点击取消按钮
+2. 前端发送取消请求到API
+3. 后端更新任务状态为`cancelled`
+4. 如果任务已扣除点数，系统自动退还
+
+## 注意事项
+
+- 任务状态存储在Supabase的`ai_images_creator_tasks`表中
+- 任务进度实时更新，支持页面刷新后恢复
+- 长时间未完成的任务可通过恢复对话框重新获取状态

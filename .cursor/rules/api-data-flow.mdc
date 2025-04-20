@@ -1,0 +1,49 @@
+---
+description:
+globs:
+alwaysApply: false
+---
+# API和数据流
+
+## API路由
+
+项目中的API路由主要位于 [app/api/](mdc:app/api/) 目录下，处理各种客户端请求：
+
+- 图像生成请求
+- 任务状态查询
+- 任务取消
+- 用户点数管理
+
+## 与Supabase的交互
+
+- 使用 [app/actions.ts](mdc:app/actions.ts) 中的服务器操作进行数据库交互
+- 数据库操作通过 [utils/supabase-server.ts](mdc:utils/supabase-server.ts) 进行服务端调用
+- 客户端API通过 [lib/supabase.ts](mdc:lib/supabase.ts) 调用
+
+## 数据流向
+
+1. 用户提交请求 → 前端组件
+2. 前端组件 → API路由或Server Actions
+3. 服务器 → Supabase数据库
+4. 数据库更新 → 返回结果
+5. (可选) 异步任务处理 → 状态更新
+
+## 状态管理
+
+- 全局应用状态通过 [store/](mdc:store/) 目录下的Zustand存储管理
+- 组件级状态使用React useState和useReducer
+- 服务器与客户端状态同步通过API和数据库进行
+
+## 用户认证流程
+
+1. 用户访问站点 → [middleware.ts](mdc:middleware.ts) 检查认证状态
+2. 未认证用户 → 重定向到登录页面
+3. 认证用户 → 允许访问受保护路由
+4. 用户信息从认证提供商获取并在应用中使用
+
+## 数据库表结构
+
+主要的数据库表包括：
+- `ai_images_creator_tasks`: 图像生成任务表
+- `user_credits`: 用户点数表
+- 其他Supabase认证相关表
