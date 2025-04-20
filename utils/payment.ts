@@ -222,22 +222,57 @@ export function parsePaymentNotification(data: Record<string, any>): {
     data.paid === '1' ||
     data.paid === 'true';
     
-  // 尝试验证签名，但不将其作为必要条件
-  let isValid = true;
+  // 强化签名验证: 生产环境必须验证签名，开发环境可选
+  let isValid = false;
   
   try {
     if (data.sign) {
       // 只有当提供了签名时才验证
       isValid = verifySign(data, ZPAY_KEY);
+      // 记录验证结果
+      console.log(`签名验证结果: ${isValid ? '成功' : '失败'}`);
+      
+      // 生产环境下，如果签名验证失败，则支付不成功
+      if (process.env.NODE_ENV === 'production' && !isValid) {
+        console.error('生产环境签名验证失败，拒绝处理支付');
+        return {
+          isValid: false,
+          isSuccess: false,
+          orderNo,
+          amount,
+          tradeNo
+        };
+      }
+    } else if (process.env.NODE_ENV === 'production') {
+      // 生产环境下，必须提供签名
+      console.error('生产环境支付通知缺少签名，拒绝处理');
+      isValid = false;
+    } else {
+      // 开发环境下，可以没有签名
+      console.warn('开发环境: 支付通知无签名，继续处理');
+      isValid = true;
     }
   } catch (error) {
     console.error('验证签名过程中出错:', error);
-    // 签名验证失败时仍然继续处理
-    isValid = true;
+    // 生产环境下，签名验证出错视为失败
+    isValid = process.env.NODE_ENV !== 'production';
+  }
+  
+  // 检查是否是模拟支付结果 - 生产环境不允许模拟
+  const isMockData = data._mock === true || data.mock === true || data._test === true;
+  if (isMockData && process.env.NODE_ENV === 'production') {
+    console.error('生产环境检测到模拟支付数据，拒绝处理');
+    return {
+      isValid: false,
+      isSuccess: false,
+      orderNo,
+      amount,
+      tradeNo
+    };
   }
   
   // 打印处理结果
-  console.log('支付通知解析结果:', { isValid, isSuccess, orderNo, amount, tradeNo });
+  console.log('支付通知解析结果:', { isValid, isSuccess, isMockData, orderNo, amount, tradeNo });
   
   return {
     isValid,
@@ -246,4 +281,52 @@ export function parsePaymentNotification(data: Record<string, any>): {
     amount,
     tradeNo
   };
+}
+
+/**
+ * 检查订单支付状态
+ * @param orderNo 订单号
+ * @returns 是否支付成功
+ */
+export async function checkPaymentStatus(orderNo: string): Promise<{
+  success: boolean;
+  status: PaymentStatus;
+  tradeNo?: string;
+  message?: string;
+}> {
+  if (!orderNo) {
+    return { success: false, status: PaymentStatus.FAILED, message: '订单号不能为空' };
+  }
+  
+  try {
+    console.log(`正在检查订单 ${orderNo} 支付状态`);
+    
+    // 如果是开发环境，并且开启了模拟支付成功
+    if (process.env.NODE_ENV !== 'production' && process.env.MOCK_PAYMENT_SUCCESS === 'true') {
+      console.log(`开发环境: 模拟查询结果: 订单 ${orderNo} 支付成功`);
+      return { 
+        success: true, 
+        status: PaymentStatus.SUCCESS, 
+        tradeNo: `mock_${Date.now()}`,
+        message: '模拟支付成功'
+      };
+    }
+    
+    // 在生产环境中，我们应该调用支付平台的API查询订单状态
+    // 这里只是示例，实际实现应该调用支付平台的查询API
+    console.log(`验证支付状态: 订单 ${orderNo} 需要等待支付回调确认`);
+    
+    return {
+      success: false,
+      status: PaymentStatus.PENDING,
+      message: '订单验证中，请等待支付完成'
+    };
+  } catch (error) {
+    console.error(`检查订单支付状态出错:`, error);
+    return {
+      success: false,
+      status: PaymentStatus.FAILED,
+      message: '查询支付状态失败，请稍后再试'
+    };
+  }
 } 

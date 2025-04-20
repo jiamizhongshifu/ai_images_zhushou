@@ -65,38 +65,40 @@ const checkPaymentHandler = async (request: NextRequest, authResult: any) => {
             // 实际项目中这里应该调用支付网关的查单API
             // 示例: const paymentStatus = await queryPaymentGateway(orderNo);
             
-            // 模拟调用结果 - 实际项目请替换成真实的支付网关查询
-            // 这里简单模拟10%的概率支付成功
-            const mockSuccess = Math.random() < 0.1;
-            
-            if (mockSuccess) {
-              // 模拟支付成功，更新订单状态
-              console.log(`模拟查询结果: 订单 ${orderNo} 支付成功，更新状态`);
-              
-              // 更新订单状态
-              const { error: updateError } = await client
-                .from('ai_images_creator_payments')
-                .update({
-                  status: 'success',
-                  paid_at: new Date().toISOString(),
-                  updated_at: new Date().toISOString()
-                })
-                .eq('order_no', orderNo);
+            // 检查环境，只在非生产环境使用模拟数据
+            if (process.env.NODE_ENV !== 'production') {
+              // 在开发环境中，需要显式开启模拟支付功能
+              if (process.env.MOCK_PAYMENT_SUCCESS === 'true') {
+                // 模拟支付成功，更新订单状态
+                console.log(`[开发环境] 模拟查询结果: 订单 ${orderNo} 支付成功，更新状态`);
                 
-              if (updateError) {
-                throw new Error(`更新订单状态失败: ${updateError.message}`);
+                // 更新订单状态
+                const { error: updateError } = await client
+                  .from('ai_images_creator_payments')
+                  .update({
+                    status: 'success',
+                    paid_at: new Date().toISOString(),
+                    updated_at: new Date().toISOString()
+                  })
+                  .eq('order_no', orderNo);
+                  
+                if (updateError) {
+                  throw new Error(`更新订单状态失败: ${updateError.message}`);
+                }
+                
+                return {
+                  ...order,
+                  status: 'success',
+                  statusChanged: true,
+                  message: '开发环境-模拟支付成功'
+                };
+              } else {
+                console.log(`[开发环境] 模拟查询结果: 订单 ${orderNo} 待支付`);
               }
-              
-              // 更新用户点数
-              // 这里只修改订单状态，实际增加点数应通过webhook/回调处理
-              // 或者可以调用专门的修复API
-              
-              return {
-                ...order,
-                status: 'success',
-                statusChanged: true,
-                message: '订单状态已更新为成功'
-              };
+            } else {
+              // 生产环境: 调用实际的支付网关查询API
+              // const paymentResult = await realPaymentGatewayQuery(orderNo);
+              console.log(`[生产环境] 订单 ${orderNo} 需要等待支付回调确认，不使用模拟数据`);
             }
           } catch (queryError) {
             // 记录查询错误，但不影响返回订单信息
