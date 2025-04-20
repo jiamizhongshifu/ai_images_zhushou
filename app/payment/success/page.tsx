@@ -121,7 +121,8 @@ function PaymentContent() {
                   (data.result.message.includes('已修复') || 
                    data.result.message.includes('已处理') ||
                    data.result.message.includes('点数已增加'))) ||
-                 (data.order && data.order.status === 'success'))) {
+                 (data.order && data.order.status === 'success') ||
+                 (data.result && data.result.hasExistingCredits === true))) {
               
               successData = data;
               break;

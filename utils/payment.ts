@@ -43,7 +43,7 @@ export const CREDIT_PACKAGES: CreditPackage[] = [
   { 
     id: 'test', 
     name: '测试套餐', 
-    credits: 1, 
+    credits: 1,
     baseCredits: 1,
     bonusCredits: 0,
     price: 1,

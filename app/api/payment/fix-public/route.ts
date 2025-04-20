@@ -104,7 +104,7 @@ const handleFixPublic = async (request: NextRequest) => {
         }
         
         // 4. 检查是否已经增加过点数
-        const { data: creditLogs } = await client
+        const { data: creditLogs, error: creditLogsError } = await client
           .from('ai_images_creator_credit_logs')
           .select('*')
           .eq('order_no', orderNo)
@@ -112,10 +112,26 @@ const handleFixPublic = async (request: NextRequest) => {
         
         // 如果已经增加过点数，跳过
         if (creditLogs && creditLogs.length > 0) {
+          console.log(`订单 ${orderNo} 已经增加过点数，跳过点数更新操作`);
+          
+          // 确保订单标记为已更新点数
+          const { error: markError } = await client
+            .from('ai_images_creator_payments')
+            .update({
+              credits_updated: true,
+              updated_at: new Date().toISOString()
+            })
+            .eq('order_no', orderNo);
+            
+          if (markError) {
+            console.warn(`更新订单标记失败: ${markError.message}，但不影响处理`);
+          }
+          
           return { 
-            message: '订单已修复，已有点数记录', 
+            message: '订单已处理', 
             order, 
-            creditLogs 
+            creditLogs,
+            hasExistingCredits: true
           };
         }
         
