@@ -1,6 +1,5 @@
 import { createBrowserClient } from "@supabase/ssr";
 import { AuthChangeEvent, Session } from '@supabase/supabase-js';
-import { getSupabaseConfig, getSiteUrl } from '../env-config';
 
 // 在会话变化时添加或移除cookie标记
 const handleSessionChange = (event: AuthChangeEvent, session: Session | null) => {
@@ -99,12 +98,12 @@ const setupAuthPersistence = () => {
 };
 
 export const createClient = () => {
-  // 获取Supabase配置
-  const config = getSupabaseConfig();
-  const siteUrl = getSiteUrl();
+  // 从环境变量中读取URL和ANON KEY
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
   // 验证环境变量存在
-  if (!config.url || !config.anonKey) {
+  if (!supabaseUrl || !supabaseAnonKey) {
     console.error("缺少必要的Supabase环境变量");
     throw new Error("缺少必要的Supabase环境变量");
   }
@@ -116,13 +115,14 @@ export const createClient = () => {
     if (isServer) {
       // 在服务器端环境下使用基本配置创建客户端
       console.log("[SupabaseClient] 在服务器端创建简化客户端");
-      return createBrowserClient(config.url, config.anonKey);
+      return createBrowserClient(supabaseUrl, supabaseAnonKey);
     }
     
     // 在浏览器环境下使用完整配置
+    // 使用正确的创建客户端参数格式
     const client = createBrowserClient(
-      config.url,
-      config.anonKey,
+      supabaseUrl,
+      supabaseAnonKey,
       {
         cookies: {
           get: (name) => {
@@ -215,62 +215,18 @@ export const createClient = () => {
           },
         },
         auth: {
-          flowType: 'pkce',
           persistSession: true,
-          detectSessionInUrl: true,
           autoRefreshToken: true,
-          storage: {
-            getItem: (key: string) => {
-              try {
-                return localStorage.getItem(key);
-              } catch {
-                return null;
-              }
-            },
-            setItem: (key: string, value: string) => {
-              try {
-                localStorage.setItem(key, value);
-                if (key === 'supabase.auth.token') {
-                  localStorage.setItem('auth_redirect_url', `${siteUrl}/auth/callback`);
-                }
-              } catch (error) {
-                console.error('[SupabaseClient] 存储错误:', error);
-              }
-            },
-            removeItem: (key: string) => {
-              try {
-                localStorage.removeItem(key);
-                if (key === 'supabase.auth.token') {
-                  localStorage.removeItem('auth_redirect_url');
-                }
-              } catch (error) {
-                console.error('[SupabaseClient] 移除存储项错误:', error);
-              }
-            }
-          }
+          detectSessionInUrl: true,
+          flowType: 'pkce',
+          // 公共存储键名
+          storageKey: 'supabase.auth.token',
         },
       }
     );
     
-    // 添加错误处理
-    client.auth.onAuthStateChange((event: AuthChangeEvent, session: Session | null) => {
-      // 处理会话变化
-      handleSessionChange(event, session);
-      
-      // 检查URL中的错误参数
-      if (typeof window !== 'undefined') {
-        const url = new URL(window.location.href);
-        const error = url.searchParams.get('error');
-        const errorCode = url.searchParams.get('error_code');
-        const errorDescription = url.searchParams.get('error_description');
-        
-        // 如果存在错误参数，重定向到错误页面
-        if (error && errorCode) {
-          const redirectUrl = `/auth/error?error=${error}&error_code=${errorCode}&error_description=${errorDescription}`;
-          window.location.href = redirectUrl;
-        }
-      }
-    });
+    // 订阅会话状态变化
+    client.auth.onAuthStateChange(handleSessionChange);
     
     // 在创建时检查是否已有会话，如果有则设置cookie标记
     setTimeout(async () => {
@@ -300,7 +256,8 @@ export const createClient = () => {
     
     return client;
   } catch (error) {
-    console.error('[SupabaseClient] 创建客户端出错:', error);
-    throw error;
+    console.error("创建Supabase客户端失败:", error);
+    // 失败时使用基本配置重试一次
+    return createBrowserClient(supabaseUrl, supabaseAnonKey);
   }
 };
