@@ -464,7 +464,7 @@ export default function ProtectedPage() {
               {(isGenerating || generatedImages.length > 0) && (
                 <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 md:gap-4">
                   {/* 显示生成中的骨架屏或最新生成的图片 */}
-                  <div className="relative w-full pt-[100%]">
+                  <div className="aspect-square w-full relative">
                     {isGenerating ? (
                       <div className="absolute inset-0 bg-card/40 border border-border rounded-xl overflow-hidden shadow-ghibli-sm hover:shadow-ghibli transition-all duration-300">
                         <div className="absolute inset-0 flex items-center justify-center bg-muted/60 backdrop-blur-sm z-10">
@@ -505,7 +505,7 @@ export default function ProtectedPage() {
                   
                   {/* 显示历史图片，根据是否在生成中决定显示数量 */}
                   {generatedImages.slice(isGenerating ? 0 : 1, isGenerating ? 3 : 4).map((imageUrl, index) => (
-                    <div key={imageUrl + index} className="relative w-full pt-[100%]">
+                    <div key={imageUrl + index} className="aspect-square w-full relative">
                       <div 
                         className="absolute inset-0 bg-card/40 border border-border rounded-xl overflow-hidden shadow-ghibli-sm hover:shadow-ghibli transition-all duration-300 cursor-pointer"
                         onClick={() => setPreviewImage(imageUrl)}
