@@ -1,0 +1,23 @@
+---
+description:
+globs:
+alwaysApply: false
+---
+# 项目结构指南
+
+## 主要目录结构
+- `app`: Next.js 应用主目录，包含路由和页面组件
+  - `app/api`: API 路由目录
+  - `app/components`: 页面特定组件
+- `components`: 共享UI组件和业务组件
+  - `components/ui`: 基础UI组件
+  - `components/payment`: 支付相关组件
+- `hooks`: 自定义React Hooks
+- `utils`: 工具函数和常量
+
+## 关键文件
+- [app/page.tsx](mdc:app/page.tsx): 首页
+- [app/protected/page.tsx](mdc:app/protected/page.tsx): 受保护页面(需要登录)
+- [hooks/useImageHistory.ts](mdc:hooks/useImageHistory.ts): 图片历史记录管理
+- [components/payment/credit-recharge-dialog.tsx](mdc:components/payment/credit-recharge-dialog.tsx): 充值对话框
+- [app/components/PaymentForm.tsx](mdc:app/components/PaymentForm.tsx): 支付表单组件

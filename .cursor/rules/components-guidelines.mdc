@@ -1,0 +1,54 @@
+---
+description:
+globs:
+alwaysApply: false
+---
+# 组件开发规范
+
+## 组件结构
+1. 使用TypeScript定义明确的Props接口
+2. 组件命名采用PascalCase
+3. 单一职责原则：每个组件只负责一项功能
+4. 使用NextUI和TailwindCSS实现UI
+
+## 组件模式
+1. 组件内部状态使用useState或自定义Hook管理
+2. 使用Dialog/Modal组件时，将isOpen、onOpen、onClose通过props传递
+3. 图片类组件需要支持预览和下载功能
+4. 表单组件需统一处理加载状态和错误提示
+
+## 示例
+```tsx
+interface MyComponentProps {
+  isOpen: boolean;
+  onClose: () => void;
+  data?: SomeData;
+}
+
+export function MyComponent({ isOpen, onClose, data }: MyComponentProps) {
+  const [isLoading, setIsLoading] = useState(false);
+  
+  const handleAction = async () => {
+    setIsLoading(true);
+    try {
+      // 执行操作
+    } catch (error) {
+      // 错误处理
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  return (
+    <Dialog isOpen={isOpen} onClose={onClose}>
+      {/* 组件内容 */}
+      <Button 
+        isLoading={isLoading}
+        onClick={handleAction}
+      >
+        执行操作
+      </Button>
+    </Dialog>
+  );
+}
+```

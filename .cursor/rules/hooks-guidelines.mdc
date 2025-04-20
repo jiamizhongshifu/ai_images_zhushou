@@ -1,0 +1,58 @@
+---
+description:
+globs:
+alwaysApply: false
+---
+# Hook开发规范
+
+## 设计原则
+1. Hook命名以`use`开头
+2. 封装单一功能逻辑
+3. 返回值结构清晰（状态、操作方法、加载状态）
+4. 处理异常情况并返回错误状态
+
+## 最佳实践
+1. 使用TypeScript定义返回类型
+2. 分离数据获取和状态管理
+3. 实现缓存机制减少重复请求
+4. 提供重置和刷新方法
+
+## 示例
+```tsx
+interface UseImageHistoryResult {
+  images: ImageType[];
+  isLoading: boolean;
+  error: Error | null;
+  loadMore: () => Promise<void>;
+  deleteImage: (id: string) => Promise<void>;
+  refresh: () => Promise<void>;
+}
+
+export function useImageHistory(): UseImageHistoryResult {
+  const [images, setImages] = useState<ImageType[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<Error | null>(null);
+  
+  const loadImages = useCallback(async () => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      // 获取图片逻辑
+    } catch (err) {
+      setError(err instanceof Error ? err : new Error('未知错误'));
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+  
+  // 其他方法实现...
+  
+  return {
+    images,
+    isLoading,
+    error,
+    loadMore,
+    deleteImage,
+    refresh
+  };
+}

@@ -86,26 +86,26 @@ export function generateSign(params: Record<string, any>, key: string): string {
     Object.keys(params).forEach(k => {
       const value = params[k];
       if (k !== 'sign' && k !== 'sign_type' && value !== null && value !== undefined && value !== '') {
-        filteredParams[k] = value;
+        // 确保所有值都是字符串类型
+        filteredParams[k] = String(value).trim();
       }
     });
 
     // 2. 按照参数名ASCII码从小到大排序(a-z)
     const sortedKeys = Object.keys(filteredParams).sort();
 
-    // 3. 拼接成URL键值对的格式 - 文档明确说明"参数值不要进行url编码"
+    // 3. 拼接成URL键值对的格式 - 不进行URL编码
     const stringArray = sortedKeys.map(key => `${key}=${filteredParams[key]}`);
     const stringA = stringArray.join('&');
     
     // 4. 拼接商户密钥并进行MD5加密
-    // 注意：文档要求是 stringA + key，而不是追加到查询字符串中
     const stringSignTemp = stringA + key;
     
-    // 调试输出，但不包含敏感的key信息
+    // 调试输出
     console.log('待签名字符串(不含KEY):', stringA);
     
     // 5. MD5加密结果使用小写
-    const sign = crypto.createHash('md5').update(stringSignTemp).digest('hex').toLowerCase();
+    const sign = crypto.createHash('md5').update(stringSignTemp, 'utf8').digest('hex').toLowerCase();
     return sign;
   } catch (error) {
     console.error('生成签名出错:', error);

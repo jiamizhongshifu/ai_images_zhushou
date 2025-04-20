@@ -1,0 +1,117 @@
+---
+description:
+globs:
+alwaysApply: false
+---
+# 代码风格规范
+
+## 基本原则
+1. 保持一致性：整个项目使用统一的代码风格
+2. 可读性优先：代码应当易于阅读和理解
+3. 功能分离：每个函数和组件只做一件事
+
+## 命名规范
+1. **文件命名**
+   - 组件文件：使用PascalCase (如`ImageCard.tsx`)
+   - 工具/Hook文件：使用camelCase (如`useImageHistory.ts`)
+   - 常量/配置文件：使用kebab-case (如`api-endpoints.ts`)
+
+2. **变量命名**
+   - 普通变量：使用camelCase (如`imageList`)
+   - 常量：使用UPPER_SNAKE_CASE (如`MAX_IMAGE_SIZE`)
+   - 布尔值：使用`is`/`has`前缀 (如`isLoading`, `hasError`)
+   - 事件处理函数：使用`handle`前缀 (如`handleSubmit`)
+
+## TypeScript使用规范
+1. 为所有变量定义明确的类型
+2. 使用接口定义数据结构
+3. 避免使用`any`类型
+4. 使用类型别名简化复杂类型
+
+```typescript
+// 推荐
+interface User {
+  id: string;
+  name: string;
+  avatar?: string;
+}
+
+type UserResponse = {
+  data: User[];
+  total: number;
+}
+
+// 不推荐
+const user: any = { id: "1", name: "张三" };
+```
+
+## 代码格式化
+1. 使用2空格缩进
+2. 最大行宽80-100字符
+3. 花括号始终使用
+4. 代码块之间保留适当空行
+
+## 注释规范
+1. 复杂逻辑或算法需要添加注释
+2. 避免无意义或冗余的注释
+3. TODO和FIXME注释需要包含问题描述和计划
+
+```typescript
+// 推荐
+// 根据用户权限过滤可见的菜单项
+const visibleMenus = menus.filter(menu => hasPermission(user, menu.requiredPermission));
+
+// 不推荐
+// 过滤菜单
+const visibleMenus = menus.filter(menu => hasPermission(user, menu.requiredPermission));
+```
+
+## 导入顺序
+1. 第三方库导入
+2. 本地组件导入
+3. 本地工具/hooks导入
+4. 类型导入
+5. 样式导入
+
+```typescript
+// 推荐的导入顺序
+import React, { useState, useEffect } from 'react';
+import { Card, Button } from '@nextui-org/react';
+
+import { ImageCard } from '@/components/ImageCard';
+import { ImagePreviewModal } from '@/components/ImagePreviewModal';
+
+import { useImageHistory } from '@/hooks/useImageHistory';
+import { formatDate } from '@/utils/dateUtils';
+
+import type { ImageItem } from '@/types';
+
+import '@/styles/gallery.css';
+```
+
+## 错误处理
+1. 使用try-catch处理异步操作
+2. 避免空catch块
+3. 提供有意义的错误信息
+
+## 最佳实践
+1. 避免重复代码，提取公共函数
+2. 使用解构赋值简化代码
+3. 避免过深的嵌套
+4. 优先使用函数式编程方法
+
+```typescript
+// 推荐
+const { name, age } = user;
+const adults = users.filter(user => user.age >= 18);
+
+// 不推荐
+const name = user.name;
+const age = user.age;
+const adults = [];
+for (let i = 0; i < users.length; i++) {
+  if (users[i].age >= 18) {
+    adults.push(users[i]);
+  }
+}
+```

@@ -1,0 +1,111 @@
+---
+description:
+globs:
+alwaysApply: false
+---
+# 状态管理规范
+
+## 状态分类
+1. **本地状态**：组件内部使用`useState`/`useReducer`管理
+2. **共享状态**：使用Context API结合自定义hook
+3. **全局状态**：使用Zustand或其他状态管理库
+
+## 状态管理原则
+1. 状态最小化：只存储必要的数据
+2. 单一数据源：避免状态重复
+3. 状态隔离：按功能域划分状态
+4. 避免过度全局化：优先使用局部状态
+
+## 状态更新模式
+1. 使用不可变数据更新方式
+2. 批量处理状态更新
+3. 避免频繁更新导致的性能问题
+
+## Zustand状态管理示例
+```tsx
+// stores/imageStore.ts
+import { create } from 'zustand';
+import { immer } from 'zustand/middleware/immer';
+
+interface ImageState {
+  images: ImageItem[];
+  isLoading: boolean;
+  error: string | null;
+  actions: {
+    fetchImages: (page: number, size: number) => Promise<void>;
+    deleteImage: (id: string) => Promise<void>;
+    clearImages: () => void;
+  };
+}
+
+interface ImageItem {
+  id: string;
+  url: string;
+  createTime: string;
+}
+
+export const useImageStore = create<ImageState>()(
+  immer((set, get) => ({
+    images: [],
+    isLoading: false,
+    error: null,
+    actions: {
+      fetchImages: async (page: number, size: number) => {
+        try {
+          set((state) => {
+            state.isLoading = true;
+            state.error = null;
+          });
+          
+          const response = await fetch(`/api/images?page=${page}&size=${size}`);
+          if (!response.ok) throw new Error('获取图片失败');
+          
+          const data = await response.json();
+          
+          set((state) => {
+            state.images = page === 1 ? data : [...state.images, ...data];
+            state.isLoading = false;
+          });
+        } catch (error) {
+          set((state) => {
+            state.error = error instanceof Error ? error.message : '未知错误';
+            state.isLoading = false;
+          });
+        }
+      },
+      
+      deleteImage: async (id: string) => {
+        try {
+          await fetch(`/api/images/${id}`, { method: 'DELETE' });
+          
+          set((state) => {
+            state.images = state.images.filter(img => img.id !== id);
+          });
+        } catch (error) {
+          set((state) => {
+            state.error = error instanceof Error ? error.message : '删除失败';
+          });
+        }
+      },
+      
+      clearImages: () => {
+        set((state) => {
+          state.images = [];
+        });
+      }
+    }
+  }))
+);
+
+// 使用示例
+// import { useImageStore } from '@/stores/imageStore';
+// 
+// function ImageList() {
+//   const { images, isLoading, actions } = useImageStore();
+//   
+//   useEffect(() => {
+//     actions.fetchImages(1, 10);
+//   }, []);
+//   
+//   return (/* 组件内容 */);
+// }
