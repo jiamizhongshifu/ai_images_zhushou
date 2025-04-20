@@ -362,95 +362,108 @@ export default function CreditRechargeDialog({ isOpen, onClose, onSuccess, credi
       
       const data = await response.json();
       
-      if (data.success && data.data && data.data.paymentUrl) {
+      if (data.success && data.data) {
         // 保存订单号以便后续跟踪
         const orderNo = data.data.orderNo;
         setOrderNo(orderNo);
         
-        // 打开支付页面
-        if (data.data.paymentUrl) {
-          // 创建一个新窗口打开支付链接
-          const paymentWindow = window.open(data.data.paymentUrl, '_blank');
+        // 创建并提交表单，避免URL参数问题
+        if (data.data.formData) {
+          // 创建一个临时表单元素
+          const form = document.createElement('form');
+          form.method = 'POST';
+          form.action = data.data.paymentUrl;
+          form.target = '_blank'; // 在新窗口中打开
           
-          // 如果支付窗口成功打开，设置自动轮询检查支付状态
-          if (paymentWindow) {
-            // 设置一个标志，表示支付已开始但未确认完成
-            setPaymentStarted(true);
-            setIsProcessing(false);
-            
-            // 显示友好提示，告知用户自动检查
-            setError('请在新窗口中完成支付，系统将自动检查支付状态');
-            
-            // 5秒后开始自动检查支付状态
-            setTimeout(() => {
-              // 启动自动轮询检查支付状态
-              const timer = setInterval(async () => {
-                console.log(`自动检查订单 ${orderNo} 支付状态...`);
-                
-                try {
-                  // 检查支付状态
-                  const checkRes = await fetch(`/api/payment/check?order_no=${orderNo}`);
-                  if (checkRes.ok) {
-                    const checkData = await checkRes.json();
+          // 添加所有参数
+          Object.entries(data.data.formData).forEach(([key, value]) => {
+            const input = document.createElement('input');
+            input.type = 'hidden';
+            input.name = key;
+            input.value = String(value);
+            form.appendChild(input);
+          });
+          
+          // 添加到文档并提交
+          document.body.appendChild(form);
+          form.submit();
+          
+          // 提交后删除表单
+          setTimeout(() => {
+            document.body.removeChild(form);
+          }, 100);
+          
+          // 设置一个标志，表示支付已开始但未确认完成
+          setPaymentStarted(true);
+          setIsProcessing(false);
+          
+          // 显示友好提示，告知用户自动检查
+          setError('请在新窗口中完成支付，系统将自动检查支付状态');
+          
+          // 5秒后开始自动检查支付状态
+          setTimeout(() => {
+            // 启动自动轮询检查支付状态
+            const timer = setInterval(async () => {
+              console.log(`自动检查订单 ${orderNo} 支付状态...`);
+              
+              try {
+                // 检查支付状态
+                const checkRes = await fetch(`/api/payment/check?order_no=${orderNo}`);
+                if (checkRes.ok) {
+                  const checkData = await checkRes.json();
+                  
+                  // 如果支付成功，停止轮询并更新UI
+                  if (checkData.success && checkData.order?.status === 'success') {
+                    console.log(`订单 ${orderNo} 自动检查发现支付成功`);
                     
-                    // 如果支付成功，停止轮询并更新UI
-                    if (checkData.success && checkData.order?.status === 'success') {
-                      console.log(`订单 ${orderNo} 自动检查发现支付成功`);
-                      
-                      // 清除定时器
-                      clearInterval(timer);
-                      setAutoCheckTimer(null);
-                      
-                      // 处理支付成功
-                      setPaymentSuccess(true);
-                      
-                      // 通知上层组件支付成功，让 UserStateProvider 刷新
-                      if (onSuccess) {
-                        await onSuccess();
-                      }
-                      
-                      // 延迟关闭对话框
-                      setTimeout(() => {
-                        // 刷新页面获取最新点数 - 可以考虑移除，依赖 onSuccess 的刷新
-                        // router.refresh(); 
-                        onClose(); // 直接关闭对话框
-                      }, 2000);
-                      
-                      return;
+                    // 清除定时器
+                    clearInterval(timer);
+                    setAutoCheckTimer(null);
+                    
+                    // 处理支付成功
+                    setPaymentSuccess(true);
+                    
+                    // 通知上层组件支付成功，让 UserStateProvider 刷新
+                    if (onSuccess) {
+                      await onSuccess();
                     }
                     
-                    // 尝试修复订单
-                    if (checkData.success && checkData.order?.status === 'pending') {
-                      // 尝试修复订单
-                      await fetch(`/api/payment/fix-public?order_no=${orderNo}`);
-                    }
+                    // 延迟关闭对话框
+                    setTimeout(() => {
+                      // 刷新页面获取最新点数 - 可以考虑移除，依赖 onSuccess 的刷新
+                      // router.refresh(); 
+                      onClose(); // 直接关闭对话框
+                    }, 2000);
+                    
+                    return;
                   }
-                } catch (error) {
-                  console.error('自动检查支付状态出错:', error);
+                  
+                  // 尝试修复订单
+                  if (checkData.success && checkData.order?.status === 'pending') {
+                    // 尝试修复订单
+                    await fetch(`/api/payment/fix-public?order_no=${orderNo}`);
+                  }
                 }
-              }, 5000); // 每5秒检查一次
-              
-              // 保存定时器ID，以便可以在组件卸载时清除
-              setAutoCheckTimer(timer);
-              
-              // 设置30分钟超时，防止无限轮询
-              setTimeout(() => {
-                if (autoCheckTimer) {
-                  clearInterval(autoCheckTimer);
-                  setAutoCheckTimer(null);
-                  setError('支付状态检查超时，如已完成支付，请点击"检查支付状态"按钮');
-                }
-              }, 30 * 60 * 1000);
-            }, 5000);
-          } else {
-            // 如果窗口被拦截，提示用户
-            setIsProcessing(false);
-            setError('支付窗口被拦截，请允许弹出窗口或直接访问支付链接');
-            console.log('支付链接:', data.data.paymentUrl);
-          }
+              } catch (error) {
+                console.error('自动检查支付状态出错:', error);
+              }
+            }, 5000); // 每5秒检查一次
+            
+            // 保存定时器ID，以便可以在组件卸载时清除
+            setAutoCheckTimer(timer);
+            
+            // 设置30分钟超时，防止无限轮询
+            setTimeout(() => {
+              if (autoCheckTimer) {
+                clearInterval(autoCheckTimer);
+                setAutoCheckTimer(null);
+                setError('支付状态检查超时，如已完成支付，请点击"检查支付状态"按钮');
+              }
+            }, 30 * 60 * 1000);
+          }, 5000);
         } else {
           setIsProcessing(false);
-          setError('未获取到支付链接');
+          setError('未获取到支付数据');
         }
       } else {
         setIsProcessing(false);

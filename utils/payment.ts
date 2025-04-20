@@ -150,6 +150,7 @@ export function verifySign(params: Record<string, any>, key: string): boolean {
  * @param credits 点数
  * @param paymentType 支付类型
  * @param userId 用户ID (新增参数)
+ * @returns 支付URL或表单数据
  */
 export function generatePaymentUrl(
   orderNo: string,
@@ -219,6 +220,63 @@ export function generatePaymentUrl(
   console.log(`${paymentType}支付URL: ${debugUrl}`);
   
   return fullPaymentUrl;
+}
+
+/**
+ * 生成支付表单数据，解决URL特殊字符问题
+ * @param orderNo 订单号
+ * @param amount 金额
+ * @param credits 点数
+ * @param paymentType 支付类型
+ * @param userId 用户ID
+ * @returns 表单数据，包括请求URL和参数
+ */
+export function generatePaymentFormData(
+  orderNo: string,
+  amount: number,
+  credits: number,
+  paymentType: PaymentType = PaymentType.ALIPAY,
+  userId?: string
+): { url: string, formData: Record<string, string> } {
+  
+  // 检查环境变量
+  if (!ZPAY_PID || !ZPAY_KEY) {
+    if (process.env.NODE_ENV === 'development') {
+      console.warn('支付配置提示: 请确保 ZPAY_PID 和 ZPAY_KEY 已正确设置');
+    }
+  }
+  
+  // 为返回URL添加用户ID参数
+  const returnUrl = userId 
+    ? `${SITE_BASE_URL}/protected?order_no=${orderNo}&user_id=${userId}` 
+    : `${SITE_BASE_URL}/protected?order_no=${orderNo}`;
+  
+  // 使用纯ASCII商品名
+  const productName = `AI Assistant-${credits} Credits`;
+  
+  // 创建参数对象
+  const params: Record<string, string> = {
+    pid: ZPAY_PID,
+    type: paymentType,
+    out_trade_no: orderNo,
+    notify_url: `${SITE_BASE_URL}/api/payment/webhook`,
+    return_url: returnUrl,
+    name: productName,
+    money: amount.toFixed(2),
+    sign_type: 'MD5',
+    param: userId || ''
+  };
+  
+  // 生成签名
+  params.sign = generateSign(params, ZPAY_KEY);
+  
+  // 打印日志方便调试
+  console.log(`${paymentType}支付表单数据:`, { ...params, sign: '***' });
+  
+  return {
+    url: PAYMENT_BASE_URL,
+    formData: params
+  };
 }
 
 /**
