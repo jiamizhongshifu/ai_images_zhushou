@@ -62,9 +62,6 @@ const checkPaymentHandler = async (request: NextRequest, authResult: any) => {
           console.log(`订单 ${orderNo} 状态为pending，尝试向支付网关查询状态`);
           
           try {
-            // 实际项目中这里应该调用支付网关的查单API
-            // 示例: const paymentStatus = await queryPaymentGateway(orderNo);
-            
             // 检查环境，只在非生产环境使用模拟数据
             if (process.env.NODE_ENV !== 'production') {
               // 在开发环境中，需要显式开启模拟支付功能
@@ -97,8 +94,38 @@ const checkPaymentHandler = async (request: NextRequest, authResult: any) => {
               }
             } else {
               // 生产环境: 调用实际的支付网关查询API
-              // const paymentResult = await realPaymentGatewayQuery(orderNo);
-              console.log(`[生产环境] 订单 ${orderNo} 需要等待支付回调确认，不使用模拟数据`);
+              // 导入支付验证器
+              const { verifyPaymentStatus } = await import('@/utils/payment-validator');
+              
+              // 查询支付状态
+              const paymentStatus = await verifyPaymentStatus(orderNo);
+              
+              if (paymentStatus) {
+                console.log(`[生产环境] 支付网关查询结果: 订单 ${orderNo} 已完成支付`);
+                
+                // 更新订单状态
+                const { error: updateError } = await client
+                  .from('ai_images_creator_payments')
+                  .update({
+                    status: 'success',
+                    paid_at: new Date().toISOString(),
+                    updated_at: new Date().toISOString()
+                  })
+                  .eq('order_no', orderNo);
+                  
+                if (updateError) {
+                  throw new Error(`更新订单状态失败: ${updateError.message}`);
+                }
+                
+                return {
+                  ...order,
+                  status: 'success',
+                  statusChanged: true,
+                  message: '支付已完成，订单状态已更新'
+                };
+              } else {
+                console.log(`[生产环境] 支付网关查询结果: 订单 ${orderNo} 待支付`);
+              }
             }
           } catch (queryError) {
             // 记录查询错误，但不影响返回订单信息

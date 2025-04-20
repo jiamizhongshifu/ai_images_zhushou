@@ -1,5 +1,6 @@
 import { createAdminClient } from '@/utils/supabase/admin';
 import { getEnv } from '@/utils/env';
+import { generateSign } from './payment';
 
 /**
  * 验证支付状态
@@ -51,30 +52,62 @@ export async function verifyPaymentStatus(orderNo: string): Promise<boolean> {
       }
 
       // 3. 调用您的支付网关的查询API
-      // 此处为了安全起见，暂时关闭自动验证，需要实际支付回调才能成功
-      // 实际项目中，应该对接支付网关的订单查询API，示例代码:
-      /*
-      const response = await fetch('https://api.payment-gateway.com/order/query', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
+      try {
+        // 集成实际支付网关的查询API
+        const queryUrl = `https://zpayz.cn/api/query_order`;
+        
+        // 准备查询参数
+        const queryParams: Record<string, any> = {
           pid: ZPAY_PID,
-          order_no: orderNo,
-          sign: generateSign({ pid: ZPAY_PID, order_no: orderNo }, ZPAY_KEY)
-        }),
-      });
+          out_trade_no: orderNo,
+          time: Date.now()
+        };
+        
+        // 计算签名 (使用payment.ts中的函数)
+        // 注意：这里需要 import { generateSign } from './payment'; 
+        // 但为避免循环依赖，我们直接使用内部实现
+        const sign = generateSignForQuery(queryParams, ZPAY_KEY);
+        queryParams['sign'] = sign;
+        
+        // 发送查询请求
+        const response = await fetch(queryUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(queryParams),
+        });
 
-      if (response.ok) {
-        const result = await response.json();
-        return result.status === 'success';
+        if (response.ok) {
+          const result = await response.json();
+          
+          // 判断订单状态
+          if (result.code === 1 && result.trade_status === 'TRADE_SUCCESS') {
+            console.log(`订单查询成功: ${orderNo} 已支付`);
+            
+            // 更新订单状态为成功
+            await adminClient
+              .from('ai_images_creator_payments')
+              .update({
+                trade_no: result.trade_no || '',
+                callback_data: result,
+                updated_at: new Date().toISOString()
+              })
+              .eq('order_no', orderNo);
+              
+            return true;
+          } else {
+            console.log(`订单查询结果: ${orderNo} 未支付或状态异常`, result);
+            return false;
+          }
+        } else {
+          console.error(`订单查询失败: ${orderNo}`, await response.text());
+          return false;
+        }
+      } catch (error) {
+        console.error(`调用支付网关查询API出错:`, error);
+        return false;
       }
-      */
-      
-      // 在实际集成支付网关查询API之前，我们返回false，表示需要等待支付回调
-      console.log(`验证支付状态: 订单 ${orderNo} 需要等待支付回调确认`);
-      return false;
     }
     
     // 其他状态视为验证失败
@@ -84,4 +117,30 @@ export async function verifyPaymentStatus(orderNo: string): Promise<boolean> {
     console.error('验证支付状态出错:', error);
     return false;
   }
+}
+
+// 内部函数：为查询生成签名
+function generateSignForQuery(params: Record<string, any>, key: string): string {
+  // 1. 排除sign和sign_type参数，以及空值参数
+  const filteredParams: Record<string, any> = {};
+  Object.keys(params).forEach(k => {
+    const value = params[k];
+    if (k !== 'sign' && k !== 'sign_type' && value !== null && value !== undefined && value !== '') {
+      filteredParams[k] = value;
+    }
+  });
+
+  // 2. 按照参数名ASCII码从小到大排序
+  const sortedKeys = Object.keys(filteredParams).sort();
+
+  // 3. 拼接成URL键值对的格式
+  const stringArray = sortedKeys.map(key => `${key}=${filteredParams[key]}`);
+  const stringA = stringArray.join('&');
+
+  // 4. 拼接商户密钥并进行MD5加密
+  const stringSignTemp = stringA + key;
+  
+  // 使用MD5加密
+  const crypto = require('crypto');
+  return crypto.createHash('md5').update(stringSignTemp).digest('hex').toLowerCase();
 } 
