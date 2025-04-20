@@ -115,7 +115,7 @@ export async function POST(request: Request) {
       
       // 如果订单已经成功，则跳过
       if (order.status === 'success') {
-        return { message: '订单已处理', order };
+        return NextResponse.json({ message: '订单已处理', order });
       }
       
       // 2. 验证支付状态 - 新增验证步骤
@@ -128,12 +128,11 @@ export async function POST(request: Request) {
           time: new Date().toISOString()
         });
         
-        // 返回订单状态，但不修改
-        return { 
+        return NextResponse.json({ 
           message: '订单验证中，请等待支付完成', 
           order,
           status: 'pending' 
-        };
+        });
       }
       
       // 检查是否已经有点数记录
@@ -198,11 +197,11 @@ export async function POST(request: Request) {
         
         if (recentLogs && recentLogs.length > 0) {
           console.log(`订单 ${order_no} 状态为成功且已有点数记录，最后处理时间: ${recentLogs[0].created_at}`);
-          return {
+          return NextResponse.json({
             message: '订单已成功且已处理点数',
             order: { ...order, credits_updated: true },
             lastProcessTime: recentLogs[0].created_at
-          };
+          });
         }
       }
       
@@ -279,12 +278,12 @@ export async function POST(request: Request) {
         time: new Date().toISOString()
       });
       
-      return {
+      return NextResponse.json({
         message: '订单已修复，状态已更新为成功，点数已增加',
         oldCredits,
         addCredits,
         newCredits
-      };
+      });
     } finally {
       // 清理处理锁
       await supabase
