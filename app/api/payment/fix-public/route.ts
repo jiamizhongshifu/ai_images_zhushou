@@ -305,7 +305,7 @@ export async function POST(request: Request): Promise<Response> {
 
 // GET 处理函数
 export const GET = withRateLimit(
-  async (req: NextRequest) => {
+  async (req: NextRequest): Promise<NextResponse> => {
     try {
       // 从 URL 参数中获取 order_no
       const url = new URL(req.url);
@@ -315,30 +315,147 @@ export const GET = withRateLimit(
         return NextResponse.json({ error: 'order_no is required' }, { status: 400 });
       }
 
-      // 创建新的 POST 请求
-      const clonedRequest = new Request(req.url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...req.headers
-        },
-        body: JSON.stringify({ order_no })
-      });
+      // 添加重试机制
+      let retryCount = 0;
+      const maxRetries = 3;
+      const retryDelay = 1000; // 1秒
 
-      const response = await POST(clonedRequest);
-      
-      // 确保返回 NextResponse
-      if (response instanceof NextResponse) {
-        return response;
+      while (retryCount < maxRetries) {
+        try {
+          // 1. 先查询订单基本信息
+          const { data: orders, error: orderQueryError } = await supabase
+            .from('ai_images_creator_payments')
+            .select('*')
+            .eq('order_no', order_no);
+
+          if (orderQueryError) {
+            console.error(`查询订单信息失败 (重试 ${retryCount + 1}/${maxRetries}):`, orderQueryError);
+            retryCount++;
+            if (retryCount < maxRetries) {
+              await new Promise(resolve => setTimeout(resolve, retryDelay));
+              continue;
+            }
+            return NextResponse.json({ 
+              error: `查询订单信息失败: ${orderQueryError.message}` 
+            }, { status: 500 });
+          }
+
+          if (!orders || orders.length === 0) {
+            // 如果是第一次尝试，等待一下再重试，因为可能支付回调还在处理中
+            if (retryCount === 0) {
+              await new Promise(resolve => setTimeout(resolve, 2000));
+              retryCount++;
+              continue;
+            }
+            return NextResponse.json({ 
+              error: `未找到订单: ${order_no}` 
+            }, { status: 404 });
+          }
+
+          const order = orders[0];
+          
+          // 记录访问日志
+          await logPaymentCheck(supabase, order_no, order.user_id, 'fix-public');
+
+          // 2. 检查点数记录
+          const { data: creditLogs } = await supabase
+            .from('ai_images_creator_credit_logs')
+            .select('*')
+            .eq('order_no', order_no)
+            .eq('operation_type', 'recharge')
+            .order('created_at', { ascending: false })
+            .limit(1);
+
+          // 如果已经有点数记录，说明订单已处理成功
+          if (creditLogs && creditLogs.length > 0) {
+            return NextResponse.json({
+              success: true,
+              message: '订单已处理完成',
+              order: {
+                ...order,
+                status: 'success',
+                credits_updated: true
+              },
+              credit_log: creditLogs[0]
+            });
+          }
+
+          // 3. 如果订单状态是成功，尝试补充点数
+          if (order.status === 'success') {
+            // 创建新的 POST 请求来处理点数补充
+            const response = await POST(new Request(req.url, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify({ order_no })
+            }));
+
+            // 确保返回 NextResponse
+            if (response instanceof NextResponse) {
+              return response;
+            }
+            // 如果不是 NextResponse，将其转换为 NextResponse
+            const data = await response.json();
+            return NextResponse.json(data, {
+              status: response.status,
+              statusText: response.statusText,
+              headers: response.headers
+            });
+          }
+
+          // 4. 如果订单状态不是成功，检查支付网关
+          const paymentVerified = await verifyPaymentStatus(order_no);
+          
+          if (paymentVerified) {
+            // 支付验证通过，创建 POST 请求处理
+            const response = await POST(new Request(req.url, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify({ order_no })
+            }));
+
+            // 确保返回 NextResponse
+            if (response instanceof NextResponse) {
+              return response;
+            }
+            // 如果不是 NextResponse，将其转换为 NextResponse
+            const data = await response.json();
+            return NextResponse.json(data, {
+              status: response.status,
+              statusText: response.statusText,
+              headers: response.headers
+            });
+          }
+
+          // 5. 返回当前状态
+          return NextResponse.json({
+            success: true,
+            message: '订单处理中',
+            order: {
+              ...order,
+              payment_verified: paymentVerified
+            },
+            status: 'pending'
+          });
+
+        } catch (error) {
+          console.error(`处理订单查询失败 (重试 ${retryCount + 1}/${maxRetries}):`, error);
+          retryCount++;
+          if (retryCount < maxRetries) {
+            await new Promise(resolve => setTimeout(resolve, retryDelay));
+            continue;
+          }
+          throw error;
+        }
       }
 
-      // 如果不是 NextResponse，将其转换为 NextResponse
-      const data = await response.json();
-      return NextResponse.json(data, {
-        status: response.status,
-        statusText: response.statusText,
-        headers: response.headers
-      });
+      return NextResponse.json({ 
+        error: '查询订单失败，请稍后重试' 
+      }, { status: 500 });
+
     } catch (error) {
       console.error('处理 GET 请求时发生错误:', error);
       return NextResponse.json({ 
@@ -348,8 +465,8 @@ export const GET = withRateLimit(
     }
   },
   {
-    limit: 10,
-    windowMs: 60 * 1000,
+    limit: 30,            // 增加限制次数，因为前端会多次重试
+    windowMs: 60 * 1000,  // 1分钟窗口期
     message: '请求过于频繁，请稍后再试'
   }
 );
