@@ -485,7 +485,7 @@ export default function ProtectedPage() {
                           alt="最新生成的图片"
                           onImageLoad={() => handleImageLoad(generatedImages[0])}
                           onImageError={() => handleImageError(generatedImages[0])}
-                          className="absolute inset-0 w-full h-full object-fill"
+                          className="w-full h-full object-fill"
                           fadeIn={true}
                           blurEffect={true}
                           loadingElement={
@@ -515,7 +515,7 @@ export default function ProtectedPage() {
                           alt={`生成的图片 ${index + (isGenerating ? 1 : 2)}`}
                           onImageLoad={() => handleImageLoad(imageUrl)}
                           onImageError={() => handleImageError(imageUrl)}
-                          className="absolute inset-0 w-full h-full object-fill"
+                          className="w-full h-full object-fill"
                           fadeIn={true}
                           blurEffect={true}
                           loadingElement={
