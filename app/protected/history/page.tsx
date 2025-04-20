@@ -55,6 +55,10 @@ export default function HistoryPage() {
   const [initialLoadComplete, setInitialLoadComplete] = useState(false);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
   
+  // 图片加载状态
+  const [loadedImages, setLoadedImages] = useState<Record<string, boolean>>({});
+  const [errorImages, setErrorImages] = useState<Record<string, boolean>>({});
+  
   // 请求状态跟踪
   const isInitialLoading = useRef(false);
   const isCountLoading = useRef(false);
@@ -171,13 +175,29 @@ export default function HistoryPage() {
   }, [currentPage, hasMore, historyItems.length, loadMore]);
 
   // 处理图片加载
-  const handleImageLoad = useCallback(() => {
-    // 图片加载完成后的处理（可以添加动画等）
+  const handleImageLoad = useCallback((imageUrl: string) => {
+    // 更新加载状态
+    setLoadedImages(prev => ({...prev, [imageUrl]: true}));
+    // 清除错误状态
+    setErrorImages(prev => {
+      const newState = {...prev};
+      delete newState[imageUrl];
+      return newState;
+    });
   }, []);
 
   // 处理图片加载错误
-  const handleImageError = useCallback(() => {
-    toast.error("图片加载失败");
+  const handleImageError = useCallback((imageUrl: string) => {
+    // 更新错误状态
+    setErrorImages(prev => ({...prev, [imageUrl]: true}));
+    // 清除加载状态
+    setLoadedImages(prev => {
+      const newState = {...prev};
+      delete newState[imageUrl];
+      return newState;
+    });
+    // 显示错误提示
+    toast.error("图片加载失败，请稍后重试");
   }, []);
 
   // 删除图片
@@ -336,8 +356,8 @@ export default function HistoryPage() {
                       src={getImageUrl(item.image_url)}
                       alt={`历史图片 ${index + 1}`}
                       className="object-cover w-full h-full transition-transform duration-700 hover:scale-[1.05]"
-                      onImageLoad={handleImageLoad}
-                      onImageError={handleImageError}
+                      onImageLoad={() => handleImageLoad(item.image_url)}
+                      onImageError={() => handleImageError(item.image_url)}
                       fadeIn={true}
                       blurEffect={true}
                       loadingElement={
