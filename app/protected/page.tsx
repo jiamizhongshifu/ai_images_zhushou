@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, useLayoutEffect } from "react";
 import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import { Loader2, AlertCircle, ChevronRight, ImageIcon, Download, X, Trash2 } from "lucide-react";
@@ -28,6 +28,7 @@ import useNotification from "@/hooks/useNotification";
 import TaskStatusListener from "@/app/components/TaskStatusListener";
 import TaskRecoveryDialog from "@/app/components/TaskRecoveryDialog";
 import { PendingTask } from "@/utils/taskRecovery";
+import { supabaseClient } from "@/utils/supabase-client";
 
 // 动态导入CreditRechargeDialog组件
 const CreditRechargeDialog = dynamic(
@@ -372,6 +373,74 @@ export default function ProtectedPage() {
   // 添加预览状态
   const [previewImage, setPreviewImage] = useState<string | null>(null);
 
+  // 添加一个加载状态，避免闪烁
+  const [isAuthChecking, setIsAuthChecking] = useState(true);
+  
+  // 使用layoutEffect提高验证优先级
+  useLayoutEffect(() => {
+    const checkSession = async () => {
+      setIsAuthChecking(true);
+      try {
+        // 先尝试通过API验证用户状态
+        try {
+          const response = await fetch('/api/auth/status', {
+            method: 'GET',
+            headers: {
+              'Content-Type': 'application/json'
+            }
+          });
+          
+          if (!response.ok) {
+            console.log('[ProtectedPage] API状态检查失败，重定向到登录页');
+            router.replace('/login');
+            return;
+          }
+          
+          const authData = await response.json();
+          
+          if (!authData.authenticated) {
+            console.log('[ProtectedPage] 用户未认证，重定向到登录页');
+            router.replace('/login');
+            return;
+          }
+          
+          console.log('[ProtectedPage] 会话验证成功，正常加载页面');
+          setIsAuthChecking(false);
+        } catch (apiError) {
+          console.error('[ProtectedPage] API验证异常', apiError);
+          
+          // API请求失败，回退到客户端验证
+          const { data, error } = await supabaseClient.auth.getSession();
+          
+          if (error || !data.session) {
+            console.log('[ProtectedPage] 客户端会话验证失败，重定向到登录页');
+            router.replace('/login');
+            return;
+          }
+          
+          setIsAuthChecking(false);
+        }
+      } catch (e) {
+        console.error('[ProtectedPage] 会话验证异常', e);
+        router.replace('/login');
+      }
+    };
+    
+    checkSession();
+  }, [router]);
+  
+  // 如果正在检查认证状态，显示加载指示器
+  if (isAuthChecking) {
+    return (
+      <div className="flex-1 w-full flex items-center justify-center">
+        <div className="flex flex-col items-center gap-2">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+          <p className="text-muted-foreground">验证身份中...</p>
+        </div>
+      </div>
+    );
+  }
+  
   return (
     <div className="flex-1 w-full flex flex-col items-center">
       {/* 添加任务状态监听器 */}
