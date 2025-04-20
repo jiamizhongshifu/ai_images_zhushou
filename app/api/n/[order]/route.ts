@@ -1,18 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-type RouteContext = {
-  params: {
-    order: string;
-  };
-};
-
 /**
  * 极简化支付通知处理API
  * 通过非常短的URL接收支付通知，然后转发到实际处理程序
  */
 export async function GET(
   request: NextRequest,
-  { params }: RouteContext
+  { params }: { params: { order: string } }
 ) {
   try {
     // 获取订单号
@@ -55,7 +49,7 @@ export async function GET(
  */
 export async function POST(
   request: NextRequest,
-  { params }: RouteContext
+  { params }: { params: { order: string } }
 ) {
   try {
     // 获取订单号
