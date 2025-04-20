@@ -251,20 +251,24 @@ export function generatePaymentFormData(
     ? `${SITE_BASE_URL}/protected?order_no=${orderNo}&user_id=${userId}` 
     : `${SITE_BASE_URL}/protected?order_no=${orderNo}`;
   
-  // 使用纯ASCII商品名
-  const productName = `AI Assistant-${credits} Credits`;
+  // 使用纯ASCII商品名，最小化名称长度
+  const productName = `AI Credits ${credits}`;
   
-  // 创建参数对象
+  // 通知URL - 编码为base64后使用，避免问题字符
+  const notifyUrlBase64 = Buffer.from(`${SITE_BASE_URL}/api/payment/webhook`).toString('base64');
+  const notifyUrl = `${SITE_BASE_URL}/api/payment/bridge?url=${notifyUrlBase64}`;
+  
+  // 创建参数对象 - 确保所有参数简短且不含特殊字符
   const params: Record<string, string> = {
     pid: ZPAY_PID,
     type: paymentType,
     out_trade_no: orderNo,
-    notify_url: `${SITE_BASE_URL}/api/payment/webhook`,
+    notify_url: notifyUrl, // 使用中转URL
     return_url: returnUrl,
     name: productName,
     money: amount.toFixed(2),
     sign_type: 'MD5',
-    param: userId || ''
+    param: userId || 'user'
   };
   
   // 生成签名
