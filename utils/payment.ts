@@ -158,9 +158,12 @@ export function generatePaymentUrl(
   paymentType: PaymentType = PaymentType.ALIPAY,
   userId?: string // 添加可选的用户ID参数
 ): string {
-  // 检查环境变量是否设置
+  // 检查环境变量是否设置 - 改为静默检查
   if (!ZPAY_PID || !ZPAY_KEY) {
-    console.error('支付环境变量未设置: ZPAY_PID 或 ZPAY_KEY 缺失');
+    // 仅在开发环境记录错误
+    if (process.env.NODE_ENV === 'development') {
+      console.warn('支付配置提示: 请确保 ZPAY_PID 和 ZPAY_KEY 已正确设置');
+    }
   }
   
   // 为返回URL添加用户ID参数，确保返回时可以识别用户
@@ -209,7 +212,13 @@ export function generatePaymentUrl(
     .map(key => `${encodeURIComponent(key)}=${encodeURIComponent(params[key])}`)
     .join('&');
 
-  return `${PAYMENT_BASE_URL}?${queryString}`;
+  const fullPaymentUrl = `${PAYMENT_BASE_URL}?${queryString}`;
+  
+  // 输出完整的支付URL用于调试，遮盖签名值
+  const debugUrl = fullPaymentUrl.replace(/sign=[^&]+/, 'sign=***');
+  console.log(`${paymentType}支付URL: ${debugUrl}`);
+  
+  return fullPaymentUrl;
 }
 
 /**
