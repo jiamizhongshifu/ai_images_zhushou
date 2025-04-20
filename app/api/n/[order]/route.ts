@@ -6,11 +6,11 @@ import { NextRequest, NextResponse } from 'next/server';
  */
 export async function GET(
   request: NextRequest,
-  { params }: { params: { order: string } }
+  context: { params: { order: string } }
 ) {
   try {
     // 获取订单号
-    const orderNo = params.order;
+    const orderNo = context.params.order;
     
     // 记录通知
     console.log(`收到支付通知 [GET] 订单号: ${orderNo}`);
@@ -49,11 +49,11 @@ export async function GET(
  */
 export async function POST(
   request: NextRequest,
-  { params }: { params: { order: string } }
+  context: { params: { order: string } }
 ) {
   try {
     // 获取订单号
-    const orderNo = params.order;
+    const orderNo = context.params.order;
     
     // 记录通知
     console.log(`收到支付通知 [POST] 订单号: ${orderNo}`);
