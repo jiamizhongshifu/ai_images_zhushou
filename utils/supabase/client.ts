@@ -215,37 +215,59 @@ export const createClient = () => {
           },
         },
         auth: {
-          persistSession: true,
-          autoRefreshToken: true,
-          detectSessionInUrl: true,
           flowType: 'pkce',
-          storageKey: 'supabase.auth.token'
+          persistSession: true,
+          detectSessionInUrl: true,
+          autoRefreshToken: true,
+          storage: {
+            getItem: (key: string) => {
+              try {
+                return localStorage.getItem(key);
+              } catch {
+                return null;
+              }
+            },
+            setItem: (key: string, value: string) => {
+              try {
+                localStorage.setItem(key, value);
+                if (key === 'supabase.auth.token') {
+                  localStorage.setItem('auth_redirect_url', `${siteUrl}/auth/callback`);
+                }
+              } catch (error) {
+                console.error('[SupabaseClient] 存储错误:', error);
+              }
+            },
+            removeItem: (key: string) => {
+              try {
+                localStorage.removeItem(key);
+                if (key === 'supabase.auth.token') {
+                  localStorage.removeItem('auth_redirect_url');
+                }
+              } catch (error) {
+                console.error('[SupabaseClient] 移除存储项错误:', error);
+              }
+            }
+          }
         },
       }
     );
     
-    // 订阅会话状态变化
-    client.auth.onAuthStateChange(async (event, session) => {
+    // 添加错误处理
+    client.auth.onAuthStateChange((event: AuthChangeEvent, session: Session | null) => {
       // 处理会话变化
       handleSessionChange(event, session);
       
-      // 设置重定向URL
-      if ((event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') && session) {
-        try {
-          // 更新会话并设置重定向URL
-          await client.auth.setSession({
-            access_token: session.access_token,
-            refresh_token: session.refresh_token
-          });
-          
-          // 设置回调URL到localStorage，供后续使用
-          if (typeof window !== 'undefined') {
-            localStorage.setItem('supabase.auth.callbackUrl', `${siteUrl}/auth/callback`);
-          }
-          
-          console.log('[SupabaseClient] 已更新会话和回调URL');
-        } catch (error) {
-          console.error('[SupabaseClient] 设置会话出错:', error);
+      // 检查URL中的错误参数
+      if (typeof window !== 'undefined') {
+        const url = new URL(window.location.href);
+        const error = url.searchParams.get('error');
+        const errorCode = url.searchParams.get('error_code');
+        const errorDescription = url.searchParams.get('error_description');
+        
+        // 如果存在错误参数，重定向到错误页面
+        if (error && errorCode) {
+          const redirectUrl = `/auth/error?error=${error}&error_code=${errorCode}&error_description=${errorDescription}`;
+          window.location.href = redirectUrl;
         }
       }
     });
