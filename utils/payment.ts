@@ -99,11 +99,10 @@ export function generateSign(params: Record<string, any>, key: string): string {
     const stringA = stringArray.join('&');
     
     // 4. 拼接商户密钥并进行MD5加密
-    const stringSignTemp = stringA + '商户KEY';
+    const stringSignTemp = stringA + key;
     
     // 调试输出
     console.log('待签名字符串(不含KEY):', stringA);
-    console.log('最终签名字符串(拼接固定文本):', stringSignTemp);
     
     // 5. MD5加密结果使用小写
     const sign = crypto.createHash('md5').update(stringSignTemp, 'utf8').digest('hex').toLowerCase();

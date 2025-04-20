@@ -40,8 +40,10 @@ export const PaymentForm: React.FC<PaymentFormProps> = ({ amount, credits }) => 
         setError('浏览器阻止了支付窗口，请允许弹出窗口后重试');
       }
   
-      // 开始轮询支付状态
-      startPollingPaymentStatus(data.orderNo);
+      // 开始轮询支付状态 - 增加延迟
+      setTimeout(() => {
+        startPollingPaymentStatus(data.orderNo);
+      }, 10000); // 延迟10秒启动轮询
       
     } catch (err) {
       setError(err instanceof Error ? err.message : '支付请求失败，请重试');
