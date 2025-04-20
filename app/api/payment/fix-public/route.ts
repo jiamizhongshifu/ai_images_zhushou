@@ -300,23 +300,46 @@ export async function POST(request: Request): Promise<Response> {
 // GET 处理函数
 export const GET = withRateLimit(
   async (req: NextRequest) => {
-    const clonedRequest = new Request(req.url, {
-      method: 'POST',
-      headers: req.headers,
-      body: req.body
-    });
-    const response = await POST(clonedRequest);
-    // 确保返回 NextResponse
-    if (response instanceof NextResponse) {
-      return response;
+    try {
+      // 从 URL 参数中获取 order_no
+      const url = new URL(req.url);
+      const order_no = url.searchParams.get('order_no');
+      
+      if (!order_no) {
+        return NextResponse.json({ error: 'order_no is required' }, { status: 400 });
+      }
+
+      // 创建新的 POST 请求
+      const clonedRequest = new Request(req.url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...req.headers
+        },
+        body: JSON.stringify({ order_no })
+      });
+
+      const response = await POST(clonedRequest);
+      
+      // 确保返回 NextResponse
+      if (response instanceof NextResponse) {
+        return response;
+      }
+
+      // 如果不是 NextResponse，将其转换为 NextResponse
+      const data = await response.json();
+      return NextResponse.json(data, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: response.headers
+      });
+    } catch (error) {
+      console.error('处理 GET 请求时发生错误:', error);
+      return NextResponse.json({ 
+        error: '处理请求时发生错误',
+        details: error instanceof Error ? error.message : String(error)
+      }, { status: 500 });
     }
-    // 如果不是 NextResponse，将其转换为 NextResponse
-    const data = await response.json();
-    return NextResponse.json(data, {
-      status: response.status,
-      statusText: response.statusText,
-      headers: response.headers
-    });
   },
   {
     limit: 10,
