@@ -84,30 +84,23 @@ const handleFixPublic = async (request: NextRequest) => {
           };
         }
         
-        // 优先检查是否已经增加过点数，防止并发处理
+        // 检查是否已经有点数记录
         const { data: creditLogs, error: creditLogsError } = await client
           .from('ai_images_creator_credit_logs')
-          .select('*')
+          .select('id, created_at, change_value')
           .eq('order_no', orderNo)
           .eq('operation_type', 'recharge');
         
         // 如果已经增加过点数，跳过
-        if (creditLogs && creditLogs.length > 0) {
-          console.log(`订单 ${orderNo} 已经增加过点数，跳过点数更新操作，仅更新订单状态`);
+        if (!creditLogsError && creditLogs && creditLogs.length > 0) {
+          console.log(`订单 ${orderNo} 已经增加过点数，记录时间: ${creditLogs[0].created_at}, 增加数量: ${creditLogs[0].change_value}`);
           
-          // 更新订单状态为成功，并标记已更新点数
+          // 更新订单状态和标记
           const { error: updateError } = await client
             .from('ai_images_creator_payments')
             .update({
               status: 'success',
               credits_updated: true,
-              paid_at: new Date().toISOString(),
-              callback_data: {
-                method: 'fix-public',
-                time: new Date().toISOString(),
-                verified: true,
-                already_credited: true
-              },
               updated_at: new Date().toISOString()
             })
             .eq('order_no', orderNo);
@@ -117,11 +110,33 @@ const handleFixPublic = async (request: NextRequest) => {
           }
           
           return { 
-            message: '订单已处理', 
+            message: '订单已处理过点数', 
             order: { ...order, status: 'success', credits_updated: true }, 
             creditLogs,
-            hasExistingCredits: true
+            hasExistingCredits: true,
+            lastProcessTime: creditLogs[0].created_at
           };
+        }
+        
+        // 如果订单已经是成功状态，再次检查点数记录
+        if (order.status === 'success') {
+          // 双重检查点数记录
+          const { data: recentLogs } = await client
+            .from('ai_images_creator_credit_logs')
+            .select('id, created_at')
+            .eq('order_no', orderNo)
+            .eq('operation_type', 'recharge')
+            .order('created_at', { ascending: false })
+            .limit(1);
+            
+          if (recentLogs && recentLogs.length > 0) {
+            console.log(`订单 ${orderNo} 状态为成功且已有点数记录，最后处理时间: ${recentLogs[0].created_at}`);
+            return {
+              message: '订单已成功且已处理点数',
+              order: { ...order, credits_updated: true },
+              lastProcessTime: recentLogs[0].created_at
+            };
+          }
         }
         
         // 3. 更新订单状态为成功

@@ -579,42 +579,30 @@ async function processPaymentCallback(params: Record<string, any>) {
       if (orderData.status === PaymentStatus.SUCCESS) {
         console.log("订单已处理过:", orderNo);
         
-        // 更新回调日志状态
-        await updateCallbackStatus(orderNo, 'already_processed');
-        
-        return NextResponse.json({ message: "success" }, { status: 200 });
-      }
-      
-      // 检查是否已有点数记录
-      const { data: creditLogs, error: logQueryError } = await client
-        .from('ai_images_creator_credit_logs')
-        .select('id')
-        .eq('order_no', orderNo)
-        .eq('operation_type', 'recharge');
-        
-      if (!logQueryError && creditLogs && creditLogs.length > 0) {
-        console.warn(`订单 ${orderNo} 已经增加过点数，仅更新状态`);
-        
-        // 更新回调日志状态
-        await updateCallbackStatus(orderNo, 'success', '已有点数记录，仅更新订单状态');
-        
-        // 只更新订单状态
-        await client
-          .from('ai_images_creator_payments')
-          .update({
-            status: PaymentStatus.SUCCESS,
-            trade_no: tradeNo || params.trade_no || params.transaction_id || `callback_${Date.now()}`,
-            callback_data: params,
-            paid_at: new Date().toISOString(),
-            credits_updated: true,
-            updated_at: new Date().toISOString()
-          })
-          .eq('order_no', orderNo);
+        // 检查是否已有点数记录
+        const { data: creditLogs, error: logQueryError } = await client
+          .from('ai_images_creator_credit_logs')
+          .select('id')
+          .eq('order_no', orderNo)
+          .eq('operation_type', 'recharge');
           
-        return NextResponse.json({ 
-          message: "success",
-          status: "already_credited"
-        }, { status: 200 });
+        if (!logQueryError && creditLogs && creditLogs.length > 0) {
+          console.warn(`订单 ${orderNo} 已经增加过点数，确保更新订单标记`);
+          
+          // 确保更新订单标记
+          await client
+            .from('ai_images_creator_payments')
+            .update({
+              credits_updated: true,
+              updated_at: new Date().toISOString()
+            })
+            .eq('order_no', orderNo);
+          
+          // 更新回调日志状态
+          await updateCallbackStatus(orderNo, 'already_processed', '已有点数记录，已更新订单标记');
+          
+          return NextResponse.json({ message: "success" }, { status: 200 });
+        }
       }
       
       // 添加处理锁，防止并发处理
