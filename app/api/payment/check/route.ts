@@ -142,38 +142,31 @@ const checkPaymentHandler = async (request: NextRequest, authResult: any) => {
       else if (order.status === 'success' && order.credits_updated === false) {
         console.log(`订单 ${orderNo} 状态为success但点数未更新，检查是否已有点数记录`);
         
-        // 首先检查是否已经有这个订单的点数变更记录
-        const { data: existingLogs, error: logCheckError } = await client
+        // 检查是否已有点数记录
+        const { count: creditLogCount, error: creditLogCountError } = await client
           .from('ai_images_creator_credit_logs')
-          .select('id')
+          .select('id', { count: 'exact', head: true })
           .eq('order_no', orderNo)
           .eq('operation_type', 'recharge');
         
-        // 如果已有点数记录，只更新订单标记
-        if (!logCheckError && existingLogs && existingLogs.length > 0) {
-          console.log(`订单 ${orderNo} 已有点数记录，仅更新订单标记`);
+        if (!creditLogCountError && creditLogCount && creditLogCount > 0) {
+          console.log(`检测到订单 ${orderNo} 已有 ${creditLogCount} 条点数记录`);
           
-          // 更新订单标记为已更新点数
-          const { error: markError } = await client
+          // 确保订单状态和标记一致
+          await client
             .from('ai_images_creator_payments')
             .update({
+              status: 'success',
               credits_updated: true,
               updated_at: new Date().toISOString()
             })
             .eq('order_no', orderNo);
           
-          if (markError) {
-            console.warn(`更新订单标记失败: ${markError.message}，但不影响查询`);
-          }
-          
           return {
             success: true,
-            message: '订单已有点数记录，已更新标记',
-            order: {
-              ...order,
-              credits_updated: true
-            },
-            hasExistingCredits: true
+            message: '订单已有点数记录，已确保状态一致',
+            order: { ...order, status: 'success', credits_updated: true },
+            existingCreditLogs: creditLogCount
           };
         }
         
