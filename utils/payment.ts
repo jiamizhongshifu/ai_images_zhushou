@@ -246,13 +246,13 @@ export function generatePaymentFormData(
     }
   }
   
-  // 为返回URL添加用户ID参数 - 简化版
+  // 使用更简洁的返回URL
   const returnUrl = `${SITE_BASE_URL}/pay?o=${orderNo}`;
   
   // 使用超短商品名
   const productName = `AI${credits}`;
   
-  // 使用超短通知URL，避免notify_url和param参数的问题
+  // 直接构建无特殊字符的通知URL
   const notifyUrl = `${SITE_BASE_URL}/api/n/${orderNo}`;
   
   // 创建参数对象 - 最小化参数值
@@ -265,14 +265,15 @@ export function generatePaymentFormData(
     name: productName,
     money: amount.toFixed(2),
     sign_type: 'MD5',
-    param: orderNo // 不使用userId作为param
+    param: orderNo // 使用订单号作为param参数
   };
   
   // 生成签名
   params.sign = generateSign(params, ZPAY_KEY);
   
-  // 打印日志方便调试
-  console.log(`${paymentType}支付表单数据:`, { ...params, sign: '***' });
+  // 打印完整日志方便调试
+  const debugParams = { ...params, sign: '***' };
+  console.log(`${paymentType}支付表单数据:`, debugParams);
   
   return {
     url: PAYMENT_BASE_URL,

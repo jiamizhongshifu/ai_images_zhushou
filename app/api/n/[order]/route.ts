@@ -15,10 +15,18 @@ export async function GET(
     // 记录通知
     console.log(`收到支付通知 [GET] 订单号: ${orderNo}`);
     
-    // 构建完整的查询参数
-    const searchParams = new URLSearchParams(request.nextUrl.searchParams);
+    // 获取原始URL，记录完整信息
+    console.log(`原始请求URL: ${request.url}`);
     
-    // 确保添加订单号
+    // 构建完整的查询参数，确保所有参数都被传递
+    const searchParams = new URLSearchParams();
+    
+    // 从请求URL中复制所有参数 - 使用Array.from避免迭代器问题
+    Array.from(request.nextUrl.searchParams.entries()).forEach(([key, value]) => {
+      searchParams.set(key, value);
+    });
+    
+    // 确保添加订单号，这是最关键的参数
     if (!searchParams.has('out_trade_no')) {
       searchParams.set('out_trade_no', orderNo);
     }
@@ -28,19 +36,26 @@ export async function GET(
     
     console.log(`转发支付通知到: ${webhookUrl}`);
     
-    // 执行转发
+    // 执行转发，确保正确处理响应
     const response = await fetch(webhookUrl);
+    const responseText = await response.text();
+    
+    console.log(`支付通知处理响应: ${responseText}`);
     
     // 返回原始响应
-    return new Response(await response.text(), {
+    return new Response(responseText, {
       status: response.status,
       headers: {
         'Content-Type': response.headers.get('Content-Type') || 'text/plain',
       },
     });
   } catch (error) {
-    console.error('支付通知处理错误:', error);
-    return new Response('success', { status: 200 }); // 总是返回成功，防止重试
+    // 详细记录错误信息
+    console.error('支付通知处理错误:', error instanceof Error ? error.message : String(error));
+    console.error('错误详情:', error);
+    
+    // 总是返回成功，防止支付平台重试
+    return new Response('success', { status: 200 });
   }
 }
 
@@ -57,12 +72,14 @@ export async function POST(
     
     // 记录通知
     console.log(`收到支付通知 [POST] 订单号: ${orderNo}`);
+    console.log(`原始请求URL: ${request.url}`);
     
     // 读取请求体
     const body = await request.text();
+    console.log(`POST请求体: ${body}`);
     
-    // 构建转发请求
-    const webhookUrl = `${process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000'}/api/payment/webhook`;
+    // 构建转发请求，确保添加订单号作为查询参数
+    const webhookUrl = `${process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000'}/api/payment/webhook?out_trade_no=${orderNo}`;
     
     console.log(`转发支付通知到: ${webhookUrl}`);
     
@@ -75,15 +92,22 @@ export async function POST(
       body: body,
     });
     
+    const responseText = await response.text();
+    console.log(`支付通知处理响应: ${responseText}`);
+    
     // 返回原始响应
-    return new Response(await response.text(), {
+    return new Response(responseText, {
       status: response.status,
       headers: {
         'Content-Type': response.headers.get('Content-Type') || 'text/plain',
       },
     });
   } catch (error) {
-    console.error('支付通知处理错误:', error);
-    return new Response('success', { status: 200 }); // 总是返回成功，防止重试
+    // 详细记录错误信息
+    console.error('支付通知处理错误:', error instanceof Error ? error.message : String(error));
+    console.error('错误详情:', error);
+    
+    // 总是返回成功，防止支付平台重试
+    return new Response('success', { status: 200 });
   }
 } 
