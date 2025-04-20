@@ -139,8 +139,8 @@ const checkPaymentHandler = async (request: NextRequest, authResult: any) => {
         }
       } 
       // 添加对已成功但未更新点数的订单处理
-      else if (order.status === 'success' && order.credits_updated === false) {
-        console.log(`订单 ${orderNo} 状态为success但点数未更新，检查是否已有点数记录`);
+      else if (order.status === 'success' && (order.credits_updated === false || order.credits_updated === null || order.credits_updated === undefined)) {
+        console.log(`订单 ${orderNo} 状态为success但点数未更新状态: ${order.credits_updated}, 检查是否已有点数记录`);
         
         // 检查是否已有点数记录
         const { count: creditLogCount, error: creditLogCountError } = await client
@@ -271,6 +271,28 @@ const checkPaymentHandler = async (request: NextRequest, authResult: any) => {
       
       // 查询订单的点数记录
       if (order.status === 'success') {
+        // 首先检查是否已有点数记录，避免因标记不同步导致重复添加点数
+        const { count: existingCreditsCount, error: existingCreditsError } = await client
+          .from('ai_images_creator_credit_logs')
+          .select('id', { count: 'exact', head: true })
+          .eq('order_no', orderNo)
+          .eq('operation_type', 'recharge');
+        
+        // 如果已有点数记录但订单未标记，更新标记确保一致性
+        if (!existingCreditsError && existingCreditsCount && existingCreditsCount > 0 && order.credits_updated !== true) {
+          console.log(`发现订单 ${orderNo} 已有 ${existingCreditsCount} 条点数记录，但订单未标记为已更新点数，更新标记`);
+          
+          await client
+            .from('ai_images_creator_payments')
+            .update({
+              credits_updated: true,
+              updated_at: new Date().toISOString()
+            })
+            .eq('order_no', orderNo);
+            
+          order.credits_updated = true;
+        }
+
         // 尝试获取用户的点数信息
         try {
           const { data: userCredits, error: creditsError } = await client
@@ -292,9 +314,27 @@ const checkPaymentHandler = async (request: NextRequest, authResult: any) => {
           .eq('order_no', orderNo)
           .eq('operation_type', 'recharge');
           
+        // 安全检查：如果已有点数记录，确保订单状态一致
+        if (creditLogs && creditLogs.length > 0 && order.credits_updated !== true) {
+          console.log(`安全检查：订单 ${orderNo} 有 ${creditLogs.length} 条点数记录，但订单标记为 ${order.credits_updated}，修正不一致`);
+          
+          // 更新订单标记
+          await client
+            .from('ai_images_creator_payments')
+            .update({
+              credits_updated: true,
+              updated_at: new Date().toISOString()
+            })
+            .eq('order_no', orderNo);
+          
+          // 更新本地对象
+          order.credits_updated = true;
+        }
+        
         return {
           ...order,
-          creditLogs: creditLogs || []
+          creditLogs: creditLogs || [],
+          hasCredits: creditLogs && creditLogs.length > 0
         };
       }
       
