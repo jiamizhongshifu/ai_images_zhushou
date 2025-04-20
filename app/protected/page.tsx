@@ -462,20 +462,22 @@ export default function ProtectedPage() {
             <div className="p-6 pt-0 font-nunito">
               {/* 生成结果展示 */}
               {(isGenerating || generatedImages.length > 0) && (
-                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 md:gap-4 h-[200px]">
+                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 md:gap-4">
                   {/* 显示生成中的骨架屏或最新生成的图片 */}
-                  <div className="relative min-h-[200px] bg-card/40 border border-border rounded-xl overflow-hidden shadow-ghibli-sm hover:shadow-ghibli transition-all duration-300 w-full">
+                  <div className="relative w-full pt-[100%]">
                     {isGenerating ? (
-                      <div className="absolute inset-0 flex items-center justify-center bg-muted/60 backdrop-blur-sm z-10">
-                        <ImageGenerationSkeleton 
-                          stage={generationStage} 
-                          percentage={generationPercentage} 
-                          isGenerating={isGenerating}
-                        />
+                      <div className="absolute inset-0 bg-card/40 border border-border rounded-xl overflow-hidden shadow-ghibli-sm hover:shadow-ghibli transition-all duration-300">
+                        <div className="absolute inset-0 flex items-center justify-center bg-muted/60 backdrop-blur-sm z-10">
+                          <ImageGenerationSkeleton 
+                            stage={generationStage} 
+                            percentage={generationPercentage} 
+                            isGenerating={isGenerating}
+                          />
+                        </div>
                       </div>
                     ) : generatedImages[0] && (
                       <div 
-                        className="relative bg-card/40 border border-border rounded-xl overflow-hidden shadow-ghibli-sm hover:shadow-ghibli transition-all duration-300 cursor-pointer w-full h-full"
+                        className="absolute inset-0 bg-card/40 border border-border rounded-xl overflow-hidden shadow-ghibli-sm hover:shadow-ghibli transition-all duration-300 cursor-pointer"
                         onClick={() => setPreviewImage(generatedImages[0])}
                       >
                         <LazyImage
@@ -483,7 +485,7 @@ export default function ProtectedPage() {
                           alt="最新生成的图片"
                           onImageLoad={() => handleImageLoad(generatedImages[0])}
                           onImageError={() => handleImageError(generatedImages[0])}
-                          className="w-full h-full object-cover object-center"
+                          className="absolute inset-0 w-full h-full object-cover object-center"
                           fadeIn={true}
                           blurEffect={true}
                           loadingElement={
@@ -503,29 +505,31 @@ export default function ProtectedPage() {
                   
                   {/* 显示历史图片，根据是否在生成中决定显示数量 */}
                   {generatedImages.slice(isGenerating ? 0 : 1, isGenerating ? 3 : 4).map((imageUrl, index) => (
-                    <div key={imageUrl + index} 
-                      className="relative min-h-[200px] bg-card/40 border border-border rounded-xl overflow-hidden shadow-ghibli-sm hover:shadow-ghibli transition-all duration-300 cursor-pointer w-full"
-                      onClick={() => setPreviewImage(imageUrl)}
-                    >
-                      <LazyImage
-                        src={getImageUrl(imageUrl)}
-                        alt={`生成的图片 ${index + (isGenerating ? 1 : 2)}`}
-                        onImageLoad={() => handleImageLoad(imageUrl)}
-                        onImageError={() => handleImageError(imageUrl)}
-                        className="w-full h-full object-cover object-center"
-                        fadeIn={true}
-                        blurEffect={true}
-                        loadingElement={
-                          <div className="absolute inset-0 flex items-center justify-center bg-muted/60 backdrop-blur-sm z-10">
-                            <ImageLoading message="加载中..." />
-                          </div>
-                        }
-                        errorElement={
-                          <div className="absolute inset-0 flex flex-col items-center justify-center bg-muted/60 backdrop-blur-sm z-10">
-                            <ImageError message="加载失败" />
-                          </div>
-                        }
-                      />
+                    <div key={imageUrl + index} className="relative w-full pt-[100%]">
+                      <div 
+                        className="absolute inset-0 bg-card/40 border border-border rounded-xl overflow-hidden shadow-ghibli-sm hover:shadow-ghibli transition-all duration-300 cursor-pointer"
+                        onClick={() => setPreviewImage(imageUrl)}
+                      >
+                        <LazyImage
+                          src={getImageUrl(imageUrl)}
+                          alt={`生成的图片 ${index + (isGenerating ? 1 : 2)}`}
+                          onImageLoad={() => handleImageLoad(imageUrl)}
+                          onImageError={() => handleImageError(imageUrl)}
+                          className="absolute inset-0 w-full h-full object-cover object-center"
+                          fadeIn={true}
+                          blurEffect={true}
+                          loadingElement={
+                            <div className="absolute inset-0 flex items-center justify-center bg-muted/60 backdrop-blur-sm z-10">
+                              <ImageLoading message="加载中..." />
+                            </div>
+                          }
+                          errorElement={
+                            <div className="absolute inset-0 flex flex-col items-center justify-center bg-muted/60 backdrop-blur-sm z-10">
+                              <ImageError message="加载失败" />
+                            </div>
+                          }
+                        />
+                      </div>
                     </div>
                   ))}
                 </div>
