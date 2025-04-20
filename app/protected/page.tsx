@@ -120,26 +120,28 @@ export default function ProtectedPage() {
   // 修改页面切换或路由变化监听函数，避免在返回时清空图片内容
   useEffect(() => {
     const handleRouteChange = () => {
-      console.log('[ProtectedPage] 检测到路由变化，检查是否需要刷新图片状态');
+      console.log('[ProtectedPage] 检测到路由变化，准备刷新图片状态');
       
-      // 不再清空和重设图片状态，只在必要时刷新图片
-      if (generatedImages.length === 0) {
-        console.log('[ProtectedPage] 生成结果为空，尝试从历史加载图片');
-        refreshHistory(false).then(() => {
-          if (images.length > 0 && generatedImages.length === 0) {
-            console.log('[ProtectedPage] 从历史记录加载图片: ', images.length);
-            setGeneratedImages(images);
-          }
-        });
-      }
+      // 从历史记录中刷新图片状态
+      refreshHistory(false).then(() => {
+        if (images.length > 0) {
+          console.log('[ProtectedPage] 从历史记录加载图片: ', images.length);
+          setGeneratedImages(images);
+        }
+      }).catch(error => {
+        console.error('[ProtectedPage] 刷新历史记录失败:', error);
+      });
     };
     
-    // 监听路由变化
+    // 监听路由变化和页面卸载
     window.addEventListener('popstate', handleRouteChange);
+    window.addEventListener('beforeunload', handleRouteChange);
+    
     return () => {
       window.removeEventListener('popstate', handleRouteChange);
+      window.removeEventListener('beforeunload', handleRouteChange);
     };
-  }, [generatedImages, images, refreshHistory, setGeneratedImages]);
+  }, [images, refreshHistory, setGeneratedImages]);
   
   // 增强初始加载时同步历史记录图片到生成状态的逻辑
   useEffect(() => {
