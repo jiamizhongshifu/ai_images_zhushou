@@ -370,33 +370,6 @@ export default function ProtectedPage() {
   // 添加预览状态
   const [previewImage, setPreviewImage] = useState<string | null>(null);
 
-  // 在组件顶部添加以下状态和useEffect
-  const [imagesToShow, setImagesToShow] = useState(4);
-
-  // 使用useEffect监听窗口大小变化
-  useEffect(() => {
-    const handleResize = () => {
-      if (window.innerWidth < 768) {
-        setImagesToShow(3);  // 移动端显示3个图片
-      } else if (window.innerWidth < 1024) {
-        setImagesToShow(5);  // 平板显示5个图片
-      } else {
-        setImagesToShow(7);  // 桌面显示7个图片
-      }
-    };
-    
-    // 初始化
-    handleResize();
-    
-    // 添加监听器
-    window.addEventListener('resize', handleResize);
-    
-    // 清理监听器
-    return () => {
-      window.removeEventListener('resize', handleResize);
-    };
-  }, []);
-
   return (
     <div className="flex-1 w-full flex flex-col items-center">
       {/* 添加任务状态监听器 */}
@@ -489,7 +462,7 @@ export default function ProtectedPage() {
             <div className="p-6 pt-0 font-nunito">
               {/* 生成结果展示 */}
               {(isGenerating || generatedImages.length > 0) && (
-                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4">
+                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 md:gap-4">
                   {/* 显示生成中的骨架屏或最新生成的图片 */}
                   <div className="aspect-square w-full">
                     {isGenerating ? (
@@ -531,7 +504,7 @@ export default function ProtectedPage() {
                   </div>
                   
                   {/* 显示历史图片，根据是否在生成中决定显示数量 */}
-                  {generatedImages.slice(isGenerating ? 0 : 1, isGenerating ? 3 : imagesToShow).map((imageUrl, index) => (
+                  {generatedImages.slice(isGenerating ? 0 : 1, isGenerating ? 3 : 4).map((imageUrl, index) => (
                     <div key={imageUrl + index} className="aspect-square w-full">
                       <div 
                         className="aspect-square relative bg-card/40 border border-border rounded-xl overflow-hidden shadow-ghibli-sm hover:shadow-ghibli transition-all duration-300 cursor-pointer w-full h-full"
