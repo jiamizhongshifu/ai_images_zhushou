@@ -4,7 +4,13 @@ import crypto from 'crypto';
 const ZPAY_PID = process.env.ZPAY_PID || '';
 const ZPAY_KEY = process.env.ZPAY_KEY || '';
 const PAYMENT_BASE_URL = 'https://zpayz.cn/submit.php';
-const SITE_BASE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000';
+
+// 生产环境的默认站点URL，开发环境下可以使用localhost
+const DEFAULT_PRODUCTION_URL = 'https://www.imgtutu.ai/'; // 替换为实际的生产域名
+const SITE_BASE_URL = process.env.NEXT_PUBLIC_SITE_URL || 
+                      (process.env.NODE_ENV === 'production' 
+                       ? DEFAULT_PRODUCTION_URL 
+                       : 'http://localhost:3000');
 
 // 订单状态
 export enum PaymentStatus {
