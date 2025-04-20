@@ -1,5 +1,6 @@
 import { createBrowserClient } from "@supabase/ssr";
 import { AuthChangeEvent, Session } from '@supabase/supabase-js';
+import { getSupabaseConfig, getSiteUrl } from '../env-config';
 
 // 在会话变化时添加或移除cookie标记
 const handleSessionChange = (event: AuthChangeEvent, session: Session | null) => {
@@ -98,12 +99,12 @@ const setupAuthPersistence = () => {
 };
 
 export const createClient = () => {
-  // 从环境变量中读取URL和ANON KEY
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  // 获取Supabase配置
+  const config = getSupabaseConfig();
+  const siteUrl = getSiteUrl();
 
   // 验证环境变量存在
-  if (!supabaseUrl || !supabaseAnonKey) {
+  if (!config.url || !config.anonKey) {
     console.error("缺少必要的Supabase环境变量");
     throw new Error("缺少必要的Supabase环境变量");
   }
@@ -115,14 +116,13 @@ export const createClient = () => {
     if (isServer) {
       // 在服务器端环境下使用基本配置创建客户端
       console.log("[SupabaseClient] 在服务器端创建简化客户端");
-      return createBrowserClient(supabaseUrl, supabaseAnonKey);
+      return createBrowserClient(config.url, config.anonKey);
     }
     
     // 在浏览器环境下使用完整配置
-    // 使用正确的创建客户端参数格式
     const client = createBrowserClient(
-      supabaseUrl,
-      supabaseAnonKey,
+      config.url,
+      config.anonKey,
       {
         cookies: {
           get: (name) => {
@@ -219,8 +219,20 @@ export const createClient = () => {
           autoRefreshToken: true,
           detectSessionInUrl: true,
           flowType: 'pkce',
-          // 公共存储键名
           storageKey: 'supabase.auth.token',
+          // 使用全局配置设置重定向URL
+          onAuthStateChange: (event, session) => {
+            handleSessionChange(event, session);
+            // 设置重定向URL
+            if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
+              client.auth.setSession({
+                access_token: session?.access_token || '',
+                refresh_token: session?.refresh_token || '',
+              }, {
+                redirectTo: `${siteUrl}/auth/callback`
+              });
+            }
+          }
         },
       }
     );
@@ -256,8 +268,7 @@ export const createClient = () => {
     
     return client;
   } catch (error) {
-    console.error("创建Supabase客户端失败:", error);
-    // 失败时使用基本配置重试一次
-    return createBrowserClient(supabaseUrl, supabaseAnonKey);
+    console.error('[SupabaseClient] 创建客户端出错:', error);
+    throw error;
   }
 };
