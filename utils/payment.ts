@@ -3,10 +3,10 @@ import crypto from 'crypto';
 // 获取环境变量中的支付配置
 const ZPAY_PID = process.env.ZPAY_PID || '';
 const ZPAY_KEY = process.env.ZPAY_KEY || '';
-const PAYMENT_BASE_URL = 'https://zpayz.cn/submit.php';
+const PAYMENT_BASE_URL = 'https://z-pay.cn/submit.php';
 
 // 生产环境的默认站点URL，开发环境下可以使用localhost
-const DEFAULT_PRODUCTION_URL = 'https://www.imgtutu.ai/'; // 替换为实际的生产域名
+const DEFAULT_PRODUCTION_URL = 'https://www.imgtutu.ai'; // 移除末尾的斜杠，防止生成双斜杠URL
 const SITE_BASE_URL = process.env.NEXT_PUBLIC_SITE_URL || 
                       (process.env.NODE_ENV === 'production' 
                        ? DEFAULT_PRODUCTION_URL 
@@ -140,17 +140,20 @@ export function generatePaymentUrl(
     console.error('支付环境变量未设置: ZPAY_PID 或 ZPAY_KEY 缺失');
   }
   
+  // 确保URL路径正确，避免双斜杠
+  const formattedBaseUrl = SITE_BASE_URL.replace(/\/$/, ''); // 移除末尾斜杠
+
   // 为返回URL添加用户ID参数，确保返回时可以识别用户
   const returnUrl = userId 
-    ? `${SITE_BASE_URL}/protected?order_no=${orderNo}&user_id=${userId}` 
-    : `${SITE_BASE_URL}/protected?order_no=${orderNo}`;
+    ? `${formattedBaseUrl}/protected?order_no=${orderNo}&user_id=${userId}` 
+    : `${formattedBaseUrl}/protected?order_no=${orderNo}`;
   
   // 确保传递所有必需参数，且参数值不为空
   const params: Record<string, any> = {
     pid: ZPAY_PID,
     type: paymentType,
     out_trade_no: orderNo,
-    notify_url: `${SITE_BASE_URL}/api/payment/webhook`,
+    notify_url: `${formattedBaseUrl}/api/payment/webhook`,
     return_url: returnUrl,
     name: `AI图片助手-${credits}点数充值`,
     money: amount.toFixed(2),

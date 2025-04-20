@@ -229,15 +229,19 @@ const handleFixPublic = async (request: NextRequest) => {
 export const GET = withRateLimit(
   handleFixPublic,
   {
-    // 每IP每5分钟最多30次请求（提高限制，原来是10次）
-    limit: 30,
-    windowMs: 5 * 60 * 1000,
+    // 每IP每5分钟最多50次请求（进一步提高限制）
+    limit: 50,
+    // 窗口时间增加到10分钟，减轻集中在短时间内的请求压力
+    windowMs: 10 * 60 * 1000,
     // 使用简单的IP限流函数
     keyGenerator: (req) => {
       const ip = req.headers.get('x-forwarded-for') || 
                 req.headers.get('x-real-ip') || 
                 'unknown';
-      return `ip:${ip}:payment:fix-public`;
+      // 增加请求参数中的尝试次数到key中，使同一IP多次尝试的不同请求被视为不同的请求
+      const url = new URL(req.url);
+      const attemptCount = url.searchParams.get('attempt') || '0';
+      return `ip:${ip}:payment:fix-public:${attemptCount}`;
     },
     message: '请求频率过高，请稍后再试',
     // 添加排除条件：如果请求包含admin_key则跳过限流

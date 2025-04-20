@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, Suspense } from 'react';
+import { useEffect, useState, Suspense, useRef } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
@@ -17,6 +17,17 @@ function PaymentContent() {
   const [status, setStatus] = useState<'checking' | 'success' | 'failed'>('checking');
   const [message, setMessage] = useState('正在验证支付结果...');
   const [retryCount, setRetryCount] = useState(0);
+  
+  // 使用ref来存储订单信息，避免依赖localStorage
+  const orderInfoRef = useRef<{
+    orderNo: string | null;
+    timestamp: number;
+    tradeStatus: string | null;
+  }>({
+    orderNo: null,
+    timestamp: 0,
+    tradeStatus: null
+  });
   
   // 获取URL中的参数，添加空值检查
   const orderNo = searchParams?.get('out_trade_no') || 
@@ -36,19 +47,23 @@ function PaymentContent() {
       return;
     }
     
-    // 开始时，记录支付回调信息到localStorage，方便恢复
+    // 保存订单信息到ref，不依赖localStorage
+    orderInfoRef.current = {
+      orderNo,
+      timestamp: Date.now(),
+      tradeStatus: tradeStatus || null
+    };
+    
+    // 仍然尝试保存到localStorage作为备选，但使用try-catch避免出错
     try {
-      // 保存订单信息便于恢复
       localStorage.setItem('lastPaymentOrderNo', orderNo);
-      // 记录时间戳，用于判断过期
       localStorage.setItem('lastPaymentTimestamp', Date.now().toString());
-      // 记录可能的交易状态
       if (tradeStatus) {
         localStorage.setItem('lastPaymentTradeStatus', tradeStatus);
       }
       console.log(`支付回调信息已保存，订单号: ${orderNo}`);
     } catch (e) {
-      console.warn('无法保存支付状态到localStorage', e);
+      console.warn('无法保存支付状态到localStorage，将使用内存存储', e);
     }
     
     // 检查并修复订单
@@ -57,7 +72,7 @@ function PaymentContent() {
   
   // 指数退避重试机制
   const checkAndFixPayment = async (orderNo: string) => {
-    const MAX_RETRIES = 15; // 增加到15次，最高可重试约3分钟
+    const MAX_RETRIES = 20; // 增加到20次，最高可重试约5分钟
     const INITIAL_DELAY = 1000; // 1秒
     const MAX_DELAY = 20000; // 最长20秒
     
@@ -68,7 +83,12 @@ function PaymentContent() {
         
         // 即使超出最大重试次数，仍然再发起一次请求尝试修复，不等待结果
         try {
-          fetch(`/api/payment/fix-public?order_no=${orderNo}&admin_key=${process.env.NEXT_PUBLIC_ADMIN_KEY || ''}`);
+          // 同时调用多个接口，增加成功率
+          Promise.allSettled([
+            fetch(`/api/payment/fix-public?order_no=${orderNo}&admin_key=${process.env.NEXT_PUBLIC_ADMIN_KEY || ''}`),
+            fetch(`/api/payment/check?order_no=${orderNo}`)
+          ]);
+          console.log('已在后台发送最后尝试修复请求');
         } catch (e) {
           console.warn('后台尝试修复失败', e);
         }
@@ -77,80 +97,67 @@ function PaymentContent() {
         return;
       }
       
-      // 先使用两个API并行尝试修复，不管顺序
+      // 先使用多个API并行尝试修复，不管顺序
       const promises = [
         // 公共修复接口 - 添加admin_key跳过限流机制
-        fetch(`/api/payment/fix-public?order_no=${orderNo}&admin_key=${process.env.NEXT_PUBLIC_ADMIN_KEY || ''}`),
+        fetch(`/api/payment/fix-public?order_no=${orderNo}&admin_key=${process.env.NEXT_PUBLIC_ADMIN_KEY || ''}&attempt=${retryCount}`),
         // 标准检查接口
-        fetch(`/api/payment/check?order_no=${orderNo}`)
+        fetch(`/api/payment/check?order_no=${orderNo}&attempt=${retryCount}`)
       ];
       
       // 等待最先完成的请求
       const responses = await Promise.allSettled(promises);
-      let successResponse = null;
+      let successData = null;
       
-      // 检查哪个请求成功了
+      // 处理所有响应
       for (const resp of responses) {
         if (resp.status === 'fulfilled' && resp.value.ok) {
-          successResponse = resp.value;
-          break;
+          try {
+            const data = await resp.value.json();
+            
+            // 检查是否有成功的响应
+            if (data.success && 
+                ((data.result && data.result.message && 
+                  (data.result.message.includes('已修复') || 
+                   data.result.message.includes('已处理') ||
+                   data.result.message.includes('点数已增加'))) ||
+                 (data.order && data.order.status === 'success'))) {
+              
+              successData = data;
+              break;
+            }
+          } catch (parseError) {
+            console.error('解析响应数据失败:', parseError);
+          }
         }
       }
       
-      // 如果有成功的响应，处理它
-      if (successResponse) {
-        const data = await successResponse.json();
+      // 处理成功响应
+      if (successData) {
+        // 支付成功，更新UI状态
+        setStatus('success');
+        setMessage('支付成功！您的订单已处理，点数已增加');
         
-        // 首先检查修复接口的成功响应 
-        if (data.success && 
-            ((data.result && data.result.message && 
-              (data.result.message.includes('已修复') || 
-               data.result.message.includes('已处理') ||
-               data.result.message.includes('点数已增加'))) ||
-             (data.order && data.order.status === 'success'))) {
-          
-          // 支付成功，更新UI状态
-          setStatus('success');
-          setMessage('支付成功！您的订单已处理，点数已增加');
-          
-          // 清除localStorage中的临时数据
-          try {
-            localStorage.removeItem('lastPaymentOrderNo');
-            localStorage.removeItem('lastPaymentTimestamp');
-            localStorage.removeItem('lastPaymentTradeStatus');
-          } catch (e) {
-            console.warn('清除localStorage失败', e);
-          }
-          
-          // 强制刷新用户点数
-          for (let i = 0; i < 3; i++) {
-            try {
-              await fetch('/api/user/credits', { 
-                method: 'GET',
-                cache: 'no-store'
-              });
-              // 延迟300ms
-              await new Promise(resolve => setTimeout(resolve, 300));
-            } catch (e) {
-              console.warn(`第${i+1}次刷新点数失败`, e);
-            }
-          }
-          
-          toast({
-            title: '支付成功',
-            description: '您的点数已增加',
-            type: 'success',
-          });
-          
-          setLoading(false);
-          return;
-        } 
-        // 如果订单是pending，但支付网关响应确认还在处理中
-        else if (data.success && 
-                ((data.result && data.result.status === 'pending') || 
-                 (data.order && data.order.status === 'pending'))) {
-          console.log('订单仍在处理中，继续重试...');
+        // 清除localStorage中的临时数据
+        try {
+          localStorage.removeItem('lastPaymentOrderNo');
+          localStorage.removeItem('lastPaymentTimestamp');
+          localStorage.removeItem('lastPaymentTradeStatus');
+        } catch (e) {
+          console.warn('清除localStorage失败，但这不影响功能', e);
         }
+        
+        // 强制刷新用户点数 - 多次尝试确保成功
+        await ensureCreditsRefreshed();
+        
+        toast({
+          title: '支付成功',
+          description: '您的点数已增加',
+          type: 'success',
+        });
+        
+        setLoading(false);
+        return;
       }
       
       // 如果当前重试次数为0，添加一条提示信息
@@ -161,8 +168,14 @@ function PaymentContent() {
       // 增加重试计数
       setRetryCount(prev => prev + 1);
       
-      // 指数退避重试
-      const delay = INITIAL_DELAY * Math.pow(1.5, retryCount);
+      // 使用指数退避，但限制最大延迟时间
+      const baseDelay = Math.min(INITIAL_DELAY * Math.pow(1.3, retryCount), MAX_DELAY);
+      // 添加随机抖动以避免同时请求
+      const jitter = Math.random() * 500;
+      const delay = baseDelay + jitter;
+      
+      console.log(`将在 ${Math.round(delay/1000)} 秒后进行第 ${retryCount + 1} 次重试`);
+      
       setTimeout(() => {
         checkAndFixPayment(orderNo);
       }, delay);
@@ -173,8 +186,8 @@ function PaymentContent() {
       // 增加重试计数
       setRetryCount(prev => prev + 1);
       
-      // 错误后仍继续重试
-      const delay = INITIAL_DELAY * Math.pow(2, retryCount);
+      // 错误后稍微等待更长时间
+      const delay = Math.min(INITIAL_DELAY * Math.pow(1.5, retryCount), MAX_DELAY * 1.5);
       setTimeout(() => {
         checkAndFixPayment(orderNo);
       }, delay);
@@ -210,34 +223,30 @@ function PaymentContent() {
   
   // 添加在重复刷新点数的函数
   const ensureCreditsRefreshed = async () => {
-    // 立即执行一次
-    let success = await actualRefreshCredits();
+    const MAX_ATTEMPTS = 5; // 最多尝试5次
+    const DELAY_BETWEEN_ATTEMPTS = 800; // 每次尝试间隔800ms
     
-    // 如果第一次失败，间隔1秒再执行一次
-    if (!success) {
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      success = await actualRefreshCredits();
+    for (let i = 0; i < MAX_ATTEMPTS; i++) {
+      try {
+        console.log(`第 ${i+1} 次尝试刷新点数...`);
+        const success = await actualRefreshCredits();
+        
+        if (success) {
+          console.log(`点数刷新成功 (尝试 ${i+1}/${MAX_ATTEMPTS})`);
+          return true;
+        }
+        
+        // 如果不是最后一次尝试，等待一段时间
+        if (i < MAX_ATTEMPTS - 1) {
+          await new Promise(resolve => setTimeout(resolve, DELAY_BETWEEN_ATTEMPTS));
+        }
+      } catch (e) {
+        console.warn(`第 ${i+1} 次刷新点数失败`, e);
+      }
     }
     
-    // 如果还是失败，间隔2秒再执行一次
-    if (!success) {
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      success = await actualRefreshCredits();
-    }
-    
-    // 最后再执行一次，以确保数据一致性
-    if (!success) {
-      await new Promise(resolve => setTimeout(resolve, 3000));
-      await actualRefreshCredits();
-    }
-    
-    // 使用页面刷新方式获取最新状态，而不是依赖不存在的方法
-    try {
-      // 这里只执行页面重新获取数据的逻辑，不调用不存在的refreshUserCredits
-      console.log('已完成点数刷新');
-    } catch (error) {
-      console.error('刷新全局用户点数状态失败:', error);
-    }
+    console.log('已达到最大尝试次数，点数刷新可能未完全成功');
+    return false;
   };
   
   // 返回首页
@@ -251,7 +260,30 @@ function PaymentContent() {
     setStatus('checking');
     setMessage('正在重新验证支付结果...');
     setRetryCount(0);
-    checkAndFixPayment(orderNo || '');
+    
+    // 使用ref中存储的订单号，更可靠
+    const currentOrderNo = orderInfoRef.current.orderNo || orderNo || '';
+    
+    // 如果没有订单号，尝试从localStorage恢复
+    if (!currentOrderNo) {
+      try {
+        const savedOrderNo = localStorage.getItem('lastPaymentOrderNo');
+        if (savedOrderNo) {
+          checkAndFixPayment(savedOrderNo);
+          return;
+        }
+      } catch (e) {
+        console.warn('从localStorage恢复订单号失败', e);
+      }
+      
+      // 如果仍然没有订单号，显示错误
+      setStatus('failed');
+      setMessage('无法找到订单号，请返回充值页面重试');
+      setLoading(false);
+      return;
+    }
+    
+    checkAndFixPayment(currentOrderNo);
   };
   
   return (
