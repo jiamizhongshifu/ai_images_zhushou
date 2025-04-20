@@ -391,16 +391,30 @@ export default function ProtectedPage() {
           });
           
           if (!response.ok) {
-            console.log('[ProtectedPage] API状态检查失败，重定向到登录页');
-            router.replace('/login');
+            console.log('[ProtectedPage] API状态检查失败，清除认证状态并重定向到登录页');
+            // 清除客户端认证状态
+            await supabaseClient.auth.signOut();
+            // 清除localStorage中的认证相关数据
+            localStorage.removeItem('supabase.auth.token');
+            localStorage.removeItem('supabase.auth.expires_at');
+            localStorage.removeItem('authSession');
+            // 重定向到登录页，附加过期参数
+            router.replace('/login?expired=true');
             return;
           }
           
           const authData = await response.json();
           
           if (!authData.authenticated) {
-            console.log('[ProtectedPage] 用户未认证，重定向到登录页');
-            router.replace('/login');
+            console.log('[ProtectedPage] 用户未认证，清除认证状态并重定向到登录页');
+            // 清除客户端认证状态
+            await supabaseClient.auth.signOut();
+            // 清除localStorage中的认证相关数据
+            localStorage.removeItem('supabase.auth.token');
+            localStorage.removeItem('supabase.auth.expires_at');
+            localStorage.removeItem('authSession');
+            // 重定向到登录页，附加过期参数
+            router.replace('/login?expired=true');
             return;
           }
           
@@ -413,8 +427,15 @@ export default function ProtectedPage() {
           const { data, error } = await supabaseClient.auth.getSession();
           
           if (error || !data.session) {
-            console.log('[ProtectedPage] 客户端会话验证失败，重定向到登录页');
-            router.replace('/login');
+            console.log('[ProtectedPage] 客户端会话验证失败，清除认证状态并重定向到登录页');
+            // 清除客户端认证状态
+            await supabaseClient.auth.signOut();
+            // 清除localStorage中的认证相关数据
+            localStorage.removeItem('supabase.auth.token');
+            localStorage.removeItem('supabase.auth.expires_at');
+            localStorage.removeItem('authSession');
+            // 重定向到登录页，附加过期参数
+            router.replace('/login?expired=true');
             return;
           }
           
@@ -422,7 +443,12 @@ export default function ProtectedPage() {
         }
       } catch (e) {
         console.error('[ProtectedPage] 会话验证异常', e);
-        router.replace('/login');
+        // 发生异常，也清除认证状态并重定向
+        await supabaseClient.auth.signOut();
+        localStorage.removeItem('supabase.auth.token');
+        localStorage.removeItem('supabase.auth.expires_at');
+        localStorage.removeItem('authSession');
+        router.replace('/login?error=true');
       }
     };
     
