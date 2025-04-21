@@ -43,7 +43,7 @@ export const STYLE_CONFIGS: StyleConfig[] = [
     name: "新海诚",
     description: "唯美光影、细腻情感表达",
     imageUrl: "/examples/shinkai.webp",
-    promptTemplate: "{prompt}，风格：新海诚"
+    promptTemplate: "{prompt}，风格：Hyper-detailed realism, photorealistic backgrounds, vibrant saturated colors, soft diffused lighting, dramatic contrasts, dreamlike ethereal atmosphere, expansive skies, dynamic weather effects, cinematic depth, lyrical poetic style"
   },
   {
     id: "迪士尼",

@@ -1,0 +1,73 @@
+---
+description:
+globs:
+alwaysApply: false
+---
+# 应用认证流程
+
+## 关键组件
+
+应用的认证系统由以下关键部分组成：
+
+- 客户端认证：使用 Supabase 管理客户端身份验证状态
+- 服务器端验证：API 路由检查用户认证状态
+- 受保护页面验证：在渲染前验证用户身份
+
+## 重要文件
+
+- [app/protected/page.tsx](mdc:app/protected/page.tsx) - 受保护页面的主入口，包含提前认证逻辑
+- [utils/supabase-client.ts](mdc:utils/supabase-client.ts) - 客户端 Supabase 实例
+- [app/api/auth/status/route.ts](mdc:app/api/auth/status/route.ts) - 检查用户认证状态的 API
+- [app/api/auth-middleware.ts](mdc:app/api/auth-middleware.ts) - API 认证中间件
+
+## 认证流程
+
+1. 用户访问受保护页面时，使用 `useLayoutEffect` 提前验证用户身份
+2. 首先调用 `/api/auth/status` API 检查服务器端认证状态
+3. 如果 API 验证失败，尝试使用客户端 Supabase 验证
+4. 如果任何验证步骤失败，则清除本地认证状态并重定向到登录页
+
+## API 认证保护
+
+API 路由使用 `auth-middleware.ts` 中的函数来保护敏感端点：
+
+```ts
+// 示例 API 认证
+import { createClient } from '@/utils/supabase/server';
+import { authCheck } from '../auth-middleware';
+
+export async function GET(request: Request) {
+  // 验证用户身份
+  const { authorized, userId, error } = await authCheck(request);
+  
+  if (!authorized) {
+    return new Response(JSON.stringify({ success: false, error }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  }
+  
+  // 处理授权用户的请求...
+}
+```
+
+## 常见问题
+
+### 客户端和服务器认证状态不同步
+
+症状：用户重定向循环或看到未授权错误
+
+解决方案：
+1. 在检测到认证失败时清除所有本地认证状态
+2. 使用 `supabaseClient.auth.signOut()` 
+3. 清除 localStorage 中的认证相关数据
+4. 重定向到登录页并附加状态参数 `?expired=true`
+
+## 最佳实践
+
+1. 避免仅依赖客户端认证状态
+2. 总是验证服务器端认证状态
+3. 在认证失败时彻底清除客户端认证信息
+4. 使用加载状态指示器提高用户体验
+5. 禁止在公共组件中直接访问受保护的 API
+6. 使用一致的错误处理方式和提示信息

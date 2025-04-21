@@ -1,0 +1,72 @@
+---
+description:
+globs:
+alwaysApply: false
+---
+# 支付与积分系统
+
+## 核心组件
+
+支付与积分系统由以下关键部分组成：
+
+- 积分查询与显示：通过 `useUserCredits` hook 获取用户积分信息
+- 积分充值：支付功能和订单处理
+- 积分消费：图像生成和其他功能使用积分
+- 积分历史记录：记录积分变动历史
+
+## 关键文件
+
+- [hooks/useUserCredits.ts](mdc:hooks/useUserCredits.ts) - 积分查询与管理 hook
+- [app/api/credits/get/route.ts](mdc:app/api/credits/get/route.ts) - 积分获取 API
+- [app/api/payment/check/route.ts](mdc:app/api/payment/check/route.ts) - 支付状态检查 API
+- [app/api/payment/fix-public/route.ts](mdc:app/api/payment/fix-public/route.ts) - 支付修复 API
+- [app/payment/success/page.tsx](mdc:app/payment/success/page.tsx) - 支付成功回调页面
+
+## 积分流程
+
+### 获取积分
+
+1. 应用通过 `useUserCredits` hook 获取用户当前积分
+2. Hook 调用 `/api/credits/get` API 并缓存结果
+3. 组件根据积分状态显示相应的 UI
+
+### 充值积分
+
+1. 用户选择充值套餐并发起支付
+2. 系统创建支付订单并重定向到支付网关
+3. 支付完成后回调到 `/payment/success` 页面
+4. 页面检查支付状态并更新用户积分
+5. 如果支付状态更新失败，使用重试机制确保同步
+
+### 消费积分
+
+1. 用户执行需要积分的操作（如图像生成）
+2. 系统检查用户积分是否足够
+3. 成功执行操作后扣除相应积分
+4. 操作失败时退还预扣积分
+
+## 支付状态同步
+
+支付系统具有防失败机制：
+
+1. 支付回调页面使用指数退避重试
+2. 本地存储保存订单信息防止页面刷新丢失
+3. 提供公开 API 用于手动修复支付状态
+4. 防止重复添加积分的检查机制
+
+## 异常处理
+
+处理以下常见异常：
+
+1. 支付网关超时或失败
+2. 用户离开支付页面
+3. 服务器响应异常
+4. 重复回调处理
+
+## 最佳实践
+
+1. 在任何消费积分的操作前先验证积分余额
+2. 使用事务确保积分变动的原子性
+3. 记录所有积分变动，包括来源和时间
+4. 实现幂等的支付处理逻辑，防止重复添加积分
+5. 提供清晰的积分余额和变动历史展示

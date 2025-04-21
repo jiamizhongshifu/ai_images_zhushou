@@ -1,0 +1,71 @@
+---
+description:
+globs:
+alwaysApply: false
+---
+# 图像生成流程
+
+## 核心组件
+
+图像生成系统由以下主要部分组成：
+
+- 客户端生成请求：通过 `useImageGeneration` hook 发起
+- 服务器端任务创建：将请求转换为异步任务
+- 任务状态监听器：实时更新任务状态和进度
+- 结果处理和展示：完成后加载图像和相关操作
+
+## 关键文件
+
+- [hooks/useImageGeneration.ts](mdc:hooks/useImageGeneration.ts) - 图像生成核心 hook
+- [app/api/generate-image-task/route.ts](mdc:app/api/generate-image-task/route.ts) - 图像任务创建 API
+- [app/api/image-task-status/route.ts](mdc:app/api/image-task-status/route.ts) - 任务状态查询 API
+- [app/components/TaskStatusListener.tsx](mdc:app/components/TaskStatusListener.tsx) - 任务状态监听组件
+
+## 图像生成流程
+
+1. 用户在前端填写提示词和上传图片，选择风格
+2. 点击生成按钮，调用 `useImageGeneration.generateImage()`
+3. 前端发送 POST 请求到 `/api/generate-image-task`
+4. 后端创建任务记录，返回 `taskId`
+5. 前端使用 `TaskStatusListener` 组件监听任务状态变化
+6. 后端异步处理任务，更新任务状态和进度
+7. 任务完成后，前端加载生成的图像并更新 UI
+
+## 任务状态流转
+
+任务状态遵循以下流转：
+```
+pending -> processing -> completed
+      \-> failed
+```
+
+- `pending`: 任务已创建，等待处理
+- `processing`: 任务正在处理中，有进度更新
+- `completed`: 任务成功完成，有图像 URL
+- `failed`: 任务失败，有错误信息
+
+## 处理中断和恢复
+
+系统支持任务中断和恢复机制：
+
+1. 页面刷新或关闭时，任务继续在后台处理
+2. 重新打开页面时，通过 `TaskRecoveryDialog` 恢复未完成的任务
+3. 使用 `localStorage` 缓存任务信息，支持跨会话恢复
+
+## 错误处理
+
+图像生成系统包含多层错误处理：
+
+1. API 层错误：连接问题、请求参数无效等
+2. 任务处理错误：AI 服务不可用、生成失败等
+3. 客户端显示错误：图像加载失败、状态异常等
+
+每个错误类型都有对应的处理策略和用户反馈机制。
+
+## 最佳实践
+
+1. 总是处理任务的所有可能状态
+2. 提供清晰的进度和错误反馈
+3. 实现适当的重试和恢复机制
+4. 缓存生成结果，避免重复请求
+5. 确保任务失败时正确释放资源（例如退还积分）
