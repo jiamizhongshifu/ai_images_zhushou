@@ -629,7 +629,7 @@ export async function POST(request: NextRequest) {
         useBackupStrategy = true;
         
         // 使用提示词的简化版本
-        const shortenedPrompt = prompt ? prompt.substring(0, Math.min(prompt.length, 1000)) : "生成图像";
+        const shortenedPrompt = prompt ? prompt.substring(0, Math.min(prompt.length, 1500)) : "生成图像";
         
         // 使用较快的dall-e-3模型重试
         const retryResponse = await tuziClient.images.generate({

@@ -103,11 +103,11 @@ export default function PromptInput({
       {/* 提示文本计数 */}
       <div className="flex justify-end">
         <span className={`text-xs transition-colors duration-300 ${
-          prompt.length > 300 ? 'text-amber-500' : 
-          prompt.length > 200 ? 'text-muted-foreground' : 
+          prompt.length > 1000 ? 'text-amber-500' : 
+          prompt.length > 500 ? 'text-muted-foreground' : 
           'text-muted-foreground/70'
         }`}>
-          {prompt.length} / 500 字符
+          {prompt.length} / 1500 字符
         </span>
       </div>
     </div>

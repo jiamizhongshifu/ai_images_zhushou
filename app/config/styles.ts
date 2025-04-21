@@ -67,6 +67,13 @@ export const STYLE_CONFIGS: StyleConfig[] = [
     promptTemplate: "{prompt}，风格：いらすとや 风格"
   },
   {
+    id: "卡通水彩",
+    name: "卡通水彩",
+    description: "卡通水彩风格",
+    imageUrl: "/examples/shuicai.webp",
+    promptTemplate: "{prompt}，风格：创建一幅柔和水彩风格插画，线条干净流畅。角色设计简约卡通化，脸部圆润，眼睛大而富有表现力。使用明亮鲜艳的柔和色调和渐变，营造愉悦氛围。角色和主要元素周围添加细微白色轮廓，增强视觉对比并产生淡淡发光效果。整体画面温暖、轻盈、富有细节但不过于复杂，强调温馨、亲切和活泼的美感。"
+  },
+  {
     id: "Q版3D",
     name: "Q版3D",
     description: "Q版3D风格",
