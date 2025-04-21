@@ -32,18 +32,11 @@ export const STYLE_CONFIGS: StyleConfig[] = [
     promptTemplate: "{prompt}，风格：乐高"
   },
   {
-    id: "皮克斯",
-    name: "皮克斯",
-    description: "3D卡通风格，生动活泼",
-    imageUrl: "/examples/pixar.webp",
-    promptTemplate: "{prompt}，风格：皮克斯"
-  },
-  {
     id: "新海诚",
     name: "新海诚",
     description: "唯美光影、细腻情感表达",
     imageUrl: "/examples/shinkai.webp",
-    promptTemplate: "{prompt}，风格：Hyper-detailed realism, photorealistic backgrounds, vibrant saturated colors, soft diffused lighting, dramatic contrasts, dreamlike ethereal atmosphere, expansive skies, dynamic weather effects, cinematic depth, lyrical poetic style"
+    promptTemplate: "{prompt}，风格：使用《天气之子》的风格"
   },
   {
     id: "迪士尼",
@@ -65,6 +58,13 @@ export const STYLE_CONFIGS: StyleConfig[] = [
     description: "动物森友会风格",
     imageUrl: "/examples/senyouhui.webp",
     promptTemplate: "{prompt}，风格：3d动森风格"
+  },
+  {
+    id: "插画屋",
+    name: "插画屋",
+    description: "插画屋风格",
+    imageUrl: "/examples/chahuawu.webp",
+    promptTemplate: "{prompt}，风格：いらすとや 风格"
   },
   {
     id: "Q版3D",
