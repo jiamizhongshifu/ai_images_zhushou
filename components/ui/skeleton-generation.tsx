@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Clock, ImageIcon, Loader2 } from 'lucide-react';
+import { Clock, ImageIcon, Loader2, Settings, Sparkles, CheckCircle, XCircle } from 'lucide-react';
 
 // 图片生成的不同阶段及其对应信息和描述优化
 const GENERATION_STAGES = [
@@ -24,6 +24,44 @@ interface ImageGenerationSkeletonProps {
   percentage?: number;
   onStageChange?: (stage: GenerationStage, percentage: number) => void;
 }
+
+// 添加更多直观的生成阶段描述
+const stages: Record<GenerationStage, string> = {
+  'preparing': '准备中',
+  'configuring': '配置中',
+  'sending_request': '发送请求',
+  'queuing': '排队中',
+  'generating': '生成中',
+  'processing': '处理中',
+  'extracting_image': '提取图像',
+  'finalizing': '完成处理',
+  'completed': '生成完成',
+  'failed': '生成失败'
+};
+
+// 改进进度条动画，使其更流畅
+const getStageIcon = (stage: GenerationStage) => {
+  switch(stage) {
+    case 'preparing':
+    case 'configuring':
+    case 'sending_request':
+      return <Settings className="mr-2 h-4 w-4 animate-spin" />;
+    case 'queuing':
+      return <Clock className="mr-2 h-4 w-4 animate-pulse" />;
+    case 'generating':
+    case 'processing':
+      return <Sparkles className="mr-2 h-4 w-4 animate-pulse text-yellow-500" />;
+    case 'extracting_image':
+    case 'finalizing':
+      return <ImageIcon className="mr-2 h-4 w-4 animate-pulse text-blue-500" />;
+    case 'completed':
+      return <CheckCircle className="mr-2 h-4 w-4 text-green-500" />;
+    case 'failed':
+      return <XCircle className="mr-2 h-4 w-4 text-red-500" />;
+    default:
+      return <Loader2 className="mr-2 h-4 w-4 animate-spin" />;
+  }
+};
 
 export function ImageGenerationSkeleton({ 
   taskId, 
@@ -243,7 +281,7 @@ export function ImageGenerationSkeleton({
         <div className="relative mb-4">
           <div className="absolute inset-0 flex items-center justify-center">
             <div className="w-12 h-12 rounded-full bg-primary/5 flex items-center justify-center">
-              <ImageIcon className="w-6 h-6 text-primary/70" />
+              {getStageIcon(currentStage.id as GenerationStage)}
             </div>
           </div>
           <svg className="w-20 h-20 animate-spin-slow" viewBox="0 0 100 100">
@@ -270,7 +308,7 @@ export function ImageGenerationSkeleton({
         {/* 状态文本 */}
         <div className="text-center">
           <p className="text-lg font-quicksand font-semibold mb-1 text-foreground">
-            {currentStage.label}
+            {stages[currentStage.id as GenerationStage] || currentStage.label}
           </p>
           <p className="text-sm text-muted-foreground mb-2 max-w-[230px]">
             {currentStage.description}

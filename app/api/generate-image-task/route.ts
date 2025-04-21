@@ -1184,11 +1184,11 @@ export async function POST(request: NextRequest) {
             
             // 避免破坏原始提示词结构，在末尾添加比例信息
             if (ratio > 1) {
-              finalPrompt += `，生成${aspectRatio}的横向图片`;
+              finalPrompt += `，生成横向图片`;
             } else if (ratio < 1) {
-              finalPrompt += `，生成${aspectRatio}的竖向图片，宽度${width}，高度${height}`;
+              finalPrompt += `，生成竖向图片`;
             } else {
-              finalPrompt += `，生成${aspectRatio}的正方形图片`;
+              finalPrompt += `，生成正方形图片`;
             }
           }
           
@@ -1243,11 +1243,11 @@ export async function POST(request: NextRequest) {
             
             // 避免破坏原始提示词结构，在末尾添加比例信息
             if (ratio > 1) {
-              finalPrompt += `，生成${aspectRatio}的横向图片`;
+              finalPrompt += `，生成横向图片`;
             } else if (ratio < 1) {
-              finalPrompt += `，生成${aspectRatio}的竖向图片，宽度${width}，高度${height}`;
+              finalPrompt += `，生成竖向图片`;
             } else {
-              finalPrompt += `，生成${aspectRatio}的正方形图片`;
+              finalPrompt += `，生成正方形图片`;
             }
           }
           

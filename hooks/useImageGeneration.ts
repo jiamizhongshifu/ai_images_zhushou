@@ -106,6 +106,12 @@ export default function useImageGeneration(
   const { t } = useTranslation('image');
   const router = useRouter();
 
+  // 添加初始化时清除已生成图片的逻辑
+  useEffect(() => {
+    console.log('[useImageGeneration] 初始化钩子，清除当前生成的图片状态');
+    setGeneratedImages([]);
+  }, []);
+
   // 页面加载时清理过期任务
   useEffect(() => {
     try {
@@ -204,7 +210,7 @@ export default function useImageGeneration(
     return ['extracting_image', Math.min(85, 60 + waitTime / 10)];
   };
 
-  // 启动增强型任务状态轮询
+  // 启动优化后的增强轮询
   const startEnhancedPollingTaskStatus = (taskId: string) => {
     // 取消任何进行中的轮询
     if (pollingCancelRef.current) {
@@ -221,15 +227,25 @@ export default function useImageGeneration(
       console.log(`[useImageGeneration] 已取消任务${taskId}的轮询`);
     };
     
-    // 启动增强轮询
+    // 查询任务并记录参数信息
+    const task = getPendingTask(taskId);
+    if (task && task.params) {
+      console.log(`[useImageGeneration] 开始轮询任务 ${taskId}，比例参数:`, {
+        aspectRatio: task.params.aspectRatio,
+        standardAspectRatio: task.params.standardAspectRatio
+      });
+    }
+    
+    // 启动优化后的增强轮询
     enhancedPollTaskStatus(taskId, {
-      maxAttempts: 180,         // 最多尝试180次 (约15分钟，视间隔而定)
-      initialInterval: 2000,    // 初始间隔2秒
-      maxInterval: 10000,       // 最大间隔10秒
-      exponentialFactor: 1.5,   // 指数增长因子
-      failureRetries: 0,        // 连续失败不重试
+      maxAttempts: 200,         // 增加最大尝试次数
+      initialInterval: 1000,     // 降低初始间隔到1秒
+      maxInterval: 8000,         // 减少最大间隔到8秒
+      exponentialFactor: 1.3,    // 减小指数增长因子，更平滑的增长
+      failureRetries: 1,         // 失败后再试一次
       onProgress: (progress, stage) => {
         if (cancelled) return;
+        // 更新进度更频繁，使UI更平滑
         updateGenerationStage(stage as GenerationStage, progress);
       },
       onStateChange: (state) => {
@@ -273,28 +289,32 @@ export default function useImageGeneration(
         // 清除任务本地存储
         clearPendingTask(taskId);
         
-        // 添加生成的图片
+        // 记录生成的图片URL
         if (result.data?.imageUrl) {
+          console.log(`[useImageGeneration] 任务完成，图片URL: ${result.data.imageUrl}`);
+          
+          // 添加生成的图片
           addGeneratedImage(result.data.imageUrl);
           
-          // 刷新缓存
+          // 刷新缓存，但不触发页面刷新
           cacheService.delete(USER_CREDITS_CACHE_KEY);
           cacheService.delete(HISTORY_CACHE_KEY);
           
-          // 刷新用户积分
+          // 延迟刷新用户积分，避免阻塞UI更新
           if (triggerCreditRefresh) {
-            triggerCreditRefresh();
+            setTimeout(() => {
+              // 调用没有参数的刷新方法
+              triggerCreditRefresh();
+            }, 300);
           }
           
-          // 调用回调函数
-          if (refreshHistory) {
-            const refreshResult = refreshHistory();
-            // 如果返回Promise则等待完成
-            if (refreshResult instanceof Promise) {
-              await refreshResult;
-            }
+          // 调用成功回调，正确传递图片URL到上层组件进行处理
+          if (onSuccess) {
+            // 使用setTimeout确保UI先更新，再执行回调
+            setTimeout(() => {
+              onSuccess(result.data.imageUrl);
+            }, 10);
           }
-          if (onSuccess) onSuccess(result.data.imageUrl);
           
           // 显示成功通知
           notify('图片生成成功！', 'success');
@@ -342,11 +362,22 @@ export default function useImageGeneration(
       // 显示成功通知
       notify('图片生成成功！', 'success');
       
-      // 刷新其他数据
+      // 刷新缓存，不触发完整刷新
       cacheService.delete(USER_CREDITS_CACHE_KEY);
       cacheService.delete(HISTORY_CACHE_KEY);
-      if (triggerCreditRefresh) triggerCreditRefresh();
-      if (refreshHistory) refreshHistory();
+      
+      // 只刷新用户积分，不触发页面刷新
+      if (triggerCreditRefresh) {
+        // 使用setTimeout延迟触发，避免阻塞UI更新
+        setTimeout(() => {
+          triggerCreditRefresh();
+        }, 300);
+      }
+      
+      // 调用成功回调，让外部处理图片展示
+      if (onSuccess) {
+        onSuccess(result.data.imageUrl);
+      }
     } else if (result.status === 'failed' || result.status === 'error') {
       // 更新失败状态
       setIsGenerating(false);
@@ -361,7 +392,7 @@ export default function useImageGeneration(
       // 显示错误通知
       notify(`生成失败: ${result.error || '未知错误'}`, 'error');
     }
-  }, [triggerCreditRefresh, refreshHistory]);
+  }, [triggerCreditRefresh, onSuccess]);
 
   // 添加useEffect钩子来初始化任务同步监听器
   useEffect(() => {

@@ -1,5 +1,5 @@
 import React, { useState, useRef, DragEvent, ChangeEvent } from "react";
-import { Upload, X, Camera } from "lucide-react";
+import { Upload, X, Camera, Download, RefreshCw, Loader2 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import Image from "next/image";
@@ -7,11 +7,21 @@ import { LazyImage } from "@/components/ui/lazy-image";
 import { ImageLoading, ImageError } from "@/components/ui/loading-states";
 import { compressImage } from '@/utils/image/compressImage';
 import { useToast } from "@/components/ui/use-toast";
+import { ImageGenerationSkeleton, GenerationStage } from "@/components/ui/skeleton-generation";
+
+// 定义上传区域的多种状态
+type UploaderState = 'idle' | 'uploading' | 'preview' | 'generating' | 'result';
 
 interface ImageUploaderProps {
   uploadedImage: string | null;
   setUploadedImage: (url: string | null) => void;
   onImageUploaded?: (dataUrl: string, width: number, height: number) => void;
+  isGenerating?: boolean;
+  generationStage?: GenerationStage;
+  generationPercentage?: number;
+  generatedImage?: string | null;
+  onDownload?: (imageUrl: string) => void;
+  onContinueCreation?: () => void;
 }
 
 // 图片大小限制配置
@@ -32,6 +42,12 @@ export default function ImageUploader({
   uploadedImage,
   setUploadedImage,
   onImageUploaded = () => {},
+  isGenerating = false,
+  generationStage,
+  generationPercentage,
+  generatedImage = null,
+  onDownload = () => {},
+  onContinueCreation = () => {},
 }: ImageUploaderProps) {
   const { toast } = useToast();
   
@@ -39,6 +55,17 @@ export default function ImageUploader({
   const [dragActive, setDragActive] = useState(false);
   const [imageError, setImageError] = useState<string | null>(null);
   const [imageLoading, setImageLoading] = useState(false);
+  
+  // 计算当前上传器状态
+  const getUploaderState = (): UploaderState => {
+    if (isGenerating) return 'generating';
+    if (generatedImage) return 'result';
+    if (uploadedImage) return 'preview';
+    if (imageLoading) return 'uploading';
+    return 'idle';
+  };
+  
+  const currentState = getUploaderState();
   
   // 文件输入引用
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -234,89 +261,179 @@ export default function ImageUploader({
     setImageLoading(false);
   };
 
+  // 处理继续创作
+  const handleContinueCreation = () => {
+    onContinueCreation();
+  };
+  
+  // 处理下载生成的图片
+  const handleDownloadImage = () => {
+    if (generatedImage) {
+      onDownload(generatedImage);
+    }
+  };
+
   return (
     <Card className="bg-card/60 rounded-xl border border-border shadow-ghibli-sm hover:shadow-ghibli transition-all duration-300">
       <CardContent className="p-5">
-        {/* 卡片标题 - 移除选择文件按钮 */}
+        {/* 卡片标题 - 根据状态显示不同内容 */}
         <div className="flex justify-between items-center mb-4">
-          <h3 className="text-lg font-medium font-quicksand text-foreground/90">上传照片</h3>
+          <h3 className="text-lg font-medium font-quicksand text-foreground/90">
+            {currentState === 'generating' ? '正在生成图片...' : 
+             currentState === 'result' ? '生成结果' : '上传照片'}
+          </h3>
         </div>
         
-        {/* 文件拖放区域 - 添加点击功能 */}
+        {/* 文件拖放区域 - 增加高度，从300px到400px */}
         <div
-          className={`relative min-h-[220px] border-2 border-dashed rounded-lg p-4 transition-all flex flex-col items-center justify-center cursor-pointer ${
+          className={`relative min-h-[400px] h-[400px] border-2 border-dashed rounded-lg p-4 transition-all flex flex-col items-center justify-center ${
+            currentState === 'idle' ? 'cursor-pointer' : ''
+          } ${
             dragActive 
               ? "border-primary/60 bg-primary/5" 
-              : uploadedImage
-                ? "border-transparent"
-                : "border-border/50 hover:border-primary/30 hover:bg-background/70"
+              : currentState === 'generating'
+                ? "border-primary/30 bg-card/80"
+                : currentState === 'result'
+                  ? "border-primary/40 bg-card/80"
+                  : uploadedImage
+                    ? "border-primary/30 bg-card/80" 
+                    : "border-border/60 bg-muted/30 hover:border-border"
           }`}
-          onDragEnter={handleDrag}
-          onDragLeave={handleDrag}
-          onDragOver={handleDrag}
-          onDrop={handleDrop}
-          onClick={!uploadedImage ? handleButtonClick : undefined}
-          role="button"
-          aria-label="上传图片区域"
+          onDragEnter={currentState === 'idle' ? handleDrag : undefined}
+          onDragLeave={currentState === 'idle' ? handleDrag : undefined}
+          onDragOver={currentState === 'idle' ? handleDrag : undefined}
+          onDrop={currentState === 'idle' ? handleDrop : undefined}
+          onClick={currentState === 'idle' ? handleButtonClick : undefined}
         >
-          {/* 隐藏的文件输入 */}
-          <input
-            type="file"
-            ref={fileInputRef}
-            className="hidden"
-            accept="image/*"
-            onChange={handleFileChange}
-          />
-          
-          {/* 加载状态 */}
-          {imageLoading && (
-            <div className="absolute inset-0 z-10 flex items-center justify-center bg-background/60 backdrop-blur-sm rounded-lg">
-              <ImageLoading message="正在加载图片..." />
+          {/* 根据不同状态显示不同内容 */}
+          {currentState === 'idle' && (
+            // 空闲状态 - 显示上传提示
+            <div className="flex flex-col items-center text-center max-w-xs mx-auto">
+              {/* 按钮图标 */}
+              <div className="w-12 h-12 bg-primary/10 rounded-full flex items-center justify-center mb-3">
+                <Upload className="h-5 w-5 text-primary/80" />
+              </div>
+              
+              {/* 提示文本 */}
+              <p className="text-foreground/90 mb-1 font-medium">拖放或点击上传照片</p>
+              <p className="text-xs text-muted-foreground">
+                支持 JPG, PNG, WebP 格式 (最大 10MB)
+              </p>
+              
+              {/* 隐藏的文件输入 */}
+              <input
+                ref={fileInputRef}
+                type="file"
+                className="hidden"
+                accept="image/*"
+                onChange={handleFileChange}
+              />
             </div>
           )}
           
-          {/* 错误状态 */}
-          {imageError && !uploadedImage && (
-            <div className="absolute inset-0 z-10 flex items-center justify-center bg-background/60 backdrop-blur-sm rounded-lg">
-              <ImageError message={imageError} />
+          {currentState === 'uploading' && (
+            // 上传中状态
+            <div className="flex flex-col items-center">
+              <ImageLoading message="上传中..." />
             </div>
           )}
           
-          {/* 图片预览 */}
-          {uploadedImage ? (
-            <div className="relative w-full h-full flex items-center justify-center">
+          {currentState === 'preview' && uploadedImage && (
+            // 预览状态 - 显示上传的图片和删除按钮
+            <>
               <LazyImage
                 src={uploadedImage}
                 alt="上传的图片"
-                className="max-h-[500px] max-w-full object-contain rounded-lg"
-                onImageLoad={handleImageLoad}
-                onImageError={handleImageError}
+                className="w-full h-full object-contain max-h-[300px]"
                 fadeIn={true}
                 blurEffect={true}
+                onImageLoad={handleImageLoad}
+                onImageError={handleImageError}
+                loadingElement={<ImageLoading message="加载中..." />}
+                errorElement={<ImageError message="加载失败" />}
               />
               
-              {/* 移除图片按钮 */}
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={handleRemoveImage}
-                className="absolute top-2 right-2 h-8 w-8 rounded-full bg-black/30 hover:bg-black/50 text-white"
+              {/* 删除按钮 */}
+              <button 
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleRemoveImage();
+                }}
+                className="absolute top-2 right-2 w-8 h-8 bg-background/80 backdrop-blur-sm rounded-full flex items-center justify-center border border-border/60 shadow-ghibli-sm hover:shadow-ghibli transition-all duration-300"
               >
-                <X className="h-4 w-4" />
-              </Button>
+                <X className="h-4 w-4 text-foreground/80" />
+              </button>
+            </>
+          )}
+          
+          {currentState === 'generating' && (
+            // 生成中状态 - 显示生成骨架图
+            <div className="flex flex-col items-center justify-center w-full h-full">
+              <ImageGenerationSkeleton 
+                stage={generationStage} 
+                percentage={generationPercentage} 
+                isGenerating={isGenerating}
+              />
             </div>
-          ) : (
-            /* 上传提示 */
-            <div className="flex flex-col items-center justify-center text-center p-4">
-              <div className="bg-primary/10 p-3 rounded-full mb-3">
-                <Camera className="h-6 w-6 text-primary/60" />
+          )}
+          
+          {currentState === 'result' && generatedImage && (
+            // 结果状态 - 显示生成的图片和按钮组
+            <>
+              <LazyImage
+                src={generatedImage}
+                alt="生成的图片"
+                className="w-full h-full object-contain max-h-[380px]"
+                fadeIn={true}
+                blurEffect={true}
+                loadingElement={<ImageLoading message="加载中..." />}
+                errorElement={<ImageError message="加载失败" />}
+              />
+              
+              {/* 按钮组 - 放在右上角 */}
+              <div className="absolute top-2 right-2 flex gap-2">
+                <button 
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleContinueCreation();
+                  }}
+                  className="bg-background/90 backdrop-blur-sm text-foreground px-3 py-1.5 rounded-full flex items-center justify-center text-sm shadow-ghibli-sm hover:shadow-ghibli hover:bg-background transition-all duration-300 border border-border/60"
+                >
+                  <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
+                  继续创作
+                </button>
+                
+                <button 
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleDownloadImage();
+                  }}
+                  className="bg-primary/90 text-white px-3 py-1.5 rounded-full flex items-center justify-center text-sm shadow-ghibli-sm hover:shadow-ghibli hover:bg-primary transition-all duration-300"
+                >
+                  <Download className="h-3.5 w-3.5 mr-1.5" />
+                  下载
+                </button>
               </div>
-              <p className="text-muted-foreground font-nunito mb-2">
-                拖放图片到此处或点击选择文件
-              </p>
-              <p className="text-xs text-muted-foreground max-w-md">
-                支持 JPG、PNG 等常见图片格式，建议使用清晰的正面照片以获得最佳效果
-              </p>
+            </>
+          )}
+          
+          {imageError && (
+            // 错误状态
+            <div className="absolute inset-0 bg-destructive/10 flex items-center justify-center">
+              <div className="bg-card p-4 rounded-lg shadow-ghibli text-center">
+                <p className="text-destructive mb-2">{imageError}</p>
+                <Button 
+                  variant="outline" 
+                  size="sm"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setImageError(null);
+                    handleButtonClick();
+                  }}
+                >
+                  重新上传
+                </Button>
+              </div>
             </div>
           )}
         </div>

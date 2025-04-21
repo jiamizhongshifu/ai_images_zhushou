@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback, useLayoutEffect } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import dynamic from "next/dynamic";
 import { Loader2, AlertCircle, ChevronRight, ImageIcon, Download, X, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -15,7 +15,7 @@ import GeneratedImageGallery from "@/components/creation/generated-image-gallery
 import { ImagePreviewModal } from "@/components/ui/image-preview-modal";
 
 // 导入创作页组件
-import ImageUploader from "@/components/creation/image-uploader";
+import EnhancedImageUploader from "@/components/creation/enhanced-image-uploader";
 import StyleSelector from "@/components/creation/style-selector";
 import PromptInput from "@/components/creation/prompt-input";
 
@@ -45,9 +45,10 @@ type GenerationStatus = {
 
 export default function ProtectedPage() {
   const router = useRouter();
+  const pathName = usePathname();
   
   // 状态管理
-  const [prompt, setPrompt] = useState("");
+  const [prompt, setPrompt] = useState<string>("");
   const [uploadedImage, setUploadedImage] = useState<string | null>(null);
   const [activeStyle, setActiveStyle] = useState("自定义");
   const [showCreditRechargeDialog, setShowCreditRechargeDialog] = useState(false);
@@ -94,59 +95,100 @@ export default function ProtectedPage() {
     checkPendingTask
   } = useImageGeneration(
     showNotification,
-    undefined,
-    refreshImages
+    (imageUrl) => {
+      console.log(`[ProtectedPage] 图片生成任务成功回调，接收到图片URL: ${imageUrl}`);
+      
+      // 更新当前生成的图片
+      setCurrentGeneratedImage(imageUrl);
+      console.log(`[ProtectedPage] 已设置当前生成图片URL: ${imageUrl}`);
+      
+      // 更新生成的图片列表，但不触发历史记录刷新
+      setGeneratedImages((prev) => {
+        if (prev.includes(imageUrl)) {
+          return prev;
+        }
+        return [imageUrl, ...prev];
+      });
+      
+      // 使用Promise.all并行处理后台更新
+      Promise.all([
+        // 静默刷新积分
+        refreshCredits(false, true).catch(err => {
+          console.error('[ProtectedPage] 刷新积分失败:', err);
+        }),
+        // 静默刷新历史记录
+        refreshHistory().catch(err => {
+          console.error('[ProtectedPage] 刷新历史记录失败:', err);
+        })
+      ]).then(() => {
+        console.log('[ProtectedPage] 后台更新完成');
+      });
+    }
   );
   
-  // 监听生成完成状态
+  // 修改任务完成回调处理函数
+  const handleTaskCompleted = useCallback((imageUrl: string) => {
+    console.log(`[ProtectedPage] 任务完成，收到图片URL: ${imageUrl}`);
+    
+    // 设置当前生成的图片
+    setCurrentGeneratedImage(imageUrl);
+    
+    // 更新生成的图片列表，保持原有图片顺序
+    if (imageUrl) {
+      setGeneratedImages((prev: string[]) => {
+        // 如果图片已存在，不重复添加
+        if (prev.includes(imageUrl)) {
+          return prev;
+        }
+        return [imageUrl, ...prev];
+      });
+      
+      // 静默更新点数，不触发页面刷新
+      setTimeout(() => {
+        refreshCredits(false, true); // 静默强制刷新点数
+      }, 2000);
+    }
+    
+    // 清除当前任务ID
+    setCurrentTaskId(null);
+  }, [setGeneratedImages, refreshCredits]);
+  
+  // 修改生成完成状态监听，避免强制刷新历史记录
   useEffect(() => {
     if (generationStage === 'completed') {
-      // 使用单次延迟刷新，避免多次请求
+      // 只刷新积分，不强制刷新历史记录
       const refreshTimeoutId = setTimeout(() => {
-        console.log('[ProtectedPage] 生成完成后触发点数和历史刷新，延迟执行以减少请求');
-        
-        // 一次性刷新点数和历史，无需分开
+        console.log('[ProtectedPage] 生成完成后触发点数刷新，延迟执行以减少请求');
         refreshCredits(false, true); // 静默强制刷新点数
-        
-        // 统一延迟后刷新历史，不再需要额外的计时器
-        refreshHistory(false); // 使用非强制刷新
-      }, 2000); // 增加延迟到2秒
+      }, 2000);
       
       return () => {
         clearTimeout(refreshTimeoutId);
       };
     }
-  }, [generationStage, refreshCredits, refreshHistory]);
+  }, [generationStage, refreshCredits]);
   
-  // 修改页面切换或路由变化监听函数，避免在返回时清空图片内容
+  // 修改路由变化处理，避免不必要的刷新
   useEffect(() => {
-    const handleRouteChange = () => {
-      console.log('[ProtectedPage] 检测到路由变化，准备刷新图片状态');
-      
-      // 从历史记录中刷新图片状态
-      refreshHistory(false).then(() => {
-        if (images.length > 0) {
-          console.log('[ProtectedPage] 从历史记录加载图片: ', images.length);
-          setGeneratedImages(images);
+    const handleRouteChange = async () => {
+      // 只在首次加载和返回创作页面时刷新
+      if (pathName === '/protected' && generatedImages.length === 0) {
+        console.log('[ProtectedPage] 首次加载或返回创作页面，刷新图像状态');
+        try {
+          await refreshHistory();
+          console.log('[ProtectedPage] 图像历史已刷新');
+        } catch (error) {
+          console.error('[ProtectedPage] 刷新图像历史时出错:', error);
         }
-      }).catch(error => {
-        console.error('[ProtectedPage] 刷新历史记录失败:', error);
-      });
+      }
     };
-    
-    // 监听路由变化和页面卸载
-    window.addEventListener('popstate', handleRouteChange);
-    window.addEventListener('beforeunload', handleRouteChange);
-    
-    return () => {
-      window.removeEventListener('popstate', handleRouteChange);
-      window.removeEventListener('beforeunload', handleRouteChange);
-    };
-  }, [images, refreshHistory, setGeneratedImages]);
+
+    // 初始加载时执行一次
+    handleRouteChange();
+  }, [pathName, refreshHistory, generatedImages.length]);
   
-  // 增强初始加载时同步历史记录图片到生成状态的逻辑
+  // 修改初始同步逻辑，避免重复刷新
   useEffect(() => {
-    // 只在首次加载或生成结果为空时从历史同步
     if (images.length > 0 && generatedImages.length === 0) {
       console.log('[ProtectedPage] 初始化时从历史记录同步图片: ', images.length);
       setGeneratedImages(images);
@@ -187,17 +229,17 @@ export default function ProtectedPage() {
   
   // 处理图片上传和获取尺寸
   const handleImageUpload = (dataUrl: string, width: number, height: number) => {
-        setUploadedImage(dataUrl);
+    setUploadedImage(dataUrl);
         
     // 计算图片尺寸比例
-          const ratio = `${width}:${height}`;
-          console.log(`检测到上传图片比例: ${ratio}`);
-          setImageAspectRatio(ratio);
+    const ratio = `${width}:${height}`;
+    console.log(`[ProtectedPage] 检测到上传图片比例: ${ratio}, 尺寸: ${width}x${height}`);
+    setImageAspectRatio(ratio);
           
-          // 计算并设置标准比例
-          const standardRatio = convertToStandardRatio(width, height);
-          setStandardAspectRatio(standardRatio);
-          console.log(`标准化为: ${standardRatio}`);
+    // 计算并设置标准比例
+    const standardRatio = convertToStandardRatio(width, height);
+    setStandardAspectRatio(standardRatio);
+    console.log(`[ProtectedPage] 标准化比例为: ${standardRatio}`);
   };
   
   // 在页面挂载和卸载时清理图片缓存状态
@@ -210,9 +252,23 @@ export default function ProtectedPage() {
     };
   }, []);
   
-  // 修改处理图片生成函数，保存任务ID
+  // 在已有的状态后面添加当前生成图片状态
+  const [currentGeneratedImage, setCurrentGeneratedImage] = useState<string | null>(null);
+  
+  // 修改处理图片生成函数，重置当前生成图片
   const handleGenerateImage = async () => {
     setError(""); // 清除之前的错误
+    // 清空当前生成图片状态，准备新的生成
+    setCurrentGeneratedImage(null);
+    
+    // 记录生成参数，便于调试
+    console.log('[ProtectedPage] 开始生成图片，参数：', {
+      prompt: prompt,
+      styleSelected: activeStyle,
+      hasUploadedImage: !!uploadedImage,
+      aspectRatio: imageAspectRatio,
+      standardAspectRatio: standardAspectRatio
+    });
     
     try {
       const taskResult = await generateImage({
@@ -233,25 +289,6 @@ export default function ProtectedPage() {
       setError(errorMessage);
     }
   };
-  
-  // 处理任务完成回调
-  const handleTaskCompleted = useCallback((imageUrl: string) => {
-    console.log(`[ProtectedPage] 任务完成，收到图片URL: ${imageUrl}`);
-    
-    // 更新生成的图片列表，保持原有图片顺序
-    if (imageUrl) {
-      setGeneratedImages((prev: string[]) => {
-        // 如果图片已存在，不重复添加
-        if (prev.includes(imageUrl)) {
-          return prev;
-        }
-        return [imageUrl, ...prev];
-      });
-    }
-    
-    // 清除当前任务ID
-    setCurrentTaskId(null);
-  }, [setGeneratedImages]);
   
   // 处理任务错误回调
   const handleTaskError = (errorMessage: string) => {
@@ -467,6 +504,22 @@ export default function ProtectedPage() {
     );
   }
   
+  // 完善重置上传区域函数
+  const handleContinueCreation = () => {
+    console.log('[ProtectedPage] 用户点击继续创作按钮，清除当前生成的图像显示');
+    setCurrentGeneratedImage(null);
+    setPrompt('');
+    setActiveStyle('自定义');
+    setImageAspectRatio(null);
+    setStandardAspectRatio(null);
+    setUploadedImage(null);
+  };
+
+  // 包装下载函数，确保类型安全
+  const handleDownloadGeneratedImage = (imageUrl: string) => {
+    downloadImage(imageUrl);
+  };
+  
   return (
     <div className="flex-1 w-full flex flex-col items-center">
       {/* 添加任务状态监听器 */}
@@ -514,10 +567,16 @@ export default function ProtectedPage() {
             
             {/* 表单内容 */}
             <div className="w-full flex flex-col gap-6">
-              <ImageUploader 
+              <EnhancedImageUploader 
                 uploadedImage={uploadedImage} 
                 setUploadedImage={setUploadedImage}
                 onImageUploaded={handleImageUpload}
+                isGenerating={isGenerating}
+                generationStage={generationStage}
+                generationPercentage={generationPercentage}
+                generatedImage={currentGeneratedImage}
+                onDownload={handleDownloadGeneratedImage}
+                onContinueCreation={handleContinueCreation}
               />
               <StyleSelector
                 activeStyle={activeStyle}
@@ -558,50 +617,10 @@ export default function ProtectedPage() {
             </div>
             <div className="p-6 pt-0 font-nunito">
               {/* 生成结果展示 */}
-              {(isGenerating || generatedImages.length > 0) && (
+              {(generatedImages.length > 0) && (
                 <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 md:gap-4">
-                  {/* 显示生成中的骨架屏或最新生成的图片 */}
-                  <div className="aspect-square w-full">
-                    {isGenerating ? (
-                      <div className="aspect-square relative bg-card/40 border border-border rounded-xl overflow-hidden shadow-ghibli-sm hover:shadow-ghibli transition-all duration-300 w-full h-full">
-                        <div className="absolute inset-0 flex items-center justify-center bg-muted/60 backdrop-blur-sm z-10">
-                          <ImageGenerationSkeleton 
-                            stage={generationStage} 
-                            percentage={generationPercentage} 
-                            isGenerating={isGenerating}
-                          />
-                        </div>
-                      </div>
-                    ) : generatedImages[0] && (
-                      <div 
-                        className="aspect-square relative bg-card/40 border border-border rounded-xl overflow-hidden shadow-ghibli-sm hover:shadow-ghibli transition-all duration-300 cursor-pointer w-full h-full"
-                        onClick={() => setPreviewImage(generatedImages[0])}
-                      >
-                        <LazyImage
-                          src={getImageUrl(generatedImages[0])}
-                          alt="最新生成的图片"
-                          onImageLoad={() => handleImageLoad(generatedImages[0])}
-                          onImageError={() => handleImageError(generatedImages[0])}
-                          className="w-full h-full object-cover"
-                          fadeIn={true}
-                          blurEffect={true}
-                          loadingElement={
-                            <div className="absolute inset-0 flex items-center justify-center bg-muted/60 backdrop-blur-sm z-10">
-                              <ImageLoading message="加载中..." />
-                            </div>
-                          }
-                          errorElement={
-                            <div className="absolute inset-0 flex flex-col items-center justify-center bg-muted/60 backdrop-blur-sm z-10">
-                              <ImageError message="加载失败" />
-                            </div>
-                          }
-                        />
-                      </div>
-                    )}
-                  </div>
-                  
-                  {/* 显示历史图片，根据是否在生成中决定显示数量 */}
-                  {generatedImages.slice(isGenerating ? 0 : 1, isGenerating ? 3 : 4).map((imageUrl, index) => (
+                  {/* 移除生成中骨架图，只显示历史生成的图片 */}
+                  {generatedImages.slice(0, 4).map((imageUrl, index) => (
                     <div key={imageUrl + index} className="aspect-square w-full">
                       <div 
                         className="aspect-square relative bg-card/40 border border-border rounded-xl overflow-hidden shadow-ghibli-sm hover:shadow-ghibli transition-all duration-300 cursor-pointer w-full h-full"
@@ -609,7 +628,7 @@ export default function ProtectedPage() {
                       >
                         <LazyImage
                           src={getImageUrl(imageUrl)}
-                          alt={`生成的图片 ${index + (isGenerating ? 1 : 2)}`}
+                          alt={`生成的图片 ${index + 1}`}
                           onImageLoad={() => handleImageLoad(imageUrl)}
                           onImageError={() => handleImageError(imageUrl)}
                           className="w-full h-full object-cover"
