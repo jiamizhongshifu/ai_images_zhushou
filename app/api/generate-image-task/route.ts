@@ -1164,46 +1164,31 @@ export async function POST(request: NextRequest) {
             styleName = style === "吉普力" ? "吉卜力" : style;
           }
           
-          // 2. 从头构建提示词，不依赖原始输入，避免重复风格
-          finalPrompt = "生成图像";
+          // 导入styles.ts中的函数
+          const { generatePromptWithStyle } = await import('@/app/config/styles');
           
-          // 3. 只添加一次风格名称
-          if (styleName) {
-            finalPrompt += `，${styleName}风格`;
+          // 使用风格配置中的模板构建提示词
+          if (style) {
+            // 使用配置中的提示词模板
+            finalPrompt = generatePromptWithStyle(style, prompt || "生成图像");
+            logger.info(`使用风格配置模板构建提示词，风格: ${style}, 长度=${finalPrompt.length}字符`);
+          } else {
+            // 没有指定风格，使用原始提示词
+            finalPrompt = prompt || "生成图像";
           }
           
-          // 4. 添加简单明确的比例指令
+          // 添加简单明确的比例指令
           if (aspectRatio) {
             const [width, height] = aspectRatio.split(':').map(Number);
             const ratio = width / height;
             
+            // 避免破坏原始提示词结构，在末尾添加比例信息
             if (ratio > 1) {
               finalPrompt += `，生成${aspectRatio}的横向图片`;
             } else if (ratio < 1) {
               finalPrompt += `，生成${aspectRatio}的竖向图片，宽度${width}，高度${height}`;
             } else {
               finalPrompt += `，生成${aspectRatio}的正方形图片`;
-            }
-          }
-          
-          // 5. 如果用户有其他非风格的提示内容，添加到末尾
-          if (promptText && !promptText.includes("生成图像") && 
-             (!styleName || !promptText.toLowerCase().includes(styleName.toLowerCase()))) {
-            // 移除可能的风格名称避免重复 (包括错误拼写)
-            let cleanPrompt = promptText;
-            if (style === "吉普力") {
-              cleanPrompt = cleanPrompt.replace(/吉普力风格/g, "").replace(/吉普力/g, "");
-              cleanPrompt = cleanPrompt.replace(/吉卜力风格/g, "").replace(/吉卜力/g, "");
-            } else if (style) {
-              cleanPrompt = cleanPrompt.replace(new RegExp(`${style}风格`, 'g'), "");
-              cleanPrompt = cleanPrompt.replace(new RegExp(`${style}`, 'g'), "");
-            }
-            
-            // 清理多余逗号和空白
-            cleanPrompt = cleanPrompt.trim().replace(/^，|，$/g, "").replace(/，+/g, "，");
-            
-            if (cleanPrompt) {
-              finalPrompt += `，${cleanPrompt}`;
             }
           }
           
@@ -1236,28 +1221,27 @@ export async function POST(request: NextRequest) {
             text: finalPrompt
           });
           
-          logger.info(`图片处理：使用优化后的提示词模板，长度=${finalPrompt.length}字符`);
+          logger.info(`图片处理：使用${style ? '风格配置模板' : '原始'}提示词，长度=${finalPrompt.length}字符`);
         } else {
-          // 1. 确保使用正确的风格名称
-          let styleName = "";
+          // 导入styles.ts中的函数
+          const { generatePromptWithStyle } = await import('@/app/config/styles');
+          
+          // 使用风格配置中的模板构建提示词
           if (style) {
-            // 修正已知错误拼写
-            styleName = style === "吉普力" ? "吉卜力" : style;
+            // 使用配置中的提示词模板
+            finalPrompt = generatePromptWithStyle(style, prompt || "生成图像");
+            logger.info(`使用风格配置模板构建提示词，风格: ${style}, 长度=${finalPrompt.length}字符`);
+          } else {
+            // 没有指定风格，使用原始提示词
+            finalPrompt = prompt || "生成图像";
           }
           
-          // 2. 从头构建提示词，不依赖原始输入，避免重复风格
-          finalPrompt = "生成图像";
-          
-          // 3. 只添加一次风格名称，不添加额外描述
-          if (styleName) {
-            finalPrompt += `，${styleName}风格`;
-          }
-          
-          // 4. 添加简单明确的比例指令
+          // 添加简单明确的比例指令
           if (aspectRatio) {
             const [width, height] = aspectRatio.split(':').map(Number);
             const ratio = width / height;
             
+            // 避免破坏原始提示词结构，在末尾添加比例信息
             if (ratio > 1) {
               finalPrompt += `，生成${aspectRatio}的横向图片`;
             } else if (ratio < 1) {
@@ -1266,31 +1250,37 @@ export async function POST(request: NextRequest) {
               finalPrompt += `，生成${aspectRatio}的正方形图片`;
             }
           }
-
-          // 5. 如果用户有其他非风格的提示内容，添加到末尾
-          if (promptText && !promptText.includes("生成图像") && 
-             (!styleName || !promptText.toLowerCase().includes(styleName.toLowerCase()))) {
-            let cleanPrompt = promptText;
-            
-            // 移除可能的风格名称避免重复
-            if (styleName) {
-              cleanPrompt = cleanPrompt.replace(new RegExp(`${styleName}风格`, 'g'), "")
-                                     .replace(new RegExp(`${styleName}`, 'g'), "");
-            }
-            
-            // 清理多余逗号和空白
-            cleanPrompt = cleanPrompt.trim().replace(/^，|，$/g, "").replace(/，+/g, "，");
-            
-            if (cleanPrompt) {
-              finalPrompt += `，${cleanPrompt}`;
-            }
+          
+          // 处理图片数据...
+          let imageData;
+          if (image.startsWith('data:image/')) {
+            imageData = image;
+          } else {
+            // 为原始base64添加data URL前缀
+            const mimeType = 'image/jpeg'; // 默认JPEG
+            imageData = `data:${mimeType};base64,${image}`;
           }
           
-          // 没有图片时，只添加文本内容
+          // 验证图片数据
+          if (!imageData || imageData.length < 100) {
+            throw new Error('图片数据无效');
+          }
+          
+          // 添加图片到消息内容
+          userMessageContent.push({
+            type: "image_url",
+            image_url: {
+              url: imageData
+            }
+          });
+          
+          // 添加文本提示
           userMessageContent.push({
             type: "text",
             text: finalPrompt
           });
+          
+          logger.info(`图片处理：使用${style ? '风格配置模板' : '原始'}提示词，长度=${finalPrompt.length}字符`);
         }
         
         // 构建单一用户消息 - 简化消息结构
