@@ -6,6 +6,16 @@ import Image from "next/image";
 import { useState } from "react";
 import { toast } from "sonner";
 
+// 生成随机字符串作为 code verifier
+function generateCodeVerifier(length: number) {
+  let text = '';
+  const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~';
+  for (let i = 0; i < length; i++) {
+    text += possible.charAt(Math.floor(Math.random() * possible.length));
+  }
+  return text;
+}
+
 export function GoogleSignInButton() {
   const [isLoading, setIsLoading] = useState(false);
   const supabase = createClient();
@@ -15,12 +25,9 @@ export function GoogleSignInButton() {
       setIsLoading(true);
       console.log('[GoogleSignIn] 开始谷歌登录流程');
 
-      // 生成随机 state
-      const state = Math.random().toString(36).substring(2);
-      // 保存 state 到 sessionStorage
-      if (typeof sessionStorage !== 'undefined') {
-        sessionStorage.setItem('oauth_state', state);
-      }
+      // 生成 code verifier 并存储
+      const codeVerifier = generateCodeVerifier(128);
+      sessionStorage.setItem('codeVerifier', codeVerifier);
 
       const { data, error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
@@ -29,8 +36,9 @@ export function GoogleSignInButton() {
           queryParams: {
             access_type: 'offline',
             prompt: 'consent',
-            state: state
           },
+          skipBrowserRedirect: false,
+          codeVerifier: codeVerifier, // 添加 code verifier
         },
       });
 

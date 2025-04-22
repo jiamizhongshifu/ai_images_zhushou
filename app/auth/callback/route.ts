@@ -1,5 +1,6 @@
 import { createClient } from '@/utils/supabase/server';
 import { NextResponse } from 'next/server';
+import { cookies } from 'next/headers';
 
 export async function GET(request: Request) {
   // The `/auth/callback` route is required for the server-side auth flow implemented
@@ -13,15 +14,15 @@ export async function GET(request: Request) {
     const error = requestUrl.searchParams.get('error');
     const error_description = requestUrl.searchParams.get('error_description');
 
-    // 如果URL中包含错误信息
-    if (error) {
-      console.error(`[Auth Callback] OAuth错误: ${error}`, error_description);
+    // 如果有错误参数，重定向到登录页面并显示错误
+    if (error || error_description) {
+      console.error('[Auth Callback] OAuth错误:', error, error_description);
       return NextResponse.redirect(
-        `${requestUrl.origin}/sign-in?error=${encodeURIComponent(error_description || error)}`
+        `${requestUrl.origin}/sign-in?error=${encodeURIComponent(error_description || error || '认证失败')}`
       );
     }
 
-    // 如果没有授权码
+    // 如果没有授权码，重定向到登录页
     if (!code) {
       console.error('[Auth Callback] 未收到授权码');
       return NextResponse.redirect(
@@ -33,50 +34,41 @@ export async function GET(request: Request) {
     console.log('[Auth Callback] 开始交换授权码获取会话');
     const supabase = await createClient();
 
-    try {
-      const { error: sessionError } = await supabase.auth.exchangeCodeForSession(code);
+    const { error: sessionError } = await supabase.auth.exchangeCodeForSession(code);
 
-      if (sessionError) {
-        console.error('[Auth Callback] 交换会话失败:', sessionError);
-        return NextResponse.redirect(
-          `${requestUrl.origin}/sign-in?error=${encodeURIComponent(sessionError.message)}`
-        );
-      }
-
-      // 获取当前会话以验证
-      const { data: { session }, error: sessionCheckError } = await supabase.auth.getSession();
-      
-      if (sessionCheckError || !session) {
-        console.error('[Auth Callback] 验证会话失败:', sessionCheckError);
-        return NextResponse.redirect(
-          `${requestUrl.origin}/sign-in?error=${encodeURIComponent('无法验证会话')}`
-        );
-      }
-
-      console.log('[Auth Callback] 认证成功，重定向到受保护页面');
-
-      // 创建响应并设置 cookie
-      const response = NextResponse.redirect(
-        `${requestUrl.origin}/protected?auth_session=${Date.now()}`
-      );
-
-      // 设置认证相关的 cookie
-      response.cookies.set('user_authenticated', 'true', {
-        path: '/',
-        maxAge: 60 * 60 * 24 * 7, // 7 days
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: 'lax'
-      });
-
-      return response;
-      
-    } catch (exchangeError) {
-      console.error('[Auth Callback] 交换会话时发生错误:', exchangeError);
+    if (sessionError) {
+      console.error('[Auth Callback] 交换会话失败:', sessionError);
       return NextResponse.redirect(
-        `${requestUrl.origin}/sign-in?error=${encodeURIComponent('会话交换失败')}`
+        `${requestUrl.origin}/sign-in?error=${encodeURIComponent(sessionError.message)}`
       );
     }
-    
+
+    // 获取当前会话以验证
+    const { data: { session } } = await supabase.auth.getSession();
+      
+    if (!session) {
+      console.error('[Auth Callback] 无法获取有效会话');
+      return NextResponse.redirect(
+        `${requestUrl.origin}/sign-in?error=${encodeURIComponent('无法获取有效会话')}`
+      );
+    }
+
+    console.log('[Auth Callback] 认证成功，重定向到受保护页面');
+
+    // 创建响应并设置 cookie
+    const response = NextResponse.redirect(`${requestUrl.origin}/protected`);
+
+    // 设置认证相关的 cookie
+    response.cookies.set('user_authenticated', 'true', {
+      path: '/',
+      maxAge: 60 * 60 * 24 * 7, // 7 days
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      httpOnly: true
+    });
+
+    return response;
+      
   } catch (error) {
     console.error('[Auth Callback] 处理认证回调时出错:', error);
     const origin = process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000';
