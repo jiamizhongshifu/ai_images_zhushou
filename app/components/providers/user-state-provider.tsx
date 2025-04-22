@@ -142,18 +142,32 @@ function UserStateProviderContent({ children }: UserStateProviderProps) {
       return;
     }
     
+    // 检查cookie中是否有认证标记
+    const cookieHasAuth = typeof document !== 'undefined' && document.cookie.includes('auth_valid=true');
+    const storageError = typeof document !== 'undefined' && document.cookie.includes('storage_limitation=true');
+    
     try {
       // 强制同步认证状态，确保使用最新状态
       try {
-        const { forceSyncAuthState } = await import('@/utils/auth-service');
-        forceSyncAuthState();
+        // 如果有存储访问错误，不要尝试访问localStorage/sessionStorage
+        if (!storageError) {
+          const { forceSyncAuthState } = await import('@/utils/auth-service');
+          await forceSyncAuthState();
+        } else {
+          console.log('[UserStateProvider] 检测到存储访问限制，跳过forceSyncAuthState');
+        }
       } catch (e) {
         console.warn('[UserStateProvider] 强制同步认证状态失败:', e);
       }
       
-      // 重新检查认证状态
-      const currentAuthState = authService.isAuthenticated();
-      setIsAuthenticated(currentAuthState);
+      // 如果有cookie认证标记但Supabase认为未认证，优先信任cookie
+      const currentAuthState = cookieHasAuth || authService.isAuthenticated();
+      
+      // 更新认证状态
+      if (currentAuthState !== isAuthenticated) {
+        console.log(`[UserStateProvider] 更新认证状态: ${isAuthenticated} -> ${currentAuthState}`);
+        setIsAuthenticated(currentAuthState);
+      }
       
       if (currentAuthState) {
         setUserInfoLoaded(true);
@@ -241,7 +255,7 @@ function UserStateProviderContent({ children }: UserStateProviderProps) {
         setIsInitializing(false);
       }
     }
-  }, [lastFetchTime, credits, isInitializing, checkLogoutState, resetState, isLoggedOut]);
+  }, [lastFetchTime, credits, isInitializing, checkLogoutState, resetState, isLoggedOut, isAuthenticated]);
   
   // 触发刷新积分的函数 - 增加更严格的防抖
   const triggerCreditRefresh = useCallback(async () => {

@@ -13,137 +13,105 @@ import type { Database } from '@/types/supabase';
  * 专用于无痕模式或浏览器扩展环境下的会话验证API
  * 这个API将验证服务器端的会话状态，并返回用户信息
  */
-export async function GET(request: Request) {
+export async function GET(request: NextRequest) {
   try {
-    // 创建服务器端Supabase客户端
-    const cookieStore = await cookies();
-    const supabase = createServerClient<Database>(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-      {
-        cookies: {
-          get(name: string) {
-            return cookieStore.get(name)?.value;
-          },
-          set(name: string, value: string, options: any) {
-            cookieStore.set({ name, value, ...options });
-          },
-          remove(name: string, options: any) {
-            cookieStore.set({ name, value: '', ...options });
-          },
-        },
-      }
-    );
-
-    // 获取会话状态
+    // 获取服务器端supabase客户端
+    const supabase = await createClient();
+    
+    // 获取当前会话
     const { data: { session }, error } = await supabase.auth.getSession();
-
+    
     if (error) {
-      console.error('incognito-session API - 获取会话时出错:', error);
-      return NextResponse.json({ 
-        status: 'error', 
-        message: '获取会话时出错',
-        error: error.message 
-      }, { status: 500 });
+      console.error('[Incognito Session API] 获取会话出错:', error);
+      return NextResponse.json(
+        { 
+          authenticated: false, 
+          error: error.message,
+          timestamp: Date.now()
+        }, 
+        { status: 401 }
+      );
     }
-
+    
+    // 检查会话是否存在
     if (!session) {
-      // 测试使用cookie中的临时标识来验证会话
-      const authCookie = cookieStore.get('user_authenticated');
-      const sessionVerifiedCookie = cookieStore.get('session_verified');
+      console.log('[Incognito Session API] 无有效会话');
       
-      // 如果有认证cookie但没有会话，可能是会话获取失败但用户实际已登录
-      if (authCookie?.value === 'true' && sessionVerifiedCookie?.value === 'true') {
-        console.log('incognito-session API - 未找到会话但存在认证Cookie，尝试创建临时会话');
-        
-        // 设置会话cookie
-        const cookieStore2 = await cookies();
-        cookieStore2.set({
-          name: 'user_authenticated',
-          value: 'true',
-          path: '/',
-          maxAge: 3600,
-          sameSite: 'lax'
-        });
-        
-        cookieStore2.set({
-          name: 'session_verified',
-          value: 'true',
-          path: '/',
-          maxAge: 3600,
-          sameSite: 'lax'
-        });
-        
-        // 返回临时认证成功响应
-        return NextResponse.json({
-          status: 'success',
-          message: '基于Cookie的临时会话验证成功',
-          isTemporarySession: true,
-          lastVerified: new Date().toISOString()
-        });
+      // 检查cookie中是否有auth_valid标记
+      const cookieStore = cookies();
+      const authValid = cookieStore.get('auth_valid');
+      
+      if (authValid?.value === 'true') {
+        console.log('[Incognito Session API] 从cookie检测到认证标记，但无法找到会话');
+        return NextResponse.json(
+          { 
+            authenticated: 'cookie_only',
+            message: '检测到cookie认证标记，但无有效会话',
+            timestamp: Date.now()
+          }, 
+          { status: 202 }
+        );
       }
       
-      console.log('incognito-session API - 未找到有效会话');
-      return NextResponse.json({ 
-        status: 'error', 
-        message: '未找到有效会话' 
-      }, { status: 401 });
-    }
-
-    // 会话有效，返回用户信息
-    console.log('incognito-session API - 找到有效会话，用户ID:', session.user.id);
-    
-    // 设置会话cookie以便客户端可以识别
-    const cookieStore2 = await cookies();
-    cookieStore2.set({
-      name: 'user_authenticated',
-      value: 'true',
-      path: '/',
-      maxAge: 3600,
-      sameSite: 'lax'
-    });
-    
-    cookieStore2.set({
-      name: 'session_verified',
-      value: 'true',
-      path: '/',
-      maxAge: 3600,
-      sameSite: 'lax'
-    });
-
-    return NextResponse.json({
-      status: 'success',
-      message: '会话验证成功',
-      userId: session.user.id,
-      email: session.user.email,
-      lastVerified: new Date().toISOString()
-    });
-  } catch (err) {
-    console.error('incognito-session API - 处理请求时出现异常:', err);
-    
-    // 出错时尝试从cookie恢复
-    try {
-      const cookieStore = await cookies();
-      const authCookie = cookieStore.get('user_authenticated');
-      const sessionVerifiedCookie = cookieStore.get('session_verified');
-      
-      if (authCookie?.value === 'true' && sessionVerifiedCookie?.value === 'true') {
-        console.log('incognito-session API - 请求出错但Cookie有效，返回临时会话');
-        return NextResponse.json({
-          status: 'success',
-          message: '基于Cookie的紧急会话恢复',
-          isTemporarySession: true,
-          lastVerified: new Date().toISOString()
-        });
-      }
-    } catch (cookieError) {
-      console.error('incognito-session API - 尝试恢复Cookie也失败:', cookieError);
+      return NextResponse.json(
+        { 
+          authenticated: false,
+          message: '未找到有效会话',
+          timestamp: Date.now()
+        }, 
+        { status: 401 }
+      );
     }
     
-    return NextResponse.json({ 
-      status: 'error', 
-      message: '处理请求时出现异常' 
-    }, { status: 500 });
+    // 有效会话，返回会话信息并设置cookie
+    const response = NextResponse.json(
+      { 
+        authenticated: true,
+        user: {
+          id: session.user.id,
+          email: session.user.email
+        },
+        timestamp: Date.now()
+      }, 
+      { status: 200 }
+    );
+    
+    // 设置cookie以便在无法访问存储的环境下识别登录状态
+    response.cookies.set('storage_limitation', 'true', {
+      path: '/',
+      maxAge: 60 * 60 * 24 * 7, // 7天
+      httpOnly: false,
+      sameSite: 'lax',
+      secure: process.env.NODE_ENV === 'production',
+    });
+    
+    response.cookies.set('auth_valid', 'true', {
+      path: '/',
+      maxAge: 60 * 60 * 24 * 7, // 7天
+      httpOnly: false,
+      sameSite: 'lax',
+      secure: process.env.NODE_ENV === 'production',
+    });
+    
+    response.cookies.set('auth_time', Date.now().toString(), {
+      path: '/',
+      maxAge: 60 * 60 * 24 * 7, // 7天
+      httpOnly: false,
+      sameSite: 'lax',
+      secure: process.env.NODE_ENV === 'production',
+    });
+    
+    return response;
+  } catch (error) {
+    console.error('[Incognito Session API] 验证会话时出错:', error);
+    return NextResponse.json(
+      { 
+        authenticated: false, 
+        error: error instanceof Error ? error.message : '未知错误',
+        timestamp: Date.now()
+      }, 
+      { status: 500 }
+    );
   }
 }
 
