@@ -128,6 +128,26 @@ export const createClient = () => {
         flowType: 'pkce',
         detectSessionInUrl: true,
         persistSession: true,
+        storage: {
+          getItem: (key: string) => {
+            try {
+              const item = sessionStorage.getItem(key);
+              return item;
+            } catch {
+              return null;
+            }
+          },
+          setItem: (key: string, value: string) => {
+            try {
+              sessionStorage.setItem(key, value);
+            } catch {}
+          },
+          removeItem: (key: string) => {
+            try {
+              sessionStorage.removeItem(key);
+            } catch {}
+          },
+        },
       },
     }
   );

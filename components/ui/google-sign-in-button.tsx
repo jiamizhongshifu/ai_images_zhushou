@@ -38,7 +38,6 @@ export function GoogleSignInButton() {
             prompt: 'consent',
           },
           skipBrowserRedirect: false,
-          codeVerifier: codeVerifier, // 添加 code verifier
         },
       });
 
