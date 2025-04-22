@@ -142,7 +142,7 @@ export default function ProtectedPage() {
         }
         return [imageUrl, ...prev];
       });
-      
+  
       // 静默更新点数，不触发页面刷新
       setTimeout(() => {
         refreshCredits(false, true); // 静默强制刷新点数
@@ -171,21 +171,21 @@ export default function ProtectedPage() {
   // 修改路由变化处理，避免不必要的刷新
   useEffect(() => {
     const handleRouteChange = async () => {
-      // 只在首次加载和返回创作页面时刷新
-      if (pathName === '/protected' && generatedImages.length === 0) {
-        console.log('[ProtectedPage] 首次加载或返回创作页面，刷新图像状态');
+      // 只在返回创作页面时刷新，不再检查 generatedImages.length
+      if (pathName === '/protected') {
+        console.log('[ProtectedPage] 路由切换到创作页面，刷新图像状态');
         try {
           await refreshHistory();
           console.log('[ProtectedPage] 图像历史已刷新');
         } catch (error) {
           console.error('[ProtectedPage] 刷新图像历史时出错:', error);
-        }
+          }
       }
     };
-
+    
     // 初始加载时执行一次
     handleRouteChange();
-  }, [pathName, refreshHistory, generatedImages.length]);
+  }, [pathName, refreshHistory]);
   
   // 修改初始同步逻辑，避免重复刷新
   useEffect(() => {
@@ -229,16 +229,16 @@ export default function ProtectedPage() {
   
   // 处理图片上传和获取尺寸
   const handleImageUpload = (dataUrl: string, width: number, height: number) => {
-    setUploadedImage(dataUrl);
+        setUploadedImage(dataUrl);
         
     // 计算图片尺寸比例
-    const ratio = `${width}:${height}`;
+          const ratio = `${width}:${height}`;
     console.log(`[ProtectedPage] 检测到上传图片比例: ${ratio}, 尺寸: ${width}x${height}`);
-    setImageAspectRatio(ratio);
+          setImageAspectRatio(ratio);
           
-    // 计算并设置标准比例
-    const standardRatio = convertToStandardRatio(width, height);
-    setStandardAspectRatio(standardRatio);
+          // 计算并设置标准比例
+          const standardRatio = convertToStandardRatio(width, height);
+          setStandardAspectRatio(standardRatio);
     console.log(`[ProtectedPage] 标准化比例为: ${standardRatio}`);
   };
   
@@ -519,7 +519,7 @@ export default function ProtectedPage() {
   const handleDownloadGeneratedImage = (imageUrl: string) => {
     downloadImage(imageUrl);
   };
-  
+
   return (
     <div className="flex-1 w-full flex flex-col items-center">
       {/* 添加任务状态监听器 */}

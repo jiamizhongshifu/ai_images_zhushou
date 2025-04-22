@@ -107,15 +107,15 @@ export async function verifyPaymentStatus(orderNo: string): Promise<boolean> {
           
           // 发送查询请求
           const response = await fetch(queryUrl, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
             body: JSON.stringify(queryParams),
-          });
+      });
 
-          if (response.ok) {
-            const result = await response.json();
+      if (response.ok) {
+        const result = await response.json();
             console.log(`支付查询API响应:`, result);
             
             // 判断订单状态

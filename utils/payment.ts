@@ -151,7 +151,7 @@ export function generatePaymentUrl(
   
   // 确保URL路径正确，避免双斜杠
   const formattedBaseUrl = SITE_BASE_URL.replace(/\/$/, ''); // 移除末尾斜杠
-
+  
   // 为返回URL添加用户ID参数，确保返回时可以识别用户
   const returnUrl = userId 
     ? `${formattedBaseUrl}/protected?order_no=${orderNo}&user_id=${userId}` 

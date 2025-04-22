@@ -295,7 +295,7 @@ export default function ImageUploader({
                 ? "border-primary/30 bg-card/80"
                 : currentState === 'result'
                   ? "border-primary/40 bg-card/80"
-                  : uploadedImage
+              : uploadedImage
                     ? "border-primary/30 bg-card/80" 
                     : "border-border/60 bg-muted/30 hover:border-border"
           }`}
@@ -320,14 +320,14 @@ export default function ImageUploader({
                 支持 JPG, PNG, WebP 格式 (最大 10MB)
               </p>
               
-              {/* 隐藏的文件输入 */}
-              <input
+          {/* 隐藏的文件输入 */}
+          <input
                 ref={fileInputRef}
-                type="file"
-                className="hidden"
-                accept="image/*"
-                onChange={handleFileChange}
-              />
+            type="file"
+            className="hidden"
+            accept="image/*"
+            onChange={handleFileChange}
+          />
             </div>
           )}
           
@@ -369,11 +369,18 @@ export default function ImageUploader({
           {currentState === 'generating' && (
             // 生成中状态 - 显示生成骨架图
             <div className="flex flex-col items-center justify-center w-full h-full">
-              <ImageGenerationSkeleton 
-                stage={generationStage} 
-                percentage={generationPercentage} 
-                isGenerating={isGenerating}
-              />
+              <div className="w-full max-w-md px-6">
+                <ImageGenerationSkeleton 
+                  stage={generationStage} 
+                  percentage={generationPercentage} 
+                  isGenerating={isGenerating}
+                />
+              </div>
+              
+              {/* 添加生成过程的友好提示 */}
+              <p className="mt-6 text-center text-sm text-muted-foreground">
+                图像生成可能需要1-3分钟，请耐心等待...
+              </p>
             </div>
           )}
           
@@ -422,7 +429,7 @@ export default function ImageUploader({
             <div className="absolute inset-0 bg-destructive/10 flex items-center justify-center">
               <div className="bg-card p-4 rounded-lg shadow-ghibli text-center">
                 <p className="text-destructive mb-2">{imageError}</p>
-                <Button 
+              <Button
                   variant="outline" 
                   size="sm"
                   onClick={(e) => {
@@ -432,7 +439,7 @@ export default function ImageUploader({
                   }}
                 >
                   重新上传
-                </Button>
+              </Button>
               </div>
             </div>
           )}

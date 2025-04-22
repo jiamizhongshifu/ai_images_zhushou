@@ -58,7 +58,7 @@ export function ImagePreviewModal({ isOpen, imageUrl, onClose, onDownload, onDel
                   <span>删除</span>
                 </Button>
               )}
-              {onDownload && (
+            {onDownload && (
                 <Button 
                   variant="outline" 
                   size="sm" 
@@ -69,7 +69,7 @@ export function ImagePreviewModal({ isOpen, imageUrl, onClose, onDownload, onDel
                   <span>下载</span>
                 </Button>
               )}
-            </div>
+              </div>
           </div>
         </div>
       </div>

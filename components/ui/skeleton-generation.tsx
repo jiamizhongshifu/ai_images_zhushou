@@ -39,7 +39,7 @@ const stages: Record<GenerationStage, string> = {
   'failed': '生成失败'
 };
 
-// 改进进度条动画，使其更流畅
+// 使用原始图标而非Lottie动画
 const getStageIcon = (stage: GenerationStage) => {
   switch(stage) {
     case 'preparing':
@@ -50,8 +50,8 @@ const getStageIcon = (stage: GenerationStage) => {
       return <Clock className="mr-2 h-4 w-4 animate-pulse" />;
     case 'generating':
     case 'processing':
-      return <Sparkles className="mr-2 h-4 w-4 animate-pulse text-yellow-500" />;
     case 'extracting_image':
+      return <Sparkles className="mr-2 h-4 w-4 animate-pulse text-primary" />;
     case 'finalizing':
       return <ImageIcon className="mr-2 h-4 w-4 animate-pulse text-blue-500" />;
     case 'completed':
@@ -250,118 +250,96 @@ export function ImageGenerationSkeleton({
           estimatedTime: elapsedSeconds < 10 ? '计算中...' : `约${Math.max(1, Math.ceil((estimatedTotalTimeRef.current - elapsedSeconds) / 60))}分钟`
         });
         
-        // 触发阶段变更回调
+        // 调用外部回调
         if (onStageChange) {
-          onStageChange(GENERATION_STAGES[currentIndex].id as GenerationStage, GENERATION_STAGES[currentIndex].percentage);
+          onStageChange(
+            GENERATION_STAGES[currentIndex].id as GenerationStage,
+            GENERATION_STAGES[currentIndex].percentage
+          );
         }
-      }, 2000);
+      }, 1000);
       
       return () => clearInterval(timer);
     }
-  }, [isGenerating, onStageChange, externalStage, externalPercentage, elapsedSeconds]);
-  
-  // 获取当前阶段信息
-  const currentStage = GENERATION_STAGES[currentStageIndex] || GENERATION_STAGES[0];
+  }, [isGenerating, elapsedSeconds, externalStage, externalPercentage, onStageChange]);
   
   // 格式化时间显示
   const formatTime = (seconds: number) => {
-    if (seconds < 60) return `${seconds}秒`;
+    if (seconds < 60) {
+      return `${seconds}秒`;
+    }
     const minutes = Math.floor(seconds / 60);
     const remainingSeconds = seconds % 60;
     return `${minutes}分${remainingSeconds}秒`;
   };
   
+  // 获取当前阶段
+  const currentStage = GENERATION_STAGES[currentStageIndex];
+  
+  if (!isGenerating) return null;
+  
   return (
-    <div 
-      className="aspect-square relative bg-card/40 border border-border rounded-xl overflow-hidden shadow-ghibli-sm hover:shadow-ghibli transition-all duration-300 cursor-pointer w-full h-full"
-      onClick={() => setShowDetails(!showDetails)}
-    >
-      <div className="absolute inset-0 flex flex-col items-center justify-center p-4 bg-gradient-to-br from-card to-background">
-        {/* 中心旋转图标 */}
-        <div className="relative mb-4">
-          <div className="absolute inset-0 flex items-center justify-center">
-            <div className="w-12 h-12 rounded-full bg-primary/5 flex items-center justify-center">
-              {getStageIcon(currentStage.id as GenerationStage)}
+    <div className="w-full">
+      {/* 状态标题区域 - 使用原始图标 */}
+      <div className="flex items-center mb-3">
+        <div className="flex justify-center items-center">
+          {getStageIcon(currentStage.id as GenerationStage)}
+        </div>
+        <div className="flex-1">
+          <h4 className="text-base font-medium mb-0.5">{currentStage.label}</h4>
+          <p className="text-sm text-muted-foreground">{currentStage.description}</p>
             </div>
           </div>
-          <svg className="w-20 h-20 animate-spin-slow" viewBox="0 0 100 100">
-            <circle 
-              cx="50" cy="50" r="40" 
-              fill="none" 
-              stroke="rgba(var(--primary-rgb), 0.1)" 
-              strokeWidth="8" 
-            />
-            <circle 
-              cx="50" cy="50" r="40" 
-              fill="none" 
-              stroke="rgba(var(--primary-rgb), 0.8)" 
-              strokeWidth="8" 
-              strokeDasharray="251" 
-              strokeDashoffset={251 - (251 * smoothProgress / 100)}
-              strokeLinecap="round" 
-              transform="rotate(-90 50 50)" 
-              className="transition-all duration-300 ease-in-out"
-            />
-          </svg>
+      
+      {/* 进度条 - 应用平滑动画 */}
+      <div className="relative w-full h-2.5 bg-muted/70 rounded-full overflow-hidden mt-3 mb-2">
+        <div 
+          className="absolute top-0 left-0 h-full bg-primary transition-all duration-300 ease-out rounded-full"
+          style={{ width: `${smoothProgress}%` }}
+        />
+      </div>
+      
+      {/* 进度详情 */}
+      <div className="flex items-center justify-between text-xs text-muted-foreground px-0.5">
+        <div>
+          <span className="font-medium">{Math.round(smoothProgress)}%</span>
         </div>
         
-        {/* 状态文本 */}
-        <div className="text-center">
-          <p className="text-lg font-quicksand font-semibold mb-1 text-foreground">
-            {stages[currentStage.id as GenerationStage] || currentStage.label}
-          </p>
-          <p className="text-sm text-muted-foreground mb-2 max-w-[230px]">
-            {currentStage.description}
-          </p>
-          <p className="text-sm text-primary font-medium mb-3">
-            {Math.round(smoothProgress)}% 已完成
-          </p>
+        <div className="flex gap-2">
+          <span>已用时间: {formatTime(elapsedSeconds)}</span>
+          <span>预计剩余: {progress.estimatedTime}</span>
           
-          {/* 预计时间 */}
-          <div className="flex items-center justify-center text-xs text-muted-foreground">
-            <Clock className="w-3 h-3 mr-1" />
-            <span>剩余时间: {progress.estimatedTime}</span>
+          {/* 任务ID，如果提供 */}
+          {taskId && (
+            <span className="hidden md:inline-block text-xs text-muted-foreground/80">
+              任务ID: {taskId.substring(0, 8)}
+            </span>
+          )}
+          </div>
           </div>
           
-          {/* 已过时间 */}
-          <div className="mt-1 text-xs text-muted-foreground/70">
-            已用时间: {formatTime(elapsedSeconds)}
-          </div>
-          
-          {/* 提示点击查看详情 */}
-          <div className="mt-2 text-[10px] text-muted-foreground/50 italic">
-            点击查看详情
-          </div>
-        </div>
+      {/* 查看详情按钮 */}
+      <button
+        type="button"
+        className="text-xs text-muted-foreground hover:text-muted-foreground/80 mt-2 underline-offset-2 hover:underline"
+        onClick={() => setShowDetails(!showDetails)}
+      >
+        {showDetails ? '隐藏详情' : '查看详情'}
+      </button>
         
-        {/* 详细进度步骤 - 点击骨架图后展示 */}
+      {/* 详细信息区域 */}
         {showDetails && (
-          <div className="absolute bottom-0 left-0 right-0 bg-background/80 backdrop-blur-sm p-3 border-t border-border/30 transition-all duration-300">
-            <p className="text-xs font-quicksand font-semibold mb-2 text-foreground flex justify-between items-center">
-              <span>生成进度详情:</span>
-              <span className="text-primary font-medium">{Math.round(smoothProgress)}%</span>
-            </p>
-            <ul className="text-xs space-y-1 max-h-[150px] overflow-y-auto">
-              {GENERATION_STAGES.slice(0, -1).map((stage, index) => (
-                <li 
-                  key={stage.id} 
-                  className={`flex items-center ${index <= currentStageIndex ? 'text-foreground' : 'text-muted-foreground/60'}`}
-                >
-                  <div className={`w-3 h-3 rounded-full mr-2 ${
-                    index < currentStageIndex ? 'bg-primary' : 
-                    index === currentStageIndex ? 'bg-primary/60 animate-pulse' : 
-                    'bg-muted'
-                  }`} />
-                  <span>{stage.label}</span>
-                </li>
-              ))}
-            </ul>
-            <p className="text-xs text-muted-foreground mt-2 italic">
-              点击收起详情
-            </p>
-          </div>
+        <div className="mt-2 text-xs bg-muted/30 p-2 rounded-md text-muted-foreground">
+          <p>• 当前阶段: {currentStage.label} ({currentStage.id})</p>
+          <p>• 实际进度: {progress.percentage}%</p>
+          <p>• 平滑进度: {smoothProgress.toFixed(1)}%</p>
+          <p>• 已用时间: {elapsedSeconds}秒</p>
+          <p>• 预计总时间: {estimatedTotalTimeRef.current}秒</p>
+          {taskId && (
+            <p>• 完整任务ID: {taskId}</p>
         )}
       </div>
+      )}
     </div>
   );
 } 

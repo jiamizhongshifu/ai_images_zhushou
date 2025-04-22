@@ -1250,7 +1250,7 @@ export async function POST(request: NextRequest) {
               finalPrompt += `，生成正方形图片`;
             }
           }
-          
+
           // 处理图片数据...
           let imageData;
           if (image.startsWith('data:image/')) {
@@ -1264,8 +1264,8 @@ export async function POST(request: NextRequest) {
           // 验证图片数据
           if (!imageData || imageData.length < 100) {
             throw new Error('图片数据无效');
-          }
-          
+            }
+            
           // 添加图片到消息内容
           userMessageContent.push({
             type: "image_url",

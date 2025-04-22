@@ -190,7 +190,7 @@ export default function HistoryPage() {
       toast.error("找不到要删除的图片记录");
       return Promise.resolve();
     }
-
+    
     // 添加确认弹窗
     if (!confirm("确定要删除这张图片吗？此操作不可撤销。")) {
       return Promise.resolve();
@@ -351,7 +351,7 @@ export default function HistoryPage() {
                         </div>
                       }
                     />
-                  </div>
+                </div>
                 ))}
               </div>
             )}

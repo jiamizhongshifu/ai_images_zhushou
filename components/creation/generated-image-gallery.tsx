@@ -194,26 +194,26 @@ const GeneratedImageGallery = React.forwardRef<HTMLDivElement, GeneratedImageGal
     if (!onDeleteImage) return;
     
     try {
-      await onDeleteImage(imageUrl);
-      
-      // 如果当前预览的图片被删除，关闭预览
-      if (previewImage === imageUrl) {
-        setPreviewImage(null);
-      }
-      
-      // 清除加载状态
-      setLoadedImages(prev => {
-        const newState = {...prev};
-        delete newState[imageUrl];
-        return newState;
-      });
-      
-      // 清除代理映射
-      setImageProxyMap(prev => {
-        const newState = {...prev};
-        delete newState[imageUrl];
-        return newState;
-      });
+        await onDeleteImage(imageUrl);
+        
+        // 如果当前预览的图片被删除，关闭预览
+        if (previewImage === imageUrl) {
+          setPreviewImage(null);
+        }
+        
+        // 清除加载状态
+        setLoadedImages(prev => {
+          const newState = {...prev};
+          delete newState[imageUrl];
+          return newState;
+        });
+        
+        // 清除代理映射
+        setImageProxyMap(prev => {
+          const newState = {...prev};
+          delete newState[imageUrl];
+          return newState;
+        });
       
       // 从活动图片集合中移除
       setActiveImagesSet(prev => {

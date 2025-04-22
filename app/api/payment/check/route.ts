@@ -66,23 +66,23 @@ const checkPaymentHandler = async (request: NextRequest, authResult: any) => {
             if (process.env.NODE_ENV !== 'production') {
               // 在开发环境中，需要显式开启模拟支付功能
               if (process.env.MOCK_PAYMENT_SUCCESS === 'true') {
-                // 模拟支付成功，更新订单状态
+              // 模拟支付成功，更新订单状态
                 console.log(`[开发环境] 模拟查询结果: 订单 ${orderNo} 支付成功，更新状态`);
+              
+              // 更新订单状态
+              const { error: updateError } = await client
+                .from('ai_images_creator_payments')
+                .update({
+                  status: 'success',
+                  paid_at: new Date().toISOString(),
+                  updated_at: new Date().toISOString()
+                })
+                .eq('order_no', orderNo);
                 
-                // 更新订单状态
-                const { error: updateError } = await client
-                  .from('ai_images_creator_payments')
-                  .update({
-                    status: 'success',
-                    paid_at: new Date().toISOString(),
-                    updated_at: new Date().toISOString()
-                  })
-                  .eq('order_no', orderNo);
-                  
-                if (updateError) {
-                  throw new Error(`更新订单状态失败: ${updateError.message}`);
-                }
-                
+              if (updateError) {
+                throw new Error(`更新订单状态失败: ${updateError.message}`);
+              }
+              
                 return {
                   ...order,
                   status: 'success',
@@ -116,13 +116,13 @@ const checkPaymentHandler = async (request: NextRequest, authResult: any) => {
                 if (updateError) {
                   throw new Error(`更新订单状态失败: ${updateError.message}`);
                 }
-                
-                return {
-                  ...order,
-                  status: 'success',
-                  statusChanged: true,
+              
+              return {
+                ...order,
+                status: 'success',
+                statusChanged: true,
                   message: '支付已完成，订单状态已更新'
-                };
+              };
               } else {
                 console.log(`[生产环境] 支付网关查询结果: 订单 ${orderNo} 待支付`);
               }
@@ -330,7 +330,7 @@ const checkPaymentHandler = async (request: NextRequest, authResult: any) => {
           // 更新本地对象
           order.credits_updated = true;
         }
-        
+          
         return {
           ...order,
           creditLogs: creditLogs || [],

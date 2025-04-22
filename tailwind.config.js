@@ -109,6 +109,13 @@ const config = {
           '0%, 100%': { transform: 'translateY(0)' },
           '50%': { transform: 'translateY(-5px)' },
         },
+        'bounce-gentle': {
+          '0%, 100%': { transform: 'translateY(0)' },
+          '20%': { transform: 'translateY(-2px)' },
+          '40%': { transform: 'translateY(1px)' },
+          '60%': { transform: 'translateY(-1px)' },
+          '80%': { transform: 'translateY(0px)' }
+        },
         'pulse-soft': {
           '0%, 100%': { opacity: '1' },
           '50%': { opacity: '0.8' },
@@ -136,6 +143,7 @@ const config = {
   			'accordion-up': 'accordion-up 0.2s ease-out',
   			'shimmer': 'shimmer 2s infinite linear',
         'float': 'float 4s ease-in-out infinite',
+        'bounce-gentle': 'bounce-gentle 2s ease-in-out',
         'pulse-soft': 'pulse-soft 3s ease-in-out infinite',
         'fade-in': 'fade-in 0.5s ease-out forwards',
         'scale-in': 'scale-in 0.3s ease-out forwards',

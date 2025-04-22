@@ -71,16 +71,16 @@ export async function POST(request: NextRequest) {
       // 记录原始状态
       const originalStatus = order.status;
       const originalUpdated = order.credits_updated;
-      
+        
       // 如果状态没有变化且不需要强制更新点数，则直接返回
       if (originalStatus === targetStatus && (!forceCreditUpdate || originalUpdated)) {
-        return {
-          success: true,
+          return {
+            success: true,
           message: `订单状态已经是 ${targetStatus}，无需修改`,
           order
-        };
-      }
-      
+          };
+        }
+        
       // 更新订单状态
       const updates: any = {
         status: targetStatus,
@@ -94,64 +94,64 @@ export async function POST(request: NextRequest) {
       }
       
       // 更新订单
-      const { error: updateError } = await client
-        .from('ai_images_creator_payments')
+        const { error: updateError } = await client
+          .from('ai_images_creator_payments')
         .update(updates)
-        .eq('order_no', orderNo);
+          .eq('order_no', orderNo);
+          
+        if (updateError) {
+          throw new Error(`更新订单状态失败: ${updateError.message}`);
+        }
         
-      if (updateError) {
-        throw new Error(`更新订单状态失败: ${updateError.message}`);
-      }
-      
       // 如果状态改为成功且需要更新点数，或者强制更新点数
       if ((targetStatus === PaymentStatus.SUCCESS && !order.credits_updated) || 
           (targetStatus === PaymentStatus.SUCCESS && forceCreditUpdate)) {
-        
+      
         // 查询用户当前点数
-        const { data: creditData, error: creditQueryError } = await client
-          .from('ai_images_creator_credits')
-          .select('credits')
+      const { data: creditData, error: creditQueryError } = await client
+        .from('ai_images_creator_credits')
+        .select('credits')
           .eq('user_id', order.user_id)
-          .single();
-        
-        let currentCredits = 0;
-        let isNewCreditRecord = false;
-        
-        // 处理用户可能没有点数记录的情况
-        if (creditQueryError) {
-          if (creditQueryError.code === 'PGRST116') { // 不存在的记录
-            // 创建新的点数记录
-            isNewCreditRecord = true;
-            const { error: insertError } = await client
-              .from('ai_images_creator_credits')
-              .insert({
+        .single();
+      
+      let currentCredits = 0;
+      let isNewCreditRecord = false;
+      
+      // 处理用户可能没有点数记录的情况
+      if (creditQueryError) {
+        if (creditQueryError.code === 'PGRST116') { // 不存在的记录
+          // 创建新的点数记录
+          isNewCreditRecord = true;
+          const { error: insertError } = await client
+            .from('ai_images_creator_credits')
+            .insert({
                 user_id: order.user_id,
                 credits: order.credits,
-                created_at: new Date().toISOString(),
-                updated_at: new Date().toISOString(),
-                last_order_no: orderNo
-              });
-              
-            if (insertError) {
-              throw new Error(`创建用户点数记录失败: ${insertError.message}`);
-            }
-            
-            console.log(`已为用户 ${order.user_id} 创建新的点数记录: ${order.credits}点`);
-          } else {
-            throw new Error(`查询用户点数失败: ${creditQueryError.message}`);
-          }
-        } else {
-          // 用户已有点数记录，更新点数
-          currentCredits = creditData.credits;
-          const newCredits = currentCredits + order.credits;
-          
-          const { error: updateCreditError } = await client
-            .from('ai_images_creator_credits')
-            .update({
-              credits: newCredits,
+              created_at: new Date().toISOString(),
               updated_at: new Date().toISOString(),
               last_order_no: orderNo
-            })
+            });
+            
+          if (insertError) {
+            throw new Error(`创建用户点数记录失败: ${insertError.message}`);
+          }
+          
+            console.log(`已为用户 ${order.user_id} 创建新的点数记录: ${order.credits}点`);
+        } else {
+          throw new Error(`查询用户点数失败: ${creditQueryError.message}`);
+        }
+      } else {
+        // 用户已有点数记录，更新点数
+        currentCredits = creditData.credits;
+          const newCredits = currentCredits + order.credits;
+        
+        const { error: updateCreditError } = await client
+          .from('ai_images_creator_credits')
+          .update({
+            credits: newCredits,
+            updated_at: new Date().toISOString(),
+            last_order_no: orderNo
+          })
             .eq('user_id', order.user_id);
             
           if (updateCreditError) {
@@ -252,23 +252,23 @@ export async function POST(request: NextRequest) {
         }
         
         // 记录点数变更日志
-        const { error: logInsertError } = await client
-          .from('ai_images_creator_credit_logs')
-          .insert({
+      const { error: logInsertError } = await client
+        .from('ai_images_creator_credit_logs')
+        .insert({
             user_id: order.user_id,
-            order_no: orderNo,
+          order_no: orderNo,
             operation_type: 'deduct',
-            old_value: currentCredits,
+          old_value: currentCredits,
             change_value: -order.credits,
             new_value: newCredits,
-            created_at: new Date().toISOString(),
+          created_at: new Date().toISOString(),
             note: `管理员手动修复-扣除${order.credits}点`
-          });
-          
-        if (logInsertError) {
-          throw new Error(`创建点数变更日志失败: ${logInsertError.message}`);
-        }
+        });
         
+      if (logInsertError) {
+        throw new Error(`创建点数变更日志失败: ${logInsertError.message}`);
+      }
+      
         // 更新订单标记为未更新点数
         const { error: updateOrderError } = await client
           .from('ai_images_creator_payments')

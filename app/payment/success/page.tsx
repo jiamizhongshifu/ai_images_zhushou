@@ -137,7 +137,7 @@ function PaymentContent() {
       if (successData) {
         // 支付成功，更新UI状态
         setStatus('success');
-        setMessage('支付成功！您的订单已处理，点数已增加');
+          setMessage('支付成功！您的订单已处理，点数已增加');
         
         // 清除localStorage中的临时数据
         try {
@@ -235,8 +235,8 @@ function PaymentContent() {
         if (success) {
           console.log(`点数刷新成功 (尝试 ${i+1}/${MAX_ATTEMPTS})`);
           return true;
-        }
-        
+    }
+    
         // 如果不是最后一次尝试，等待一段时间
         if (i < MAX_ATTEMPTS - 1) {
           await new Promise(resolve => setTimeout(resolve, DELAY_BETWEEN_ATTEMPTS));

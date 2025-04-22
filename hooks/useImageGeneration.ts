@@ -304,7 +304,7 @@ export default function useImageGeneration(
           if (triggerCreditRefresh) {
             setTimeout(() => {
               // 调用没有参数的刷新方法
-              triggerCreditRefresh();
+            triggerCreditRefresh();
             }, 300);
           }
           

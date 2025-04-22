@@ -611,7 +611,7 @@ async function processPaymentCallback(params: Record<string, any>) {
           
         if (!logQueryError && creditLogs && creditLogs.length > 0) {
           console.warn(`订单 ${orderNo} 已经增加过点数，确保更新订单标记`);
-          
+            
           // 确保更新订单标记
           await client
             .from('ai_images_creator_payments')
@@ -620,178 +620,178 @@ async function processPaymentCallback(params: Record<string, any>) {
               updated_at: new Date().toISOString()
             })
             .eq('order_no', orderNo);
-          
+            
           // 更新回调日志状态
           await updateCallbackStatus(orderNo, 'already_processed', '已有点数记录，已更新订单标记');
           
           return NextResponse.json({ message: "success" }, { status: 200 });
         }
-      }
-      
-      // 添加处理锁，防止并发处理
-      const { error: lockError } = await client
-        .from('ai_images_creator_payments')
-        .update({
-          status: 'processing',
-          updated_at: new Date().toISOString()
-        })
-        .eq('order_no', orderNo)
-        .eq('status', PaymentStatus.PENDING); // 只更新处于等待状态的订单
+        }
         
-      if (lockError) {
-        console.error("锁定订单失败，可能已被其他进程处理:", lockError);
+        // 添加处理锁，防止并发处理
+        const { error: lockError } = await client
+          .from('ai_images_creator_payments')
+          .update({
+            status: 'processing',
+            updated_at: new Date().toISOString()
+          })
+          .eq('order_no', orderNo)
+          .eq('status', PaymentStatus.PENDING); // 只更新处于等待状态的订单
+          
+        if (lockError) {
+          console.error("锁定订单失败，可能已被其他进程处理:", lockError);
+          
+          // 更新回调日志状态
+          await updateCallbackStatus(orderNo, 'error', `锁定订单失败: ${lockError.message}`);
+          
+          return NextResponse.json({ message: "success" }, { status: 200 }); // 仍返回成功，避免重复通知
+        }
         
-        // 更新回调日志状态
-        await updateCallbackStatus(orderNo, 'error', `锁定订单失败: ${lockError.message}`);
+        // 增加处理记录，确保幂等性
+        const { data: processLog, error: logError } = await client
+          .from('ai_images_creator_payment_logs')
+          .insert({
+            order_no: orderNo,
+            user_id: orderData.user_id,
+            process_type: 'webhook',
+            amount: orderData.amount,
+            credits: orderData.credits,
+            status: 'processing',
+            created_at: new Date().toISOString()
+          })
+          .select('id')
+          .single();
+          
+        if (logError) {
+          console.warn("创建支付处理日志失败，但继续处理:", logError);
+        }
         
-        return NextResponse.json({ message: "success" }, { status: 200 }); // 仍返回成功，避免重复通知
-      }
-      
-      // 增加处理记录，确保幂等性
-      const { data: processLog, error: logError } = await client
-        .from('ai_images_creator_payment_logs')
-        .insert({
-          order_no: orderNo,
-          user_id: orderData.user_id,
-          process_type: 'webhook',
-          amount: orderData.amount,
-          credits: orderData.credits,
-          status: 'processing',
-          created_at: new Date().toISOString()
-        })
-        .select('id')
-        .single();
+        // 更新订单状态为成功
+        const { error: updateError } = await client
+          .from('ai_images_creator_payments')
+          .update({
+            status: PaymentStatus.SUCCESS,
+            trade_no: tradeNo || params.trade_no || params.transaction_id || `callback_${Date.now()}`,
+            callback_data: params,
+            paid_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            process_id: processLog?.id || `auto_${Date.now()}`
+          })
+          .eq('order_no', orderNo)
+          .eq('status', 'processing');
+          
+        if (updateError) {
+          console.error("更新订单状态失败:", updateError);
+          
+          // 更新回调日志状态
+          await updateCallbackStatus(orderNo, 'error', `更新订单状态失败: ${updateError.message}`);
+          
+          return NextResponse.json({ message: "success" }, { status: 200 }); // 仍返回成功，避免重复查询
+        }
         
-      if (logError) {
-        console.warn("创建支付处理日志失败，但继续处理:", logError);
-      }
-      
-      // 更新订单状态为成功
-      const { error: updateError } = await client
-        .from('ai_images_creator_payments')
-        .update({
-          status: PaymentStatus.SUCCESS,
-          trade_no: tradeNo || params.trade_no || params.transaction_id || `callback_${Date.now()}`,
-          callback_data: params,
-          paid_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-          process_id: processLog?.id || `auto_${Date.now()}`
-        })
-        .eq('order_no', orderNo)
-        .eq('status', 'processing');
+        // 查询用户当前点数
+        const { data: creditData, error: creditQueryError } = await client
+          .from('ai_images_creator_credits')
+          .select('credits')
+          .eq('user_id', orderData.user_id)
+          .single();
+          
+        let currentCredits = 0;
+        let isNewCreditRecord = false;
         
-      if (updateError) {
-        console.error("更新订单状态失败:", updateError);
-        
-        // 更新回调日志状态
-        await updateCallbackStatus(orderNo, 'error', `更新订单状态失败: ${updateError.message}`);
-        
-        return NextResponse.json({ message: "success" }, { status: 200 }); // 仍返回成功，避免重复查询
-      }
-      
-      // 查询用户当前点数
-      const { data: creditData, error: creditQueryError } = await client
-        .from('ai_images_creator_credits')
-        .select('credits')
-        .eq('user_id', orderData.user_id)
-        .single();
-        
-      let currentCredits = 0;
-      let isNewCreditRecord = false;
-      
-      // 处理用户可能没有点数记录的情况
-      if (creditQueryError) {
-        if (creditQueryError.code === 'PGRST116') {
-          // 创建新的点数记录
-          isNewCreditRecord = true;
-          const { error: insertError } = await client
-            .from('ai_images_creator_credits')
-            .insert({
-              user_id: orderData.user_id,
-              credits: orderData.credits,
-              created_at: new Date().toISOString(),
-              updated_at: new Date().toISOString(),
-              last_order_no: orderNo
-            });
-            
-          if (insertError) {
-            console.error('创建用户点数记录失败:', insertError);
+        // 处理用户可能没有点数记录的情况
+        if (creditQueryError) {
+          if (creditQueryError.code === 'PGRST116') {
+            // 创建新的点数记录
+            isNewCreditRecord = true;
+            const { error: insertError } = await client
+              .from('ai_images_creator_credits')
+              .insert({
+                user_id: orderData.user_id,
+                credits: orderData.credits,
+                created_at: new Date().toISOString(),
+                updated_at: new Date().toISOString(),
+                last_order_no: orderNo
+              });
+              
+            if (insertError) {
+              console.error('创建用户点数记录失败:', insertError);
+              
+              // 更新回调日志状态
+              await updateCallbackStatus(orderNo, 'error', `创建用户点数记录失败: ${insertError.message}`);
+              
+              return NextResponse.json({ message: "success" }, { status: 200 }); // 仍返回成功，避免重复查询
+            }
+          } else {
+            console.error('查询用户点数失败:', creditQueryError);
             
             // 更新回调日志状态
-            await updateCallbackStatus(orderNo, 'error', `创建用户点数记录失败: ${insertError.message}`);
+            await updateCallbackStatus(orderNo, 'error', `查询用户点数失败: ${creditQueryError.message}`);
             
             return NextResponse.json({ message: "success" }, { status: 200 }); // 仍返回成功，避免重复查询
           }
         } else {
-          console.error('查询用户点数失败:', creditQueryError);
+          // 用户已有点数记录，更新点数
+          currentCredits = creditData.credits;
+          const newCredits = currentCredits + orderData.credits;
+          
+          const { error: updateCreditError } = await client
+            .from('ai_images_creator_credits')
+            .update({
+              credits: newCredits,
+              updated_at: new Date().toISOString(),
+              last_order_no: orderNo
+            })
+            .eq('user_id', orderData.user_id);
+            
+          if (updateCreditError) {
+            console.error('更新用户点数失败:', updateCreditError);
+            
+            // 更新回调日志状态
+            await updateCallbackStatus(orderNo, 'error', `更新用户点数失败: ${updateCreditError.message}`);
+            
+            return NextResponse.json({ message: "success" }, { status: 200 }); // 仍返回成功，避免重复查询
+          }
+        }
+        
+        // 记录点数变更日志
+        const { error: logInsertError } = await client
+          .from('ai_images_creator_credit_logs')
+          .insert({
+            user_id: orderData.user_id,
+            order_no: orderNo,
+            operation_type: 'recharge',
+            old_value: currentCredits,
+            change_value: orderData.credits,
+            new_value: currentCredits + orderData.credits,
+            created_at: new Date().toISOString(),
+            note: `充值${orderData.credits}点`
+          });
+          
+        if (logInsertError) {
+          console.error('创建点数变更日志失败:', logInsertError);
           
           // 更新回调日志状态
-          await updateCallbackStatus(orderNo, 'error', `查询用户点数失败: ${creditQueryError.message}`);
+          await updateCallbackStatus(orderNo, 'error', `创建点数变更日志失败: ${logInsertError.message}`);
           
           return NextResponse.json({ message: "success" }, { status: 200 }); // 仍返回成功，避免重复查询
         }
-      } else {
-        // 用户已有点数记录，更新点数
-        currentCredits = creditData.credits;
-        const newCredits = currentCredits + orderData.credits;
         
-        const { error: updateCreditError } = await client
-          .from('ai_images_creator_credits')
-          .update({
-            credits: newCredits,
-            updated_at: new Date().toISOString(),
-            last_order_no: orderNo
-          })
-          .eq('user_id', orderData.user_id);
-          
-        if (updateCreditError) {
-          console.error('更新用户点数失败:', updateCreditError);
-          
-          // 更新回调日志状态
-          await updateCallbackStatus(orderNo, 'error', `更新用户点数失败: ${updateCreditError.message}`);
-          
-          return NextResponse.json({ message: "success" }, { status: 200 }); // 仍返回成功，避免重复查询
+        // 更新处理日志状态
+        if (processLog?.id) {
+          await client
+            .from('ai_images_creator_payment_logs')
+            .update({
+              status: 'success',
+              updated_at: new Date().toISOString()
+            })
+            .eq('id', processLog.id);
         }
-      }
-      
-      // 记录点数变更日志
-      const { error: logInsertError } = await client
-        .from('ai_images_creator_credit_logs')
-        .insert({
-          user_id: orderData.user_id,
-          order_no: orderNo,
-          operation_type: 'recharge',
-          old_value: currentCredits,
-          change_value: orderData.credits,
-          new_value: currentCredits + orderData.credits,
-          created_at: new Date().toISOString(),
-          note: `充值${orderData.credits}点`
-        });
-        
-      if (logInsertError) {
-        console.error('创建点数变更日志失败:', logInsertError);
         
         // 更新回调日志状态
-        await updateCallbackStatus(orderNo, 'error', `创建点数变更日志失败: ${logInsertError.message}`);
+        await updateCallbackStatus(orderNo, 'success', isNewCreditRecord ? 
+          '新建用户点数记录并增加点数' : `更新用户点数: ${currentCredits} -> ${currentCredits + orderData.credits}`);
         
-        return NextResponse.json({ message: "success" }, { status: 200 }); // 仍返回成功，避免重复查询
-      }
-      
-      // 更新处理日志状态
-      if (processLog?.id) {
-        await client
-          .from('ai_images_creator_payment_logs')
-          .update({
-            status: 'success',
-            updated_at: new Date().toISOString()
-          })
-          .eq('id', processLog.id);
-      }
-      
-      // 更新回调日志状态
-      await updateCallbackStatus(orderNo, 'success', isNewCreditRecord ? 
-        '新建用户点数记录并增加点数' : `更新用户点数: ${currentCredits} -> ${currentCredits + orderData.credits}`);
-      
       // 更新订单标记为已更新点数 - 增强版
       try {
         // 立即标记订单为已处理点数，减少竞态条件机会
@@ -812,17 +812,17 @@ async function processPaymentCallback(params: Record<string, any>) {
       } catch (markError) {
         console.error(`标记订单状态异常: ${markError instanceof Error ? markError.message : String(markError)}`);
       }
-      
-      console.log("支付处理成功:", {
-        orderNo,
-        userId: orderData.user_id,
-        credits: orderData.credits,
+        
+        console.log("支付处理成功:", {
+          orderNo,
+          userId: orderData.user_id,
+          credits: orderData.credits,
         processId: processLog?.id || 'unknown',
         creditsUpdated: true,
         timestamp: new Date().toISOString()
-      });
-      
-      return NextResponse.json({ message: "success" }, { status: 200 });
+        });
+        
+        return NextResponse.json({ message: "success" }, { status: 200 });
     });
   } catch (error) {
     console.error("处理支付回调过程中出错:", error);
