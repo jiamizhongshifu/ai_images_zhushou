@@ -38,6 +38,20 @@ export async function middleware(request: NextRequest) {
     // 创建响应对象
     const res = NextResponse.next()
     const supabase = createMiddlewareClient({ req: request, res })
+
+    // 检查存储访问限制
+    const hasStorageLimitation = request.cookies.get('storage_limitation')?.value === 'true'
+    
+    // 如果有存储访问限制，使用cookie中的认证状态
+    if (hasStorageLimitation) {
+      const authValid = request.cookies.get('auth_valid')?.value === 'true'
+      if (!authValid && pathname.startsWith('/protected')) {
+        const redirectUrl = new URL('/sign-in', request.url)
+        redirectUrl.searchParams.set('redirect', pathname)
+        return NextResponse.redirect(redirectUrl)
+      }
+      return res
+    }
     
     // 获取会话状态
     const { data: { session } } = await supabase.auth.getSession()
@@ -63,6 +77,15 @@ export async function middleware(request: NextRequest) {
         })
       })
       
+      // 设置认证有效标记
+      response.cookies.set('auth_valid', 'true', {
+        path: '/',
+        maxAge: 3600,
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax'
+      })
+      
       return response
     }
     
@@ -74,11 +97,34 @@ export async function middleware(request: NextRequest) {
         redirectUrl.searchParams.set('redirect', pathname)
         return NextResponse.redirect(redirectUrl)
       }
+      
+      // 设置认证有效标记
+      res.cookies.set('auth_valid', 'true', {
+        path: '/',
+        maxAge: 3600,
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax'
+      })
     }
     
     return res
   } catch (error) {
     console.error('[Middleware Error]:', error)
+    
+    // 如果出现存储访问错误，设置标记
+    if (error instanceof Error && error.message.includes('storage')) {
+      const res = NextResponse.next()
+      res.cookies.set('storage_limitation', 'true', {
+        path: '/',
+        maxAge: 3600,
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax'
+      })
+      return res
+    }
+    
     return NextResponse.next()
   }
 }

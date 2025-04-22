@@ -17,15 +17,20 @@ export async function GET(request: NextRequest) {
     
     try {
       // 交换授权码获取会话
-      await supabase.auth.exchangeCodeForSession(code)
+      const { data: { session }, error } = await supabase.auth.exchangeCodeForSession(code)
+      
+      if (error) throw error
+      
+      // 创建响应对象
+      const response = NextResponse.redirect(new URL(redirect, request.url))
       
       // 清除所有登出状态的 cookie
-      const response = NextResponse.redirect(new URL(redirect, request.url))
       const cookiesToClear = [
         'force_logged_out',
         'isLoggedOut',
         'auth_logged_out',
-        'logged_out'
+        'logged_out',
+        'storage_limitation'  // 清除存储限制标记
       ]
       
       cookiesToClear.forEach(name => {
@@ -39,14 +44,39 @@ export async function GET(request: NextRequest) {
       // 设置认证成功标记
       response.cookies.set('auth_success', 'true', {
         path: '/',
-        maxAge: 30, // 30秒后过期
-        httpOnly: true
+        maxAge: 30,
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax'
+      })
+      
+      // 设置认证有效标记
+      response.cookies.set('auth_valid', 'true', {
+        path: '/',
+        maxAge: 3600,
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax'
       })
       
       return response
     } catch (error) {
       console.error('OAuth 回调错误:', error)
-      // 重定向到登录页面并显示错误
+      
+      // 如果是存储访问错误，设置标记
+      if (error instanceof Error && error.message.includes('storage')) {
+        const response = NextResponse.redirect(new URL(redirect, request.url))
+        response.cookies.set('storage_limitation', 'true', {
+          path: '/',
+          maxAge: 3600,
+          httpOnly: true,
+          secure: process.env.NODE_ENV === 'production',
+          sameSite: 'lax'
+        })
+        return response
+      }
+      
+      // 其他错误重定向到登录页面并显示错误
       return NextResponse.redirect(
         new URL('/sign-in?error=授权失败，请重试', request.url)
       )
