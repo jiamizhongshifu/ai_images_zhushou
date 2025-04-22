@@ -1,5 +1,6 @@
 import { createClient } from "@/utils/supabase/server";
 import { NextResponse } from "next/server";
+import { cookies } from "next/headers";
 
 // 获取站点URL
 const SITE_URL = 'https://www.imgtutu.ai';
@@ -34,6 +35,11 @@ export async function GET(request: Request) {
       throw error;
     }
 
+    if (!data.session) {
+      console.error('[Auth Callback] 没有获取到有效会话');
+      throw new Error('No valid session received');
+    }
+
     console.log('[Auth Callback] 成功获取会话');
 
     // 构建重定向URL - 添加更多参数确保客户端能识别登录状态
@@ -60,6 +66,23 @@ export async function GET(request: Request) {
       secure: process.env.NODE_ENV === 'production',
       maxAge: 60 * 60 * 24 * 7 // 7天
     });
+
+    // 设置会话相关cookie
+    response.cookies.set('sb-access-token', data.session.access_token, {
+      path: '/',
+      sameSite: 'lax',
+      secure: process.env.NODE_ENV === 'production',
+      maxAge: 60 * 60 * 24 * 7 // 7天
+    });
+
+    if (data.session.refresh_token) {
+      response.cookies.set('sb-refresh-token', data.session.refresh_token, {
+        path: '/',
+        sameSite: 'lax',
+        secure: process.env.NODE_ENV === 'production',
+        maxAge: 60 * 60 * 24 * 30 // 30天
+      });
+    }
 
     console.log('[Auth Callback] 重定向到:', finalRedirectUrl.toString());
     

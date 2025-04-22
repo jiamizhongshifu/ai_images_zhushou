@@ -103,10 +103,9 @@ export default function LoginForm({ message }: LoginFormProps) {
         options: {
           redirectTo: `${SITE_URL}/auth/callback`,
           queryParams: {
-            redirect_to: redirectParam || '/protected',
-            access_type: 'offline',
-            prompt: 'consent'
-          }
+            redirect_to: redirectParam || '/protected'
+          },
+          skipBrowserRedirect: false
         },
       });
       
