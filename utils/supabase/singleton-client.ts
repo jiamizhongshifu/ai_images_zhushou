@@ -11,6 +11,15 @@ class MemoryStorage implements Storage {
 
   setItem(key: string, value: string): void {
     this.data[key] = value
+    // 如果是会话相关的数据，同时设置cookie
+    if (key.includes('auth') || key.includes('session')) {
+      try {
+        document.cookie = `auth_valid=true; path=/; max-age=3600; SameSite=Lax`
+        document.cookie = `session_recovery=${encodeURIComponent(value)}; path=/; max-age=3600; SameSite=Lax`
+      } catch (e) {
+        console.warn('[Supabase Client] 设置cookie失败:', e)
+      }
+    }
   }
 
   removeItem(key: string): void {
@@ -36,15 +45,8 @@ function createStorage(): Storage {
     return new MemoryStorage()
   }
 
-  try {
-    // 测试 localStorage 是否可用
-    localStorage.setItem('test', 'test')
-    localStorage.removeItem('test')
-    return localStorage
-  } catch (e) {
-    console.log('[Supabase Client] 存储访问受限，使用内存存储')
-    return new MemoryStorage()
-  }
+  // 始终使用内存存储，避免存储访问问题
+  return new MemoryStorage()
 }
 
 let client: SupabaseClient<Database> | null = null
@@ -85,6 +87,24 @@ export function getSupabaseClient(): SupabaseClient<Database> {
   // 添加认证状态变化监听
   client.auth.onAuthStateChange((event: AuthChangeEvent, session: Session | null) => {
     console.log('[Supabase Client] Auth State Change:', event, session?.user?.id)
+    
+    // 如果是登录状态，设置cookie
+    if (session) {
+      try {
+        const sessionData = {
+          access_token: session.access_token,
+          refresh_token: session.refresh_token,
+          user: {
+            id: session.user.id,
+            email: session.user.email
+          }
+        }
+        document.cookie = `auth_valid=true; path=/; max-age=3600; SameSite=Lax`
+        document.cookie = `session_recovery=${encodeURIComponent(JSON.stringify(sessionData))}; path=/; max-age=3600; SameSite=Lax`
+      } catch (e) {
+        console.warn('[Supabase Client] 设置认证cookie失败:', e)
+      }
+    }
   })
 
   return client
