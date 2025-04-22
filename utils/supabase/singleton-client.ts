@@ -1,5 +1,5 @@
-import { createClient } from '@supabase/supabase-js'
-import { type Database } from '@/types/supabase'
+import { createClient, SupabaseClient, Session, AuthChangeEvent } from '@supabase/supabase-js'
+import type { Database } from '@/types/supabase'
 
 // 创建内存存储
 class MemoryStorage implements Storage {
@@ -47,10 +47,10 @@ function createStorage(): Storage {
   }
 }
 
-let client: ReturnType<typeof createClient<Database>> | null = null
+let client: SupabaseClient<Database> | null = null
 let storage: Storage | null = null
 
-export function getSupabaseClient() {
+export function getSupabaseClient(): SupabaseClient<Database> {
   if (client) return client
 
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
@@ -80,6 +80,11 @@ export function getSupabaseClient() {
         'x-client-info': 'supabase-js-singleton'
       }
     }
+  })
+
+  // 添加认证状态变化监听
+  client.auth.onAuthStateChange((event: AuthChangeEvent, session: Session | null) => {
+    console.log('[Supabase Client] Auth State Change:', event, session?.user?.id)
   })
 
   return client
