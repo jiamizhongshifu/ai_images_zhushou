@@ -11,108 +11,92 @@ import { NextRequest, NextResponse } from 'next/server';
  */
 export async function GET(request: NextRequest) {
   try {
-    // 获取服务器端supabase客户端
-    const supabase = await createClient();
+    const cookieStore = await cookies();
+    const authValid = cookieStore.get('auth_valid');
+    const sessionRecovery = cookieStore.get('session_recovery');
     
-    // 获取当前会话
-    const { data: { session }, error } = await supabase.auth.getSession();
-    
-    if (error) {
-      console.error('[Auth Status API] 获取会话出错:', error);
-      
-      // 返回未认证状态
-      return NextResponse.json(
-        { 
-          authenticated: false, 
-          error: error.message,
-          timestamp: Date.now()
-        }, 
-        { status: 401 }
-      );
-    }
-    
-    // 检查会话是否存在
-    if (!session) {
-      console.log('[Auth Status API] 无有效会话');
-      
-      // 检查cookie是否有auth_valid标记
-      const cookieStore = await cookies();
-      const authValid = cookieStore.get('auth_valid');
-      
-      // 如果有auth_valid cookie但没有会话，可能是会话正在建立过程中
-      if (authValid?.value === 'true') {
-        const authTime = cookieStore.get('auth_time');
-        const timeStr = authTime?.value || '0';
-        const authTimeValue = parseInt(timeStr);
-        const now = Date.now();
-        const timeDiff = now - authTimeValue;
-        
-        // 如果cookie是在5分钟内设置的，可能是会话还在建立
-        if (timeDiff < 5 * 60 * 1000) {
-          console.log('[Auth Status API] 发现最近设置的认证cookie，可能正在等待会话建立');
-          return NextResponse.json(
-            { 
-              authenticated: 'pending', 
-              auth_time: authTimeValue,
-              timestamp: now
-            }, 
-            { status: 202 }
-          );
-        }
-      }
-      
-      // 返回未认证状态
-      return NextResponse.json(
-        { 
-          authenticated: false,
-          timestamp: Date.now()
-        }, 
-        { status: 401 }
-      );
-    }
-    
-    // 有效会话，设置auth_valid cookie
-    const response = NextResponse.json(
-      { 
-        authenticated: true,
-        user: {
-          id: session.user.id,
-          email: session.user.email,
-        },
+    // 如果没有认证标记，直接返回未认证状态
+    if (!authValid) {
+      return NextResponse.json({ 
+        authenticated: false,
+        message: '未找到认证标记',
         timestamp: Date.now()
-      }, 
-      { status: 200 }
-    );
-    
-    // 设置cookie以便客户端可以检测认证状态
+      }, { status: 401 });
+    }
+
+    const supabase = await createClient();
+    const { data: { session }, error } = await supabase.auth.getSession();
+
+    // 如果有错误但存在会话恢复数据，尝试恢复会话
+    if ((error || !session) && sessionRecovery) {
+      try {
+        const recoveryData = JSON.parse(sessionRecovery.value);
+        const { data: { session: recoveredSession }, error: refreshError } = 
+          await supabase.auth.refreshSession({
+            refresh_token: recoveryData.refresh_token
+          });
+
+        if (refreshError) throw refreshError;
+        
+        if (recoveredSession) {
+          return NextResponse.json({
+            authenticated: true,
+            user: {
+              id: recoveredSession.user.id,
+              email: recoveredSession.user.email
+            },
+            recovered: true,
+            timestamp: Date.now()
+          });
+        }
+      } catch (recoveryError) {
+        console.error('[Auth Status] 会话恢复失败:', recoveryError);
+      }
+    }
+
+    // 如果没有会话且恢复失败，返回未认证状态
+    if (!session) {
+      return NextResponse.json({
+        authenticated: false,
+        message: '无有效会话',
+        timestamp: Date.now()
+      }, { status: 401 });
+    }
+
+    // 返回认证成功状态
+    const response = NextResponse.json({
+      authenticated: true,
+      user: {
+        id: session.user.id,
+        email: session.user.email
+      },
+      timestamp: Date.now()
+    });
+
+    // 更新认证cookie
     response.cookies.set('auth_valid', 'true', {
       path: '/',
-      maxAge: 60 * 60 * 24 * 7, // 7天
-      httpOnly: false, // 允许客户端JavaScript访问
-      sameSite: 'lax',
+      maxAge: 3600,
+      httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax'
     });
-    
+
     response.cookies.set('auth_time', Date.now().toString(), {
       path: '/',
-      maxAge: 60 * 60 * 24 * 7, // 7天
-      httpOnly: false, // 允许客户端JavaScript访问
-      sameSite: 'lax',
+      maxAge: 3600,
+      httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax'
     });
-    
+
     return response;
   } catch (error) {
-    console.error('[Auth Status API] 验证会话时出错:', error);
-    
-    // 返回服务器错误
-    return NextResponse.json(
-      { 
-        authenticated: false, 
-        error: error instanceof Error ? error.message : '未知错误',
-        timestamp: Date.now()
-      }, 
-      { status: 500 }
-    );
+    console.error('[Auth Status] 验证会话时出错:', error);
+    return NextResponse.json({
+      authenticated: false,
+      error: error instanceof Error ? error.message : '未知错误',
+      timestamp: Date.now()
+    }, { status: 500 });
   }
 } 

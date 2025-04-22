@@ -7,33 +7,59 @@ import type { NextRequest } from 'next/server'
 const SITE_URL = 'https://www.imgtutu.ai';
 
 export async function GET(request: NextRequest) {
-  const requestUrl = new URL(request.url)
-  const code = requestUrl.searchParams.get('code')
-  const redirect = requestUrl.searchParams.get('redirect') || '/protected'
-  const authTime = requestUrl.searchParams.get('auth_time') || Date.now().toString()
+  try {
+    const requestUrl = new URL(request.url)
+    const code = requestUrl.searchParams.get('code')
+    const redirect = requestUrl.searchParams.get('redirect') || '/protected'
+    const authTime = requestUrl.searchParams.get('auth_time') || Date.now().toString()
 
-  if (code) {
+    if (!code) {
+      console.error('[OAuth Callback] 未找到授权码')
+      return NextResponse.redirect(new URL('/sign-in?error=未找到授权码', request.url))
+    }
+
     const cookieStore = cookies()
     const supabase = createRouteHandlerClient({ cookies: () => cookieStore })
     
     try {
-      // 交换授权码获取会话
       const { data: { session }, error } = await supabase.auth.exchangeCodeForSession(code)
       
       if (error) throw error
       
+      if (!session) {
+        throw new Error('获取会话失败')
+      }
+
       // 创建响应对象
       const response = NextResponse.redirect(new URL(`${redirect}?auth_time=${authTime}`, request.url))
       
-      // 清除所有登出状态的 cookie
-      const cookiesToClear = [
-        'force_logged_out',
-        'isLoggedOut',
-        'auth_logged_out',
-        'logged_out',
-        'storage_limitation'  // 清除存储限制标记
-      ]
+      // 设置认证相关cookie
+      const cookieOptions = {
+        path: '/',
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax' as const,
+        httpOnly: true,
+        maxAge: 3600 // 1小时
+      }
+
+      // 设置会话恢复数据
+      const sessionRecoveryData = {
+        access_token: session.access_token,
+        refresh_token: session.refresh_token,
+        expires_at: session.expires_at,
+        auth_time: authTime,
+        user: {
+          id: session.user.id,
+          email: session.user.email
+        }
+      }
+
+      response.cookies.set('session_recovery', JSON.stringify(sessionRecoveryData), cookieOptions)
+      response.cookies.set('auth_valid', 'true', cookieOptions)
+      response.cookies.set('auth_time', authTime, cookieOptions)
       
+      // 清除登出状态相关cookie
+      const cookiesToClear = ['force_logged_out', 'isLoggedOut', 'logged_out', 'storage_limitation']
       cookiesToClear.forEach(name => {
         response.cookies.set(name, '', {
           path: '/',
@@ -42,47 +68,15 @@ export async function GET(request: NextRequest) {
         })
       })
       
-      // 设置认证成功标记
-      response.cookies.set('auth_success', 'true', {
-        path: '/',
-        maxAge: 30,
-        httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: 'lax'
-      })
-      
-      // 设置认证有效标记
-      response.cookies.set('auth_valid', 'true', {
-        path: '/',
-        maxAge: 3600,
-        httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: 'lax'
-      })
-
-      // 设置会话恢复标记
-      if (session) {
-        response.cookies.set('session_recovery', JSON.stringify({
-          access_token: session.access_token,
-          refresh_token: session.refresh_token,
-          expires_at: session.expires_at,
-          auth_time: authTime
-        }), {
-          path: '/',
-          maxAge: 3600,
-          httpOnly: true,
-          secure: process.env.NODE_ENV === 'production',
-          sameSite: 'lax'
-        })
-      }
-      
       return response
     } catch (error) {
-      console.error('OAuth 回调错误:', error)
+      console.error('[OAuth Callback] 处理授权码时出错:', error)
       
-      // 如果是存储访问错误，设置标记并继续
+      // 如果是存储访问错误，尝试使用备用方案
       if (error instanceof Error && error.message.includes('storage')) {
         const response = NextResponse.redirect(new URL(`${redirect}?auth_time=${authTime}&storage_error=true`, request.url))
+        
+        // 设置存储限制标记
         response.cookies.set('storage_limitation', 'true', {
           path: '/',
           maxAge: 3600,
@@ -91,37 +85,13 @@ export async function GET(request: NextRequest) {
           sameSite: 'lax'
         })
         
-        // 尝试从错误中提取会话信息
-        try {
-          const sessionData = (error as any).session || null
-          if (sessionData) {
-            response.cookies.set('session_recovery', JSON.stringify({
-              access_token: sessionData.access_token,
-              refresh_token: sessionData.refresh_token,
-              expires_at: sessionData.expires_at,
-              auth_time: authTime
-            }), {
-              path: '/',
-              maxAge: 3600,
-              httpOnly: true,
-              secure: process.env.NODE_ENV === 'production',
-              sameSite: 'lax'
-            })
-          }
-        } catch (e) {
-          console.warn('无法保存会话恢复数据:', e)
-        }
-        
         return response
       }
       
-      // 其他错误重定向到登录页面并显示错误
-      return NextResponse.redirect(
-        new URL('/sign-in?error=授权失败，请重试', request.url)
-      )
+      return NextResponse.redirect(new URL('/sign-in?error=授权失败，请重试', request.url))
     }
+  } catch (error) {
+    console.error('[OAuth Callback] 处理请求时出错:', error)
+    return NextResponse.redirect(new URL('/sign-in?error=系统错误，请稍后重试', request.url))
   }
-
-  // 没有授权码,重定向到登录页
-  return NextResponse.redirect(new URL('/sign-in', request.url))
 }

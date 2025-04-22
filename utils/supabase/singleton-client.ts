@@ -42,19 +42,13 @@ function createStorage(): Storage {
     localStorage.removeItem('test')
     return localStorage
   } catch (e) {
-    try {
-      // 测试 sessionStorage 是否可用
-      sessionStorage.setItem('test', 'test')
-      sessionStorage.removeItem('test')
-      return sessionStorage
-    } catch (e) {
-      console.log('[Supabase Client] 所有持久化存储都不可用，使用内存存储')
-      return new MemoryStorage()
-    }
+    console.log('[Supabase Client] 存储访问受限，使用内存存储')
+    return new MemoryStorage()
   }
 }
 
 let client: ReturnType<typeof createClient<Database>> | null = null
+let storage: Storage | null = null
 
 export function getSupabaseClient() {
   if (client) return client
@@ -66,8 +60,10 @@ export function getSupabaseClient() {
     throw new Error('Missing Supabase environment variables')
   }
 
-  // 获取可用的存储
-  const storage = createStorage()
+  // 确保只创建一次存储实例
+  if (!storage) {
+    storage = createStorage()
+  }
 
   client = createClient<Database>(supabaseUrl, supabaseAnonKey, {
     auth: {
@@ -78,6 +74,11 @@ export function getSupabaseClient() {
       flowType: 'pkce',
       autoRefreshToken: true,
       debug: process.env.NODE_ENV === 'development'
+    },
+    global: {
+      headers: {
+        'x-client-info': 'supabase-js-singleton'
+      }
     }
   })
 
@@ -87,4 +88,5 @@ export function getSupabaseClient() {
 // 重置客户端实例
 export function resetSupabaseClient() {
   client = null
+  storage = null
 } 
