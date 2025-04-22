@@ -1,86 +1,99 @@
+import { getSupabase } from '@/lib/supabaseClient';
 import { NextRequest, NextResponse } from 'next/server';
-import { supabase } from '@/lib/supabaseClient';
 
-export async function GET(request: NextRequest) {
-  // 获取当前 URL
+export async function GET(request: NextRequest): Promise<NextResponse> {
   const requestUrl = new URL(request.url);
   const code = requestUrl.searchParams.get('code');
   const state = requestUrl.searchParams.get('state');
+  const error = requestUrl.searchParams.get('error');
+  const errorDescription = requestUrl.searchParams.get('error_description');
   
-  console.log('[AuthCallback] 处理 OAuth 回调，参数:', { code: !!code, state: !!state });
+  console.log(`[AuthCallback] 处理 OAuth 回调，参数: { code: ${Boolean(code)}, state: ${Boolean(state)}, error: ${Boolean(error)} }`);
+  
+  // 检查是否有错误参数
+  if (error) {
+    console.error(`[AuthCallback] OAuth 错误: ${error}, 描述: ${errorDescription}`);
+    return createErrorResponse('/sign-in', requestUrl.origin, `授权错误: ${errorDescription || error}`);
+  }
+  
+  // 检查是否有 code 参数
+  if (!code) {
+    console.error('[AuthCallback] 缺少 code 参数，无法处理登录');
+    return createErrorResponse('/sign-in', requestUrl.origin, '登录过程中断，请重试');
+  }
   
   try {
-    // 尝试在 URL 中检测 OAuth 相关参数
-    if (code && state) {
-      console.log('[AuthCallback] 检测到 OAuth 回调参数，处理中...');
-      
-      // 等待一段时间让 Supabase 客户端处理 OAuth
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
-      // 检查会话状态
-      const { data, error } = await supabase.auth.getSession();
-      
-      if (error) {
-        console.error('[AuthCallback] 获取会话失败:', error);
-        return createErrorResponse('/sign-in', requestUrl.origin);
-      }
-      
-      if (data.session) {
-        console.log('[AuthCallback] 成功获取会话，用户:', data.session.user.email);
-        return createSuccessResponse('/', requestUrl.origin);
-      }
-      
-      // 尝试交换 code 获取会话
-      const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
-      
-      if (exchangeError) {
-        console.error('[AuthCallback] 交换 code 失败:', exchangeError);
-        return createErrorResponse('/sign-in', requestUrl.origin);
-      }
-      
-      // 再次检查会话
-      const { data: refreshedData } = await supabase.auth.getSession();
-      
-      if (refreshedData.session) {
-        console.log('[AuthCallback] 交换 code 后成功获取会话');
-        return createSuccessResponse('/', requestUrl.origin);
-      }
+    // 获取 Supabase 客户端
+    console.log('[AuthCallback] 获取 Supabase 客户端');
+    const supabase = getSupabase();
+    
+    // 尝试交换 code 获取会话
+    console.log('[AuthCallback] 开始交换 code 获取会话');
+    const { data, error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
+    
+    // 处理交换错误
+    if (exchangeError) {
+      console.error('[AuthCallback] 交换会话失败:', exchangeError.message);
+      return createErrorResponse('/sign-in', requestUrl.origin, `登录失败: ${exchangeError.message}`);
     }
     
-    // 处理其他情况
-    console.warn('[AuthCallback] 未检测到有效的 OAuth 参数或会话');
-    return createErrorResponse('/sign-in', requestUrl.origin);
-  } catch (err) {
-    console.error('[AuthCallback] 处理 OAuth 回调时出错:', err);
-    return createErrorResponse('/sign-in', requestUrl.origin);
+    // 确认数据存在
+    if (!data || !data.session) {
+      console.error('[AuthCallback] 交换成功但没有返回会话数据');
+      return createErrorResponse('/sign-in', requestUrl.origin, '会话创建失败，请重试');
+    }
+    
+    // 再次检查会话状态
+    console.log('[AuthCallback] 交换成功，检查会话状态');
+    const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+    
+    // 处理会话检查错误
+    if (sessionError) {
+      console.error('[AuthCallback] 检查会话状态失败:', sessionError.message);
+      return createErrorResponse('/sign-in', requestUrl.origin, '无法验证会话状态');
+    }
+    
+    // 验证会话有效性
+    if (!sessionData?.session) {
+      console.error('[AuthCallback] 获取到的会话无效');
+      
+      // 等待一段时间后再次检查，防止会话数据延迟可用
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      const { data: retryData } = await supabase.auth.getSession();
+      
+      if (!retryData?.session) {
+        console.error('[AuthCallback] 重试后会话仍然无效');
+        return createErrorResponse('/sign-in', requestUrl.origin, '会话验证失败，请重试');
+      }
+      
+      console.log('[AuthCallback] 重试后获取到有效会话');
+    }
+    
+    // 成功登录，重定向到受保护页面
+    console.log('[AuthCallback] 会话验证通过，重定向到受保护页面');
+    const redirectUrl = new URL('/protected', requestUrl.origin);
+    redirectUrl.searchParams.set('login_success', 'true');
+    redirectUrl.searchParams.set('auth_session', Date.now().toString());
+    
+    return NextResponse.redirect(redirectUrl);
+    
+  } catch (error) {
+    // 捕获并记录所有未处理的错误
+    console.error('[AuthCallback] 处理过程中发生未预期的错误:', error);
+    const errorMessage = error instanceof Error ? error.message : '未知错误';
+    return createErrorResponse('/sign-in', requestUrl.origin, `登录处理失败: ${errorMessage}`);
   }
 }
 
-// 创建成功响应
-function createSuccessResponse(redirectPath: string, origin: string) {
-  const response = NextResponse.redirect(new URL(redirectPath, origin));
-  
-  // 清除所有登出标记
-  const cookiesToClear = ['force_logged_out', 'isLoggedOut', 'auth_logged_out', 'logged_out'];
-  cookiesToClear.forEach(name => {
-    response.cookies.delete(name);
-  });
-  
-  // 设置认证 cookie
-  response.cookies.set('user_authenticated', 'true', { 
-    path: '/',
-    maxAge: 60 * 60 * 24, // 24 小时
-    sameSite: 'lax',
-    secure: true,
-    httpOnly: false // 允许 JavaScript 访问
-  });
-  
-  return response;
-}
-
 // 创建错误响应
-function createErrorResponse(redirectPath: string, origin: string) {
-  const redirectUrl = new URL(redirectPath, origin);
-  redirectUrl.searchParams.set('error', 'auth_error');
+function createErrorResponse(path: string, origin: string, errorMessage: string = '授权错误'): NextResponse {
+  const redirectUrl = new URL(path, origin);
+  redirectUrl.searchParams.set('error', encodeURIComponent(errorMessage));
+  // 添加 skip_middleware 参数避免中间件重定向循环
+  redirectUrl.searchParams.set('skip_middleware', 'true');
+  // 添加时间戳防止浏览器缓存
+  redirectUrl.searchParams.set('ts', Date.now().toString());
+  
+  console.log(`[AuthCallback] 重定向到错误页面: ${redirectUrl.toString()}`);
   return NextResponse.redirect(redirectUrl);
 }

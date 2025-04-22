@@ -19,7 +19,7 @@ export function middleware(request: NextRequest) {
     return NextResponse.next();
   }
   
-  // 如果是 OAuth 回调路径，直接返回
+  // 改进 OAuth 回调检测逻辑
   if (pathname.startsWith('/auth/callback') || hasAuthParam) {
     console.log('[中间件] 检测到 OAuth 相关参数，跳过中间件处理');
     
@@ -35,8 +35,10 @@ export function middleware(request: NextRequest) {
     return response;
   }
   
-  // 解析认证状态
-  const isAuthenticated = cookies.has('user_authenticated') || cookies.has('sb-access-token');
+  // 解析认证状态 - 检查多种认证标记
+  const isAuthenticated = cookies.has('user_authenticated') || 
+                          cookies.has('sb-access-token') || 
+                          cookies.has('sb-refresh-token');
   
   // 如果用户已登录且访问认证页面，重定向到保护页
   if (isAuthenticated && authPaths.some(p => pathname.startsWith(p))) {

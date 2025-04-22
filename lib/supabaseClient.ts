@@ -10,6 +10,8 @@ import type { Database } from '@/types/supabase'
 
 // 全局 Supabase 单例
 let supabaseInstance: SupabaseClient<Database> | null = null;
+let initializeInProgress: boolean = false;
+let initializePromise: Promise<SupabaseClient<Database>> | null = null;
 
 // 确保环境变量存在
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
@@ -89,66 +91,108 @@ const customStorageAdapter = {
  * 使用单例模式确保整个应用只有一个实例
  */
 export function getSupabase(): SupabaseClient<Database> {
+  // 如果实例已存在，直接返回
   if (supabaseInstance) {
-    return supabaseInstance
+    return supabaseInstance;
+  }
+
+  // 如果已经在初始化中，返回一个Promise
+  if (initializeInProgress && initializePromise) {
+    return initializePromise as unknown as SupabaseClient<Database>;
   }
 
   console.log('[SupabaseClient] 创建新的 Supabase 客户端实例');
+  
+  // 标记初始化开始
+  initializeInProgress = true;
   
   // 获取 OAuth 回调 URL
   const redirectUrl = `${getSiteUrl()}/auth/callback`;
   console.log('[SupabaseClient] OAuth 回调 URL:', redirectUrl);
   
-  // 创建 Supabase 选项并手动添加 redirectTo
-  const authOptions: any = {
-    persistSession: true,
-    storageKey: 'sb-auth-token',
-    autoRefreshToken: true,
-    detectSessionInUrl: true,
-    flowType: 'pkce',
-    storage: customStorageAdapter
-  };
-  
-  // 手动添加重定向 URL (绕过 TypeScript 类型检查)
-  authOptions.redirectTo = redirectUrl;
-  
-  // 创建新的客户端实例
-  supabaseInstance = createClient<Database>(
-    supabaseUrl, 
-    supabaseAnonKey, 
-    {
-      auth: authOptions,
+  try {
+    // 创建 Supabase 选项
+    const supabaseOptions = {
+      auth: {
+        persistSession: true,
+        storageKey: 'sb-auth-token',
+        autoRefreshToken: true,
+        detectSessionInUrl: true,
+        flowType: 'pkce' as const,
+        storage: customStorageAdapter,
+        redirectTo: redirectUrl,
+      },
       global: {
         headers: {
           'x-client-info': 'supabase-js-v2'
         }
       }
+    };
+    
+    // 创建新的客户端实例
+    supabaseInstance = createClient<Database>(
+      supabaseUrl, 
+      supabaseAnonKey, 
+      supabaseOptions
+    );
+
+    // 添加日志监控会话状态变化
+    if (typeof window !== 'undefined' && supabaseInstance) {
+      supabaseInstance.auth.onAuthStateChange((event, session) => {
+        console.log('[SupabaseClient] 会话状态变化:', event);
+        
+        if (event === 'SIGNED_IN' && session) {
+          // 设置持久化标记
+          safeLocalStorage('set', 'user_authenticated', 'true');
+          safeCookie('set', 'user_authenticated', 'true');
+          
+          // 清除登出标记
+          safeLocalStorage('remove', 'force_logged_out');
+          safeLocalStorage('remove', 'logged_out');
+          
+          if (typeof sessionStorage !== 'undefined') {
+            sessionStorage.removeItem('isLoggedOut');
+          }
+        } else if (event === 'SIGNED_OUT') {
+          // 清除持久化标记
+          safeLocalStorage('remove', 'user_authenticated');
+          safeCookie('remove', 'user_authenticated');
+          
+          // 设置登出标记
+          safeLocalStorage('set', 'force_logged_out', 'true');
+          
+          if (typeof sessionStorage !== 'undefined') {
+            sessionStorage.setItem('isLoggedOut', 'true');
+          }
+        }
+      });
     }
-  );
 
-  // 添加日志监控会话状态变化
-  if (typeof window !== 'undefined' && supabaseInstance) {
-    supabaseInstance.auth.onAuthStateChange((event, session) => {
-      console.log('[SupabaseClient] 会话状态变化:', event);
-      
-      if (event === 'SIGNED_IN' && session) {
-        // 设置持久化标记
-        safeLocalStorage('set', 'user_authenticated', 'true');
-        safeCookie('set', 'user_authenticated', 'true');
-      } else if (event === 'SIGNED_OUT') {
-        // 清除持久化标记
-        safeLocalStorage('remove', 'user_authenticated');
-        safeCookie('remove', 'user_authenticated');
-      }
-    });
+    // 标记初始化完成
+    initializeInProgress = false;
+    initializePromise = null;
+    
+    if (!supabaseInstance) {
+      throw new Error('Supabase 客户端创建失败');
+    }
+    
+    return supabaseInstance;
+  } catch (error) {
+    // 标记初始化失败
+    initializeInProgress = false;
+    initializePromise = null;
+    
+    console.error('[SupabaseClient] 创建Supabase客户端失败:', error);
+    
+    // 在出错时也要创建一个实例，避免应用完全崩溃
+    if (!supabaseInstance) {
+      console.log('[SupabaseClient] 尝试以基本设置创建备用客户端');
+      supabaseInstance = createClient<Database>(supabaseUrl, supabaseAnonKey);
+    }
+    
+    return supabaseInstance;
   }
-
-  if (!supabaseInstance) {
-    throw new Error('Supabase 客户端创建失败');
-  }
-
-  return supabaseInstance;
 }
 
 // 导出单例实例
-export const supabase = getSupabase() 
+export const supabase = getSupabase(); 

@@ -16,11 +16,14 @@ export default function OAuthHandler() {
     const hasOAuthCode = searchParams?.get('code');
     const hasOAuthState = searchParams?.get('state');
     
-    if (hasOAuthCode && hasOAuthState) {
-      console.log('[OAuthHandler] 检测到 OAuth 参数，处理中...');
+    if (hasOAuthCode) {
+      console.log('[OAuthHandler] 检测到 OAuth code 参数，处理中...');
       
-      // 使用我们的回调路由处理认证流程
-      const callbackUrl = `/auth/callback?code=${hasOAuthCode}&state=${hasOAuthState}`;
+      // 构建回调URL，包含所有可用参数
+      let callbackUrl = `/auth/callback?code=${hasOAuthCode}`;
+      if (hasOAuthState) {
+        callbackUrl += `&state=${hasOAuthState}`;
+      }
       
       // 重定向到我们的回调处理路由
       router.push(callbackUrl);
