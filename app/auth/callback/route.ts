@@ -1,6 +1,5 @@
 import { getSupabase } from '@/lib/supabaseClient';
 import { NextRequest, NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
 
 // 为客户端代码添加客户端检查脚本
 const clientScript = `
@@ -148,8 +147,14 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   
   try {
     // 获取可能存在的 code_verifier（从请求的 cookie 中）
-    const cookieStore = cookies();
-    const pkceCodeVerifier = cookieStore.get('supabase.auth.code_verifier')?.value;
+    let pkceCodeVerifier: string | undefined = undefined;
+    try {
+      // 直接从请求的 cookie 中获取
+      const codeCookie = request.cookies.get('supabase.auth.code_verifier');
+      pkceCodeVerifier = codeCookie?.value;
+    } catch (cookieError) {
+      console.error('[AuthCallback] 获取 cookie 出错:', cookieError);
+    }
     
     // 使用传入的 code_verifier 或从 cookie 获取的
     const finalCodeVerifier = codeVerifier || pkceCodeVerifier;
