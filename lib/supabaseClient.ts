@@ -28,6 +28,62 @@ function getSiteUrl() {
   return process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000';
 }
 
+// 安全地访问 localStorage，带有错误处理
+function safeLocalStorage(operation: 'get' | 'set' | 'remove', key: string, value?: string): string | null {
+  try {
+    if (typeof window === 'undefined') return null;
+    
+    if (operation === 'get') {
+      return localStorage.getItem(key);
+    } else if (operation === 'set' && value !== undefined) {
+      localStorage.setItem(key, value);
+      return value;
+    } else if (operation === 'remove') {
+      localStorage.removeItem(key);
+    }
+    return null;
+  } catch (error) {
+    console.warn(`[SupabaseClient] localStorage 操作 ${operation} 失败:`, error);
+    return null;
+  }
+}
+
+// 安全地访问 cookie，带有错误处理
+function safeCookie(operation: 'get' | 'set' | 'remove', key: string, value?: string): string | null {
+  try {
+    if (typeof document === 'undefined') return null;
+    
+    if (operation === 'get') {
+      const match = document.cookie.match(new RegExp(`(^| )${key}=([^;]+)`));
+      return match ? match[2] : null;
+    } else if (operation === 'set' && value !== undefined) {
+      document.cookie = `${key}=${value}; path=/; max-age=86400; SameSite=Lax`;
+      return value;
+    } else if (operation === 'remove') {
+      document.cookie = `${key}=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT`;
+    }
+    return null;
+  } catch (error) {
+    console.warn(`[SupabaseClient] cookie 操作 ${operation} 失败:`, error);
+    return null;
+  }
+}
+
+// 自定义存储适配器
+const customStorageAdapter = {
+  getItem: (key: string) => {
+    return safeLocalStorage('get', key) || safeCookie('get', key);
+  },
+  setItem: (key: string, value: string) => {
+    safeLocalStorage('set', key, value);
+    safeCookie('set', key, value);
+  },
+  removeItem: (key: string) => {
+    safeLocalStorage('remove', key);
+    safeCookie('remove', key);
+  }
+};
+
 /**
  * 创建并获取 Supabase 客户端实例
  * 使用单例模式确保整个应用只有一个实例
@@ -50,6 +106,7 @@ export function getSupabase(): SupabaseClient<Database> {
     autoRefreshToken: true,
     detectSessionInUrl: true,
     flowType: 'pkce',
+    storage: customStorageAdapter
   };
   
   // 手动添加重定向 URL (绕过 TypeScript 类型检查)
@@ -76,12 +133,12 @@ export function getSupabase(): SupabaseClient<Database> {
       
       if (event === 'SIGNED_IN' && session) {
         // 设置持久化标记
-        localStorage.setItem('user_authenticated', 'true');
-        document.cookie = `user_authenticated=true; path=/; max-age=86400; SameSite=Lax`;
+        safeLocalStorage('set', 'user_authenticated', 'true');
+        safeCookie('set', 'user_authenticated', 'true');
       } else if (event === 'SIGNED_OUT') {
         // 清除持久化标记
-        localStorage.removeItem('user_authenticated');
-        document.cookie = `user_authenticated=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT`;
+        safeLocalStorage('remove', 'user_authenticated');
+        safeCookie('remove', 'user_authenticated');
       }
     });
   }
