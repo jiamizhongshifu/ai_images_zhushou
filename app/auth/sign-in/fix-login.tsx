@@ -22,8 +22,6 @@ export default function FixLogin({
   const [userChecked, setUserChecked] = useState(false);
   const [fixingLogin, setFixingLogin] = useState(false);
   const [needsFix, setNeedsFix] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const error = searchParams?.get('error');
   
   // 清除所有登出标记
   const clearLogoutFlags = () => {
@@ -33,7 +31,6 @@ export default function FixLogin({
         
         // 清除localStorage和sessionStorage中的登出标记
         localStorage.removeItem('force_logged_out');
-        localStorage.removeItem('logged_out');
         sessionStorage.removeItem('isLoggedOut');
         
         // 清除cookie中的登出标记
@@ -149,63 +146,6 @@ export default function FixLogin({
     }
   };
   
-  const handleGoogleLogin = async () => {
-    setLoading(true);
-    try {
-      // 获取客户端
-      const supabase = createClient();
-      
-      // 清理所有缓存的 PKCE 状态
-      if (typeof localStorage !== 'undefined') {
-        localStorage.removeItem('supabase.auth.code_verifier');
-        localStorage.removeItem('sb_temp_code_verifier');
-      }
-      if (typeof sessionStorage !== 'undefined') {
-        sessionStorage.removeItem('supabase.auth.code_verifier');
-        sessionStorage.removeItem('sb_temp_code_verifier');
-      }
-      
-      // 使用 PKCE 流程登录
-      const { data, error } = await supabase.auth.signInWithOAuth({
-        provider: 'google',
-        options: {
-          redirectTo: `${window.location.origin}/auth/callback`,
-          queryParams: {
-            prompt: 'select_account', // 确保每次都显示账户选择
-            access_type: 'offline' // 获取刷新令牌
-          }
-        }
-      });
-      
-      if (error) {
-        console.error('[FixLogin] 谷歌登录失败:', error.message);
-        throw error;
-      }
-      
-      // 在跳转前确保 code_verifier 被正确保存
-      if (data?.url) {
-        // 获取生成的 code_verifier（如果有）
-        try {
-          const codeVerifier = localStorage.getItem('supabase.auth.code_verifier');
-          if (codeVerifier) {
-            console.log('[FixLogin] 已保存 code_verifier 到 sessionStorage');
-            sessionStorage.setItem('sb_temp_code_verifier', codeVerifier);
-          }
-        } catch (e) {
-          console.error('[FixLogin] 保存 code_verifier 失败:', e);
-        }
-        
-        // 重定向到 OAuth 提供商页面
-        router.push(data.url);
-      }
-    } catch (error) {
-      console.error('[FixLogin] 社交登录失败:', error);
-      alert('社交登录失败，请尝试使用邮箱密码登录或清除浏览器缓存后重试');
-    } finally {
-      setLoading(false);
-    }
-  };
-  
   // 如果检查未完成，显示加载状态
   if (!userChecked) {
     return (
@@ -218,19 +158,6 @@ export default function FixLogin({
   
   // 如果不需要修复，不显示任何内容
   if (!needsFix) {
-    return null;
-  }
-  
-  // 检测是否有登录相关错误
-  const hasLoginError = error && (
-    error.includes('code verifier') || 
-    error.includes('auth') || 
-    error.includes('login')
-  );
-  
-  // 如果没有检测到特定错误，返回 null（不显示组件）
-  if (!hasLoginError) {
-    console.log('[FixLogin] 未检测到异常登录状态，显示正常登录表单');
     return null;
   }
   
@@ -249,24 +176,6 @@ export default function FixLogin({
       >
         {fixingLogin ? '正在修复...' : '重置登录状态'}
       </Button>
-      
-      <button
-        onClick={handleGoogleLogin}
-        disabled={loading}
-        className="mt-3 flex w-full justify-center items-center bg-white border border-gray-300 rounded-md py-2 px-3 text-sm text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50"
-      >
-        <svg className="h-5 w-5 mr-2" viewBox="0 0 24 24">
-          <path
-            d="M12.24 10.285V14.4h6.806c-.275 1.765-2.056 5.174-6.806 5.174-4.095 0-7.439-3.389-7.439-7.574s3.345-7.574 7.439-7.574c2.33 0 3.891.989 4.785 1.849l3.254-3.138C18.189 1.186 15.479 0 12.24 0c-6.635 0-12 5.365-12 12s5.365 12 12 12c6.926 0 11.52-4.869 11.52-11.726 0-.788-.085-1.39-.189-1.989H12.24z"
-            fill="#4285F4"
-          />
-        </svg>
-        {loading ? '处理中...' : '使用 Google 登录 (修复版)'}
-      </button>
-      
-      <p className="text-xs text-gray-500 mt-2">
-        如果仍然遇到问题，请尝试使用邮箱密码方式登录
-      </p>
     </div>
   );
 } 

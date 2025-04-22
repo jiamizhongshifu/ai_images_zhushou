@@ -1,28 +1,18 @@
 import { createBrowserClient } from "@supabase/ssr";
 import { AuthChangeEvent, Session } from '@supabase/supabase-js';
 
-// 调试标志 - 设置为true开启详细日志
-const DEBUG = true;
-
-// 调试日志函数
-function debugLog(...args: any[]) {
-  if (DEBUG && typeof console !== 'undefined') {
-    console.log('[SupabaseClient]', ...args);
-  }
-}
-
 // 在会话变化时添加或移除cookie标记
 const handleSessionChange = (event: AuthChangeEvent, session: Session | null) => {
   try {
-    debugLog(`会话状态变化: ${event}`);
+    console.log(`[SupabaseClient] 会话状态变化: ${event}`);
     
     // 当用户登录或刷新token时，设置认证cookie
     if ((event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') && session) {
-      debugLog(`用户已登录或刷新令牌，设置认证cookie`);
+      console.log(`[SupabaseClient] 用户已登录或刷新令牌，设置认证cookie`);
       
       // 用cookie记录认证状态，设置较长有效期
       if (typeof document !== 'undefined') {
-        document.cookie = 'user_authenticated=true; path=/; max-age=604800; SameSite=Lax'; // 7天
+        document.cookie = 'user_authenticated=true; path=/; max-age=604800'; // 7天
       }
       
       // 确保持久化到localStorage
@@ -30,40 +20,34 @@ const handleSessionChange = (event: AuthChangeEvent, session: Session | null) =>
         localStorage.setItem('wasAuthenticated', 'true');
         // 记录认证时间
         localStorage.setItem('auth_time', Date.now().toString());
-        // 添加访问令牌最后4位作为指纹（不包含敏感信息）
-        if (session.access_token) {
-          const tokenFingerprint = session.access_token.slice(-4);
-          localStorage.setItem('token_fingerprint', tokenFingerprint);
-        }
       }
       
-      // 清除可能的登出标记
-      if (typeof localStorage !== 'undefined') {
-        localStorage.removeItem('force_logged_out');
-        localStorage.removeItem('logged_out');
-      }
-      if (typeof sessionStorage !== 'undefined') {
-        sessionStorage.removeItem('isLoggedOut');
+      // 同步添加更多相关标记，确保一致性
+      // 确保这些标记在会话刷新时也会更新
+      if (event === 'SIGNED_IN') {
+        // 清除可能的登出标记
+        if (typeof localStorage !== 'undefined') {
+          localStorage.removeItem('force_logged_out');
+        }
+        if (typeof sessionStorage !== 'undefined') {
+          sessionStorage.removeItem('isLoggedOut');
+        }
       }
     } 
     
     // 当用户登出时，清除认证cookie
     if (event === 'SIGNED_OUT') {
-      debugLog(`用户已登出，清除认证cookie`);
+      console.log(`[SupabaseClient] 用户已登出，清除认证cookie`);
       
       // 清除认证cookie
       if (typeof document !== 'undefined') {
         document.cookie = 'user_authenticated=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
-        // 清除可能的supabase cookie
-        document.cookie = 'sb-access-token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
-        document.cookie = 'sb-refresh-token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
       }
       
       // 清除localStorage中的认证记录
       if (typeof localStorage !== 'undefined') {
         localStorage.removeItem('wasAuthenticated');
         localStorage.removeItem('auth_time');
-        localStorage.removeItem('token_fingerprint');
         
         // 添加登出标记
         localStorage.setItem('force_logged_out', 'true');
@@ -87,56 +71,25 @@ const setupAuthPersistence = () => {
   if ((window as any).__authPersistenceSetup) return;
   (window as any).__authPersistenceSetup = true;
   
-  debugLog('设置认证持久化机制');
-  
-  // 每10分钟检查一次认证状态
-  const interval = setInterval(async () => {
+  // 每30分钟检查一次认证状态
+  const interval = setInterval(() => {
     try {
       if (typeof localStorage === 'undefined') return;
       
+      const authTime = localStorage.getItem('auth_time');
       const wasAuthenticated = localStorage.getItem('wasAuthenticated');
       
-      if (wasAuthenticated === 'true') {
-        debugLog('检查并续期认证状态');
-        
-        // 获取可能的Supabase客户端
-        let supabase;
-        try {
-          // 在全局命名空间中查找supabase客户端
-          if (window && (window as any).supabaseClient) {
-            supabase = (window as any).supabaseClient;
-          }
-          
-          // 尝试刷新会话
-          if (supabase && typeof supabase.auth === 'object') {
-            debugLog('尝试刷新会话');
-            const { data, error } = await supabase.auth.getSession();
-            
-            if (error) {
-              console.error('[SupabaseClient] 获取会话失败:', error);
-            } else if (data && data.session) {
-              debugLog('会话有效，续期认证状态');
-              
-              // 续期cookie (7天)
-              if (typeof document !== 'undefined') {
-                document.cookie = 'user_authenticated=true; path=/; max-age=604800; SameSite=Lax';
-              }
-              
-              // 更新认证时间
-              localStorage.setItem('auth_time', Date.now().toString());
-            } else {
-              debugLog('会话已失效，清除认证状态');
-              handleSessionChange('SIGNED_OUT', null);
-            }
-          }
-        } catch (clientError) {
-          console.error('[SupabaseClient] 获取客户端或刷新会话失败:', clientError);
-        }
+      if (wasAuthenticated === 'true' && typeof document !== 'undefined') {
+        console.log(`[SupabaseClient] 续期认证状态`);
+        // 续期cookie (7天)
+        document.cookie = 'user_authenticated=true; path=/; max-age=604800';
+        // 更新认证时间
+        localStorage.setItem('auth_time', Date.now().toString());
       }
     } catch (error) {
       console.error('[SupabaseClient] 续期认证状态出错:', error);
     }
-  }, 10 * 60 * 1000); // 10分钟
+  }, 30 * 60 * 1000); // 30分钟
   
   // 在页面卸载时清理
   window.addEventListener('beforeunload', () => {
@@ -161,19 +114,12 @@ export const createClient = () => {
     
     if (isServer) {
       // 在服务器端环境下使用基本配置创建客户端
-      debugLog("在服务器端创建简化客户端");
+      console.log("[SupabaseClient] 在服务器端创建简化客户端");
       return createBrowserClient(supabaseUrl, supabaseAnonKey);
     }
     
-    // 检查是否已有客户端实例
-    if (typeof window !== 'undefined' && (window as any).supabaseClient) {
-      debugLog("返回现有的客户端实例");
-      return (window as any).supabaseClient;
-    }
-    
-    debugLog("在浏览器环境创建新的Supabase客户端实例");
-    
     // 在浏览器环境下使用完整配置
+    // 使用正确的创建客户端参数格式
     const client = createBrowserClient(
       supabaseUrl,
       supabaseAnonKey,
@@ -230,6 +176,23 @@ export const createClient = () => {
                   // 清除登出标记
                   localStorage.removeItem('force_logged_out');
                 }
+                
+                if (typeof sessionStorage !== 'undefined') {
+                  sessionStorage.removeItem('isLoggedOut');
+                  sessionStorage.setItem('activeAuth', 'true');
+                }
+                
+                console.log(`[SupabaseClient] 已设置认证cookie: ${name}=${value.substring(0, 10)}... 和关联标记`);
+              }
+              
+              // 清除可能的登出标记
+              if ((name === 'sb-access-token' || name === 'sb-refresh-token') && value) {
+                if (typeof localStorage !== 'undefined') {
+                  localStorage.removeItem('force_logged_out');
+                }
+                if (typeof sessionStorage !== 'undefined') {
+                  sessionStorage.removeItem('isLoggedOut');
+                }
               }
             } catch (error) {
               console.error(`[SupabaseClient] 设置cookie "${name}"出错:`, error);
@@ -262,69 +225,39 @@ export const createClient = () => {
       }
     );
     
-    // 保存到全局变量
-    if (typeof window !== 'undefined') {
-      (window as any).supabaseClient = client;
-    }
-    
     // 订阅会话状态变化
     client.auth.onAuthStateChange(handleSessionChange);
-    
-    // 设置认证持久化机制
-    setupAuthPersistence();
     
     // 在创建时检查是否已有会话，如果有则设置cookie标记
     setTimeout(async () => {
       try {
-        debugLog('初始会话检查...');
-        const { data: { session }, error } = await client.auth.getSession();
-        
-        if (error) {
-          console.error('[SupabaseClient] 初始会话检查错误:', error);
-          return;
-        }
-        
-        if (session) {
-          debugLog('初始会话检查发现有效会话，设置cookie标记');
-          
-          if (typeof document !== 'undefined') {
-            document.cookie = 'user_authenticated=true; path=/; max-age=604800; SameSite=Lax';
-          }
+        const { data: { session } } = await client.auth.getSession();
+        if (session && typeof document !== 'undefined') {
+          console.log('[SupabaseClient] 初始会话检查发现有效会话，设置cookie标记');
+          document.cookie = 'user_authenticated=true; path=/; max-age=604800';
           
           // 记录到localStorage
           if (typeof localStorage !== 'undefined') {
             localStorage.setItem('wasAuthenticated', 'true');
             localStorage.setItem('auth_time', Date.now().toString());
-            
-            // 添加访问令牌最后4位作为指纹（不包含敏感信息）
-            if (session.access_token) {
-              const tokenFingerprint = session.access_token.slice(-4);
-              localStorage.setItem('token_fingerprint', tokenFingerprint);
-            }
-          }
-          
-          // 清除可能的登出标记
-          if (typeof localStorage !== 'undefined') {
-            localStorage.removeItem('force_logged_out');
-            localStorage.removeItem('logged_out');
-          }
-          if (typeof sessionStorage !== 'undefined') {
-            sessionStorage.removeItem('isLoggedOut');
           }
         } else {
-          debugLog('初始会话检查未发现有效会话');
+          console.log('[SupabaseClient] 初始会话检查未发现有效会话');
         }
       } catch (error) {
         console.error('[SupabaseClient] 初始会话检查出错:', error);
       }
-    }, 100);
+    }, 0);
+    
+    // 设置认证状态定期检查
+    if (typeof window !== 'undefined') {
+      setupAuthPersistence();
+    }
     
     return client;
-    
   } catch (error) {
-    console.error('[SupabaseClient] 创建客户端失败:', error);
-    
-    // 在出错时提供一个基本客户端
+    console.error("创建Supabase客户端失败:", error);
+    // 失败时使用基本配置重试一次
     return createBrowserClient(supabaseUrl, supabaseAnonKey);
   }
 };
