@@ -14,105 +14,39 @@ import type { Database } from '@/types/supabase';
  * 这个API将验证服务器端的会话状态，并返回用户信息
  */
 export async function GET(request: NextRequest) {
-  try {
-    // 获取服务器端supabase客户端
-    const supabase = await createClient();
-    
-    // 获取当前会话
-    const { data: { session }, error } = await supabase.auth.getSession();
-    
-    if (error) {
-      console.error('[Incognito Session API] 获取会话出错:', error);
-      return NextResponse.json(
-        { 
-          authenticated: false, 
-          error: error.message,
-          timestamp: Date.now()
-        }, 
-        { status: 401 }
-      );
-    }
-    
-    // 检查会话是否存在
-    if (!session) {
-      console.log('[Incognito Session API] 无有效会话');
-      
-      // 检查cookie中是否有auth_valid标记
-      const cookiesList = await cookies();
-      const authValid = cookiesList.get('auth_valid');
-      
-      if (authValid?.value === 'true') {
-        console.log('[Incognito Session API] 从cookie检测到认证标记，但无法找到会话');
-        return NextResponse.json(
-          { 
-            authenticated: 'cookie_only',
-            message: '检测到cookie认证标记，但无有效会话',
-            timestamp: Date.now()
-          }, 
-          { status: 202 }
-        );
-      }
-      
-      return NextResponse.json(
-        { 
-          authenticated: false,
-          message: '未找到有效会话',
-          timestamp: Date.now()
-        }, 
-        { status: 401 }
-      );
-    }
-    
-    // 有效会话，返回会话信息并设置cookie
-    const response = NextResponse.json(
-      { 
-        authenticated: true,
-        user: {
-          id: session.user.id,
-          email: session.user.email
-        },
-        timestamp: Date.now()
-      }, 
-      { status: 200 }
-    );
-    
-    // 设置cookie以便在无法访问存储的环境下识别登录状态
-    response.cookies.set('storage_limitation', 'true', {
-      path: '/',
-      maxAge: 60 * 60 * 24 * 7, // 7天
-      httpOnly: false,
-      sameSite: 'lax',
-      secure: process.env.NODE_ENV === 'production',
-    });
-    
-    response.cookies.set('auth_valid', 'true', {
-      path: '/',
-      maxAge: 60 * 60 * 24 * 7, // 7天
-      httpOnly: false,
-      sameSite: 'lax',
-      secure: process.env.NODE_ENV === 'production',
-    });
-    
-    response.cookies.set('auth_time', Date.now().toString(), {
-      path: '/',
-      maxAge: 60 * 60 * 24 * 7, // 7天
-      httpOnly: false,
-      sameSite: 'lax',
-      secure: process.env.NODE_ENV === 'production',
-    });
-    
-    return response;
-  } catch (error) {
-    console.error('[Incognito Session API] 验证会话时出错:', error);
-    return NextResponse.json(
-      { 
-        authenticated: false, 
-        error: error instanceof Error ? error.message : '未知错误',
-        timestamp: Date.now()
-      }, 
-      { status: 500 }
-    );
+  const cookieStore = await cookies();
+  const authValid = cookieStore.get('auth_valid');
+  
+  if (!authValid) {
+    return NextResponse.json({ status: 'unauthorized' }, { status: 401 });
   }
+  
+  const supabase = await createClient();
+  const { data: { user }, error } = await supabase.auth.getUser();
+  
+  if (error || !user) {
+    return NextResponse.json({ status: 'unauthorized' }, { status: 401 });
+  }
+  
+  // 创建匿名会话
+  const response = NextResponse.json({
+    status: 'success',
+    session: {
+      userId: user.id,
+      email: user.email,
+      created: new Date().toISOString()
+    }
+  });
+  
+  // 设置会话cookie
+  response.cookies.set('incognito_session', 'true', {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    maxAge: 60 * 60 // 1小时
+  });
+  
+  return response;
 }
 
 export async function POST(request: NextRequest) {
