@@ -99,18 +99,23 @@ const setupAuthPersistence = () => {
 };
 
 export const createClient = () => {
+  // 检查是否在浏览器环境
+  const isBrowser = typeof window !== 'undefined';
+
   return createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
       cookies: {
         get(name: string) {
+          if (!isBrowser) return '';
           return document.cookie
             .split('; ')
             .find((row) => row.startsWith(`${name}=`))
-            ?.split('=')[1];
+            ?.split('=')[1] || '';
         },
         set(name: string, value: string, options: CookieOptions) {
+          if (!isBrowser) return;
           let cookieStr = `${name}=${value}; path=${options.path || '/'}`;
           if (options.maxAge) cookieStr += `; max-age=${options.maxAge}`;
           if (options.domain) cookieStr += `; domain=${options.domain}`;
@@ -121,6 +126,7 @@ export const createClient = () => {
           document.cookie = cookieStr;
         },
         remove(name: string, options: CookieOptions) {
+          if (!isBrowser) return;
           document.cookie = `${name}=; path=${options.path || '/'}; expires=Thu, 01 Jan 1970 00:00:00 GMT`;
         },
       },
