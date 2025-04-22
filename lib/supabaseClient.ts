@@ -121,6 +121,10 @@ export function getSupabase(): SupabaseClient<Database> {
         flowType: 'pkce' as const,
         storage: customStorageAdapter,
         redirectTo: redirectUrl,
+        pkceVerifierKey: 'supabase.auth.code_verifier',
+        pkce: {
+          codeChallengeMethod: 'S256',
+        },
       },
       global: {
         headers: {

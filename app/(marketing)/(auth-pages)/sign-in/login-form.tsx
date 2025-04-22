@@ -162,18 +162,50 @@ export default function LoginForm({ message }: LoginFormProps) {
     setError(null);
     
     try {
-      const { error } = await supabase.auth.signInWithOAuth({
+      // 清理所有可能的旧 PKCE 状态
+      try {
+        if (typeof localStorage !== 'undefined') {
+          localStorage.removeItem('supabase.auth.code_verifier');
+        }
+        if (typeof sessionStorage !== 'undefined') {
+          sessionStorage.removeItem('supabase.auth.code_verifier');
+          sessionStorage.removeItem('sb_temp_code_verifier');
+        }
+      } catch (cleanError) {
+        console.warn('[Google登录] 清理旧状态失败:', cleanError);
+      }
+
+      const supabaseClient = createClient();
+      const { data, error } = await supabaseClient.auth.signInWithOAuth({
         provider: 'google',
         options: {
-          redirectTo: `${window.location.origin}/auth/callback`,
+          redirectTo: `${window.location.origin}/auth/callback?source=login_form`,
           queryParams: {
-            prompt: 'select_account'
+            prompt: 'select_account', // 确保每次都显示账户选择
+            access_type: 'offline' // 获取刷新令牌
           }
         }
       });
       
       if (error) {
         throw error;
+      }
+      
+      // 在跳转前确保 code_verifier 被正确保存
+      if (data?.url) {
+        // 获取生成的 code_verifier（如果有）
+        try {
+          const codeVerifier = localStorage.getItem('supabase.auth.code_verifier');
+          if (codeVerifier) {
+            console.log('[Google登录] 保存 code_verifier 到 sessionStorage');
+            sessionStorage.setItem('sb_temp_code_verifier', codeVerifier);
+          }
+        } catch (e) {
+          console.error('[Google登录] 保存 code_verifier 失败:', e);
+        }
+        
+        // 重定向到 OAuth 提供商页面
+        window.location.href = data.url;
       }
     } catch (error: any) {
       console.error('[Google登录] 异常:', error);
