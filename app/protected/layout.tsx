@@ -16,53 +16,14 @@ export default function ProtectedLayout({
 }) {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { isAuthenticated, isLoading: authLoading, refreshUserState } = useUserState();
+  const { isAuthenticated, isLoading: authLoading } = useUserState();
   const [showAccessButton, setShowAccessButton] = useState(false);
   const [sessionRetryCount, setSessionRetryCount] = useState(0);
   const [isManuallyCheckingSession, setIsManuallyCheckingSession] = useState(false);
   const [loadingTimeout, setLoadingTimeout] = useState(false);
   
   const hasAuthSession = searchParams?.has('auth_session');
-  const hasLoginSuccess = searchParams?.has('login_success');
-  const sessionCreated = searchParams?.get('session_created');
   
-  // 检查cookie中的认证标记
-  useEffect(() => {
-    // 检查cookie中是否有认证标记
-    const cookieHasAuth = document.cookie.includes('auth_valid=true');
-    
-    if (cookieHasAuth && !isAuthenticated) {
-      console.log('[ProtectedLayout] 从cookie检测到认证标记，主动刷新用户状态');
-      refreshUserState();
-    }
-    
-    // 如果有OAuth登录成功标记，主动强制刷新用户状态
-    if (hasLoginSuccess) {
-      console.log('[ProtectedLayout] 检测到OAuth登录成功标记，主动强制刷新');
-      // 先通过一个API请求确认会话状态
-      fetch('/api/auth/status', {
-        method: 'GET',
-        credentials: 'include'
-      })
-      .then(response => {
-        if (response.ok) {
-          console.log('[ProtectedLayout] 会话状态API确认成功');
-          refreshUserState();
-          // 移除URL中的登录参数，但保留在同一页面
-          const url = new URL(window.location.href);
-          url.searchParams.delete('login_success');
-          url.searchParams.delete('session_created');
-          window.history.replaceState({}, '', url.toString());
-        } else {
-          console.warn('[ProtectedLayout] 会话状态API确认失败');
-        }
-      })
-      .catch(error => {
-        console.error('[ProtectedLayout] 会话状态API请求错误:', error);
-      });
-    }
-  }, [hasLoginSuccess, isAuthenticated, refreshUserState]);
-
   // 添加超时机制，防止永久加载
   useEffect(() => {
     if ((authLoading || isManuallyCheckingSession) && !loadingTimeout) {
@@ -167,16 +128,6 @@ export default function ProtectedLayout({
         // 设置标记cookie
         document.cookie = 'storage_limitation=true; path=/; max-age=3600; SameSite=Lax';
         
-        // 检查cookie中是否已有认证标记
-        const cookieHasAuth = document.cookie.includes('auth_valid=true');
-        
-        if (cookieHasAuth) {
-          console.log('[ProtectedLayout] 尽管有存储错误，但从cookie检测到认证标记');
-          // 不重定向，刷新当前页面状态
-          refreshUserState();
-          return;
-        }
-        
         // 如果尚未开始API验证，则直接启动
         if (!loadingTimeout) {
           console.log('[ProtectedLayout] 由于存储访问错误，立即尝试API验证');
@@ -213,7 +164,7 @@ export default function ProtectedLayout({
     return () => {
       window.removeEventListener('error', handleError);
     };
-  }, [loadingTimeout, router, refreshUserState]);
+  }, [loadingTimeout, router]);
 
   // 如果加载中状态超时且API验证也在进行中，显示特殊提示
   if (loadingTimeout) {

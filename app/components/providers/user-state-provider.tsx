@@ -142,32 +142,18 @@ function UserStateProviderContent({ children }: UserStateProviderProps) {
       return;
     }
     
-    // 检查cookie中是否有认证标记
-    const cookieHasAuth = typeof document !== 'undefined' && document.cookie.includes('auth_valid=true');
-    const storageError = typeof document !== 'undefined' && document.cookie.includes('storage_limitation=true');
-    
     try {
       // 强制同步认证状态，确保使用最新状态
       try {
-        // 如果有存储访问错误，不要尝试访问localStorage/sessionStorage
-        if (!storageError) {
-          const { forceSyncAuthState } = await import('@/utils/auth-service');
-          await forceSyncAuthState();
-        } else {
-          console.log('[UserStateProvider] 检测到存储访问限制，跳过forceSyncAuthState');
-        }
+        const { forceSyncAuthState } = await import('@/utils/auth-service');
+        forceSyncAuthState();
       } catch (e) {
         console.warn('[UserStateProvider] 强制同步认证状态失败:', e);
       }
       
-      // 如果有cookie认证标记但Supabase认为未认证，优先信任cookie
-      const currentAuthState = cookieHasAuth || authService.isAuthenticated();
-      
-      // 更新认证状态
-      if (currentAuthState !== isAuthenticated) {
-        console.log(`[UserStateProvider] 更新认证状态: ${isAuthenticated} -> ${currentAuthState}`);
-        setIsAuthenticated(currentAuthState);
-      }
+      // 重新检查认证状态
+      const currentAuthState = authService.isAuthenticated();
+      setIsAuthenticated(currentAuthState);
       
       if (currentAuthState) {
         setUserInfoLoaded(true);
@@ -255,7 +241,7 @@ function UserStateProviderContent({ children }: UserStateProviderProps) {
         setIsInitializing(false);
       }
     }
-  }, [lastFetchTime, credits, isInitializing, checkLogoutState, resetState, isLoggedOut, isAuthenticated]);
+  }, [lastFetchTime, credits, isInitializing, checkLogoutState, resetState, isLoggedOut]);
   
   // 触发刷新积分的函数 - 增加更严格的防抖
   const triggerCreditRefresh = useCallback(async () => {
@@ -374,25 +360,41 @@ function UserStateProviderContent({ children }: UserStateProviderProps) {
   useEffect(() => {
     console.log('[UserStateProvider] 设置认证状态监听器');
     
-    // 检查URL中是否有auth_session参数，表示刚完成登录
-    const params = new URLSearchParams(window.location.search);
-    const hasAuthSession = params.has('auth_session');
-    const loginSuccess = params.has('login_success');
+    // 立即检查当前认证状态并更新
+    const checkCurrentAuth = async () => {
+      console.log('[UserStateProvider] 初始化时主动检查认证状态');
+      
+      // 首先检查登出状态
+      if (checkLogoutState()) {
+        console.log('[UserStateProvider] 初始化时检测到登出状态，强制设置未登录状态');
+        resetState();
+        return;
+      }
+      
+      try {
+        const { forceSyncAuthState } = await import('@/utils/auth-service');
+        // 强制同步认证状态
+        forceSyncAuthState();
+        
+        // 获取最新认证状态
+        const currentAuthState = authService.isAuthenticated();
+        console.log('[UserStateProvider] 初始认证状态:', currentAuthState ? '已登录' : '未登录');
+        
+        // 立即更新状态
+        setIsAuthenticated(currentAuthState);
+        if (currentAuthState) {
+          console.log('[UserStateProvider] 用户已登录，立即激活用户信息显示');
+          setUserInfoLoaded(true);
+        } else {
+          setUserInfoLoaded(false);
+        }
+      } catch (e) {
+        console.error('[UserStateProvider] 初始化检查认证状态出错:', e);
+      }
+    };
     
-    if (hasAuthSession && loginSuccess) {
-      console.log('[UserStateProvider] 检测到登录成功标记，立即检查认证状态');
-      refreshUserState({ forceRefresh: true, showLoading: true });
-    }
-    
-    // 初始化时主动检查认证状态
-    console.log('[UserStateProvider] 初始化时主动检查认证状态');
-    
-    // 检查是否处于登出状态
-    if (checkLogoutState()) {
-      console.log('[UserStateProvider] 初始化时检测到登出状态，强制设置未登录状态');
-      resetState();
-      return;
-    }
+    // 立即执行初始检查
+    checkCurrentAuth();
     
     // 监听认证状态变化
     const unsubscribe = authService.subscribe((authState) => {

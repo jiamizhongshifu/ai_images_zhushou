@@ -1,6 +1,6 @@
-import { createMiddlewareClient } from '@supabase/auth-helpers-nextjs'
-import { NextResponse } from 'next/server'
-import type { NextRequest } from 'next/server'
+import { type NextRequest, NextResponse } from "next/server";
+import { updateSession } from "@/utils/supabase/middleware";
+import { createMiddlewareClient } from '@supabase/auth-helpers-nextjs';
 
 // 检测是否可能是浏览器扩展环境的辅助函数
 function isExtensionEnvironment(request: NextRequest): boolean {
@@ -21,117 +21,116 @@ function isExtensionEnvironment(request: NextRequest): boolean {
   );
 }
 
+// 身份验证中间件
 export async function middleware(request: NextRequest) {
   try {
-    const { pathname } = request.nextUrl
+    // 创建中间件客户端
+    const supabase = createMiddlewareClient({ req: request, res: NextResponse.next() });
     
-    // 跳过不需要认证的路径
-    if (pathname.startsWith('/_next/') || 
-        pathname.startsWith('/api/') ||
-        pathname.startsWith('/static/') ||
-        pathname.startsWith('/images/') ||
-        pathname === '/' ||
-        pathname === '/sign-in') {
-      return NextResponse.next()
-    }
-
-    // 创建响应对象
-    const res = NextResponse.next()
-    const supabase = createMiddlewareClient({ req: request, res })
-
-    // 检查存储访问限制
-    const hasStorageLimitation = request.cookies.get('storage_limitation')?.value === 'true'
+    // 获取当前会话
+    const { data: { session } } = await supabase.auth.getSession();
     
-    // 如果有存储访问限制，使用cookie中的认证状态
-    if (hasStorageLimitation) {
-      const authValid = request.cookies.get('auth_valid')?.value === 'true'
-      if (!authValid && pathname.startsWith('/protected')) {
-        const redirectUrl = new URL('/sign-in', request.url)
-        redirectUrl.searchParams.set('redirect', pathname)
-        return NextResponse.redirect(redirectUrl)
-      }
-      return res
+    // 获取请求URL
+    const requestUrl = new URL(request.url);
+    const isSignInPage = requestUrl.pathname === '/sign-in';
+    
+    // 如果用户已登录且访问登录页面，重定向到保护页面
+    if (session && isSignInPage) {
+      console.log('[Middleware] 用户已登录，从登录页重定向到保护页面');
+      const redirectUrl = new URL('/protected', request.url);
+      return NextResponse.redirect(redirectUrl);
     }
     
-    // 获取会话状态
-    const { data: { session } } = await supabase.auth.getSession()
+    // 检查是否有强制跳过中间件的标记
+    const skipMiddleware = request.nextUrl.searchParams.get('skip_middleware');
+    if (skipMiddleware === 'true') {
+      console.log('[中间件] 检测到跳过中间件标记，直接放行');
+      return NextResponse.next();
+    }
     
-    // 检查认证成功标记
-    const authSuccess = request.cookies.get('auth_success')?.value === 'true'
-    
-    // 如果有认证成功标记，清除所有登出状态
-    if (authSuccess) {
-      const response = NextResponse.next()
-      const cookiesToClear = [
-        'force_logged_out',
-        'isLoggedOut',
-        'auth_logged_out',
-        'logged_out'
-      ]
+    // 检查受保护页面URL中的auth_session参数（登录成功标志）
+    const hasAuthSession = request.nextUrl.searchParams.has('auth_session');
+    if (request.nextUrl.pathname.startsWith('/protected') && hasAuthSession) {
+      console.log('[中间件] 检测到auth_session参数，清除所有登出标记');
       
+      // 创建响应
+      const response = NextResponse.next();
+      
+      // 清除所有登出标记
+      const cookiesToClear = ['force_logged_out', 'isLoggedOut', 'auth_logged_out', 'logged_out'];
       cookiesToClear.forEach(name => {
         response.cookies.set(name, '', {
           path: '/',
           expires: new Date(0),
           maxAge: 0
-        })
-      })
+        });
+      });
       
-      // 设置认证有效标记
-      response.cookies.set('auth_valid', 'true', {
+      // 设置强制登录标记
+      response.cookies.set('force_login', 'true', {
         path: '/',
-        maxAge: 3600,
-        httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
+        maxAge: 3600, // 1小时有效期
         sameSite: 'lax'
-      })
+      });
       
-      return response
+      // 设置会话验证标记
+      response.cookies.set('session_verified', 'true', {
+        path: '/',
+        maxAge: 3600, // 1小时有效期
+        sameSite: 'lax'
+      });
+      
+      return response;
     }
     
-    // 处理受保护路由的访问
-    if (pathname.startsWith('/protected')) {
-      if (!session) {
-        // 未登录时重定向到登录页
-        const redirectUrl = new URL('/sign-in', request.url)
-        redirectUrl.searchParams.set('redirect', pathname)
-        return NextResponse.redirect(redirectUrl)
+    // 检查是否是浏览器扩展环境
+    const isExtension = isExtensionEnvironment(request);
+    if (isExtension) {
+      console.log('[中间件] 检测到可能的扩展环境，特殊处理');
+      
+      // 对于扩展环境，如果URL包含auth_session参数，优先信任该参数
+      if (hasAuthSession) {
+        console.log('[中间件] 扩展环境下检测到auth_session参数，强制视为已登录');
+        
+        // 创建响应
+        const response = NextResponse.next();
+        
+        // 清除所有登出标记
+        const cookiesToClear = ['force_logged_out', 'isLoggedOut', 'auth_logged_out', 'logged_out'];
+        cookiesToClear.forEach(name => {
+          response.cookies.set(name, '', {
+            path: '/',
+            expires: new Date(0),
+            maxAge: 0
+          });
+        });
+        
+        // 设置扩展环境标记
+        response.cookies.set('is_extension_env', 'true', {
+          path: '/',
+          maxAge: 86400, // 24小时
+          sameSite: 'lax'
+        });
+        
+        return response;
       }
-      
-      // 设置认证有效标记
-      res.cookies.set('auth_valid', 'true', {
-        path: '/',
-        maxAge: 3600,
-        httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: 'lax'
-      })
     }
     
-    return res
+    // 使用Supabase会话更新逻辑
+    return await updateSession(request);
   } catch (error) {
-    console.error('[Middleware Error]:', error)
-    
-    // 如果出现存储访问错误，设置标记
-    if (error instanceof Error && error.message.includes('storage')) {
-      const res = NextResponse.next()
-      res.cookies.set('storage_limitation', 'true', {
-        path: '/',
-        maxAge: 3600,
-        httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: 'lax'
-      })
-      return res
-    }
-    
-    return NextResponse.next()
+    console.error('[Middleware] 处理请求时出错:', error);
+    // 发生错误时继续处理请求
+    return NextResponse.next();
   }
 }
 
-// 配置中间件匹配规则
+// 中间件匹配配置
 export const config = {
   matcher: [
-    '/((?!_next/static|_next/image|favicon.ico).*)',
+    '/sign-in',
+    '/protected/:path*',
+    // 排除静态资源和API路由
+    "/((?!_next/static|_next/image|favicon.ico|api/|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
   ],
-}
+};
