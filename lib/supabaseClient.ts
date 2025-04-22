@@ -43,21 +43,24 @@ export function getSupabase(): SupabaseClient<Database> {
   const redirectUrl = `${getSiteUrl()}/auth/callback`;
   console.log('[SupabaseClient] OAuth 回调 URL:', redirectUrl);
   
+  // 创建 Supabase 选项并手动添加 redirectTo
+  const authOptions: any = {
+    persistSession: true,
+    storageKey: 'sb-auth-token',
+    autoRefreshToken: true,
+    detectSessionInUrl: true,
+    flowType: 'pkce',
+  };
+  
+  // 手动添加重定向 URL (绕过 TypeScript 类型检查)
+  authOptions.redirectTo = redirectUrl;
+  
   // 创建新的客户端实例
   supabaseInstance = createClient<Database>(
     supabaseUrl, 
     supabaseAnonKey, 
     {
-      auth: {
-        persistSession: true,
-        storageKey: 'sb-auth-token',
-        autoRefreshToken: true,
-        detectSessionInUrl: true,
-        flowType: 'pkce',
-        // 配置 OAuth 重定向 URL
-        // @ts-ignore - Supabase 类型未包含 redirectTo 但实际支持
-        redirectTo: redirectUrl
-      },
+      auth: authOptions,
       global: {
         headers: {
           'x-client-info': 'supabase-js-v2'
