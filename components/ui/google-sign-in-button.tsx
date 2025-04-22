@@ -15,6 +15,13 @@ export function GoogleSignInButton() {
       setIsLoading(true);
       console.log('[GoogleSignIn] 开始谷歌登录流程');
 
+      // 生成随机 state
+      const state = Math.random().toString(36).substring(2);
+      // 保存 state 到 sessionStorage
+      if (typeof sessionStorage !== 'undefined') {
+        sessionStorage.setItem('oauth_state', state);
+      }
+
       const { data, error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: {
@@ -22,6 +29,7 @@ export function GoogleSignInButton() {
           queryParams: {
             access_type: 'offline',
             prompt: 'consent',
+            state: state
           },
         },
       });

@@ -12,7 +12,6 @@ export async function GET(request: Request) {
     const code = requestUrl.searchParams.get('code');
     const error = requestUrl.searchParams.get('error');
     const error_description = requestUrl.searchParams.get('error_description');
-    const state = requestUrl.searchParams.get('state');
 
     // 如果URL中包含错误信息
     if (error) {
@@ -22,11 +21,11 @@ export async function GET(request: Request) {
       );
     }
 
-    // 如果没有授权码或状态
-    if (!code || !state) {
-      console.error('[Auth Callback] 缺少必要的参数', { code: !!code, state: !!state });
+    // 如果没有授权码
+    if (!code) {
+      console.error('[Auth Callback] 未收到授权码');
       return NextResponse.redirect(
-        `${requestUrl.origin}/sign-in?error=${encodeURIComponent('认证参数不完整')}`
+        `${requestUrl.origin}/sign-in?error=${encodeURIComponent('未收到授权码')}`
       );
     }
 
@@ -55,7 +54,21 @@ export async function GET(request: Request) {
       }
 
       console.log('[Auth Callback] 认证成功，重定向到受保护页面');
-      return NextResponse.redirect(`${requestUrl.origin}/protected?auth_session=${Date.now()}`);
+
+      // 创建响应并设置 cookie
+      const response = NextResponse.redirect(
+        `${requestUrl.origin}/protected?auth_session=${Date.now()}`
+      );
+
+      // 设置认证相关的 cookie
+      response.cookies.set('user_authenticated', 'true', {
+        path: '/',
+        maxAge: 60 * 60 * 24 * 7, // 7 days
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax'
+      });
+
+      return response;
       
     } catch (exchangeError) {
       console.error('[Auth Callback] 交换会话时发生错误:', exchangeError);
