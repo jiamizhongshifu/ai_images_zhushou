@@ -4,6 +4,7 @@
 
 import { createClient, SupabaseClient, Session, User, AuthChangeEvent, AuthError } from '@supabase/supabase-js'
 import type { Database } from '@/types/supabase';
+import { supabase } from '@/lib/supabaseClient'
 
 // 存储类型
 type StorageType = 'localStorage' | 'sessionStorage' | 'cookie' | 'memory';
@@ -42,6 +43,8 @@ type AuthStateCallback = (state: AuthState) => void;
 
 class AuthService {
   private static instance: AuthService | null = null;
+  private storageType: StorageType = 'localStorage';
+  private initialized: boolean = false;
   private supabase: SupabaseClient<Database>;
   private memoryAuthState: AuthState & StorageState = {
   isAuthenticated: false,
@@ -53,162 +56,36 @@ class AuthService {
   private subscribers: AuthStateCallback[] = [];
   private isRefreshing: boolean = false;
   private refreshPromise: Promise<void> | null = null;
-  private storageType: StorageType = 'memory';
-  private initialized: boolean = false;
   // 添加会话验证尝试次数记录
   private sessionValidationAttempts: number = 0;
   private lastSessionValidationTime: number = 0;
   // 添加标识是否正在进行手动会话验证
   private isManuallyCheckingSession: boolean = false;
 
-  // 添加内部方法来验证和更新会话，增强服务端验证
-  private async validateAndUpdateSession(): Promise<boolean> {
-    try {
-      // 先检查内存中的会话状态
-      if (this.memoryAuthState.isAuthenticated && this.memoryAuthState.session) {
-        console.log('[AuthService] 内存中已有有效会话，跳过验证');
-        return true;
-      }
-      
-      // 尝试从cookie中恢复认证状态
-      const hasCookieAuth = typeof document !== 'undefined' && 
-                            document.cookie.includes('user_authenticated=true');
-                            
-      // 检查URL参数
-      const hasAuthSessionParam = typeof window !== 'undefined' && 
-                                 window.location.search.includes('auth_session');
-      
-      // 首先尝试通过Supabase客户端获取会话
-      const { data: { session }, error } = await this.supabase.auth.getSession();
-      
-      if (error) {
-        console.error('[AuthService] 验证会话时出错:', error.message);
-      }
-      
-      // 如果常规验证找到了会话
-      if (session) {
-        console.log('[AuthService] Supabase会话验证成功，用户ID:', session.user.id);
-        await this.handleAuthChange('SIGNED_IN', session);
-        this.sessionValidationAttempts = 0;
-        return true;
-      } 
-      
-      // 常规验证失败但有Cookie认证标记，尝试服务器端验证
-      if ((hasCookieAuth || hasAuthSessionParam) && !this.isManuallyCheckingSession) {
-        console.log('[AuthService] 常规验证失败但发现认证标记，尝试服务器端验证');
-        this.isManuallyCheckingSession = true;
-        
-        try {
-          // 调用服务器端验证API
-          const response = await fetch('/api/auth/incognito-session', {
-            method: 'GET',
-            credentials: 'include',
-            headers: {
-              'Content-Type': 'application/json'
-            }
-          });
-          
-          if (response.ok) {
-            const data = await response.json();
-            if (data.status === 'success') {
-              console.log('[AuthService] 服务器端会话验证成功');
-              
-              // 创建一个模拟会话对象
-              const mockSession = {
-                access_token: 'recovered_session',
-                expires_in: 3600,
-                refresh_token: 'recovered_refresh',
-                token_type: 'bearer',
-                user: {
-                  id: data.userId || 'unknown',
-                  email: data.email || 'unknown@example.com',
-                  app_metadata: {},
-                  user_metadata: {},
-                  aud: 'authenticated',
-                  created_at: new Date().toISOString()
-                }
-              } as unknown as Session;
-              
-              // 更新认证状态
-              await this.handleAuthChange('SIGNED_IN', mockSession);
-              
-              // 设置认证cookie，确保刷新后仍然可以保持会话
-              document.cookie = `user_authenticated=true; path=/; max-age=3600; SameSite=Lax`;
-              document.cookie = `session_verified=true; path=/; max-age=3600; SameSite=Lax`;
-              
-              this.sessionValidationAttempts = 0;
-              this.isManuallyCheckingSession = false;
-              return true;
-            }
-          }
-        } catch (serverError) {
-          console.error('[AuthService] 服务器端会话验证失败:', serverError);
-        } finally {
-          this.isManuallyCheckingSession = false;
-        }
-      }
-      
-      // 所有验证方法都失败，更新状态为未登录
-      console.warn('[AuthService] 会话验证失败，无有效会话');
-      await this.handleAuthChange('SIGNED_OUT', null);
-      return false;
-    } catch (error) {
-      console.error('[AuthService] 会话验证过程中出错:', error);
-      await this.handleError(error, 'validateAndUpdateSession');
-      this.isManuallyCheckingSession = false;
-      return false;
+  constructor() {
+    if (!supabase) {
+      throw new Error('Supabase client not initialized');
     }
-  }
-
-  private constructor() {
-    // 确定可用的存储类型
+    this.supabase = supabase as SupabaseClient<Database>;
     this.determineStorageType();
     
-    // 确保只在客户端创建实例
     if (typeof window !== 'undefined') {
-      const storageAdapter = this.getStorageAdapter();
-      
-      // 使用单一配置创建 Supabase 客户端
-      this.supabase = createClient<Database>(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-        {
-          auth: {
-            storageKey: 'sb-auth-token',
-            storage: storageAdapter,
-            autoRefreshToken: true,
-            persistSession: true,
-            detectSessionInUrl: true
-          }
-        }
-      );
-
-      // 监听认证状态变化
       this.supabase.auth.onAuthStateChange(async (event, session) => {
         if (!this.initialized && event === 'INITIAL_SESSION') {
           this.initialized = true;
-      return;
-    }
+          return;
+        }
         await this.handleAuthChange(event, session);
       });
 
-      // 恢复持久化的状态
       this.restorePersistedState();
       
-      // 检查URL中是否存在auth_session参数
-      if (typeof window !== 'undefined' && window.location.search.includes('auth_session')) {
+      if (window.location.search.includes('auth_session')) {
         console.log('[AuthService] 检测到auth_session参数，将在1秒后验证会话状态');
-        // 延迟检查会话，给服务器端足够时间处理会话
         setTimeout(() => {
           this.refreshSession();
         }, 1000);
       }
-    } else {
-      // 服务端使用基础配置
-      this.supabase = createClient<Database>(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-      );
     }
   }
 
@@ -815,6 +692,105 @@ class AuthService {
         } catch (error) {
       console.error('[AuthService] getUserInfo 执行出错:', error);
       return null;
+    }
+  }
+
+  // 添加内部方法来验证和更新会话，增强服务端验证
+  private async validateAndUpdateSession(): Promise<boolean> {
+    try {
+      // 先检查内存中的会话状态
+      if (this.memoryAuthState.isAuthenticated && this.memoryAuthState.session) {
+        console.log('[AuthService] 内存中已有有效会话，跳过验证');
+        return true;
+      }
+      
+      // 尝试从cookie中恢复认证状态
+      const hasCookieAuth = typeof document !== 'undefined' && 
+                            document.cookie.includes('user_authenticated=true');
+                            
+      // 检查URL参数
+      const hasAuthSessionParam = typeof window !== 'undefined' && 
+                                 window.location.search.includes('auth_session');
+      
+      // 首先尝试通过Supabase客户端获取会话
+      const { data: { session }, error } = await this.supabase.auth.getSession();
+      
+      if (error) {
+        console.error('[AuthService] 验证会话时出错:', error.message);
+      }
+      
+      // 如果常规验证找到了会话
+      if (session) {
+        console.log('[AuthService] Supabase会话验证成功，用户ID:', session.user.id);
+        await this.handleAuthChange('SIGNED_IN', session);
+        this.sessionValidationAttempts = 0;
+        return true;
+      } 
+      
+      // 常规验证失败但有Cookie认证标记，尝试服务器端验证
+      if ((hasCookieAuth || hasAuthSessionParam) && !this.isManuallyCheckingSession) {
+        console.log('[AuthService] 常规验证失败但发现认证标记，尝试服务器端验证');
+        this.isManuallyCheckingSession = true;
+        
+        try {
+          // 调用服务器端验证API
+          const response = await fetch('/api/auth/incognito-session', {
+            method: 'GET',
+            credentials: 'include',
+            headers: {
+              'Content-Type': 'application/json'
+            }
+          });
+          
+          if (response.ok) {
+            const data = await response.json();
+            if (data.status === 'success') {
+              console.log('[AuthService] 服务器端会话验证成功');
+              
+              // 创建一个模拟会话对象
+              const mockSession = {
+                access_token: 'recovered_session',
+                expires_in: 3600,
+                refresh_token: 'recovered_refresh',
+                token_type: 'bearer',
+                user: {
+                  id: data.userId || 'unknown',
+                  email: data.email || 'unknown@example.com',
+                  app_metadata: {},
+                  user_metadata: {},
+                  aud: 'authenticated',
+                  created_at: new Date().toISOString()
+                }
+              } as unknown as Session;
+              
+              // 更新认证状态
+              await this.handleAuthChange('SIGNED_IN', mockSession);
+              
+              // 设置认证cookie，确保刷新后仍然可以保持会话
+              document.cookie = `user_authenticated=true; path=/; max-age=3600; SameSite=Lax`;
+              document.cookie = `session_verified=true; path=/; max-age=3600; SameSite=Lax`;
+              
+              this.sessionValidationAttempts = 0;
+              this.isManuallyCheckingSession = false;
+              return true;
+            }
+          }
+        } catch (serverError) {
+          console.error('[AuthService] 服务器端会话验证失败:', serverError);
+        } finally {
+          this.isManuallyCheckingSession = false;
+        }
+      }
+      
+      // 所有验证方法都失败，更新状态为未登录
+      console.warn('[AuthService] 会话验证失败，无有效会话');
+      await this.handleAuthChange('SIGNED_OUT', null);
+      return false;
+    } catch (error) {
+      console.error('[AuthService] 会话验证过程中出错:', error);
+      await this.handleError(error, 'validateAndUpdateSession');
+      this.isManuallyCheckingSession = false;
+      return false;
     }
   }
 }

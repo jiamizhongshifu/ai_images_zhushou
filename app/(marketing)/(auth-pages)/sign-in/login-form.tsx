@@ -12,6 +12,7 @@ import { useRef, useState } from "react";
 import { createClient } from "@/utils/supabase/client";
 import { useUserState } from '@/app/components/providers/user-state-provider';
 import { forceSyncAuthState } from '@/utils/auth-service';
+import { supabase } from '@/lib/supabaseClient';
 
 // 使用稳定的表单ID，避免服务端和客户端渲染不一致
 const LOGIN_FORM_ID = 'login-form-stable';
@@ -155,6 +156,33 @@ export default function LoginForm({ message }: LoginFormProps) {
     }
   };
 
+  // 处理Google登录
+  const handleGoogleSignIn = async () => {
+    setIsSubmitting(true);
+    setError(null);
+    
+    try {
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo: `${window.location.origin}/auth/callback`,
+          queryParams: {
+            prompt: 'select_account'
+          }
+        }
+      });
+      
+      if (error) {
+        throw error;
+      }
+    } catch (error: any) {
+      console.error('[Google登录] 异常:', error);
+      setError(error.message || 'Google登录过程中发生错误，请稍后重试');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   return (
     <form 
       className="flex flex-col w-full space-y-6" 
@@ -208,6 +236,28 @@ export default function LoginForm({ message }: LoginFormProps) {
           disabled={isSubmitting}
         >
           {isSubmitting ? "登录中..." : "登录"}
+        </Button>
+        
+        <div className="relative my-2">
+          <div className="absolute inset-0 flex items-center">
+            <span className="w-full border-t border-border"></span>
+          </div>
+          <div className="relative flex justify-center text-xs">
+            <span className="bg-background px-2 text-muted-foreground">或</span>
+          </div>
+        </div>
+        
+        <Button 
+          type="button"
+          variant="outline"
+          className="w-full flex items-center justify-center gap-2 mt-2"
+          onClick={handleGoogleSignIn}
+          disabled={isSubmitting}
+        >
+          <svg width="18" height="18" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 488 512">
+            <path fill="#4285F4" d="M488 261.8C488 403.3 391.1 504 248 504 110.8 504 0 393.2 0 256S110.8 8 248 8c66.8 0 123 24.5 166.3 64.9l-67.5 64.9C258.5 52.6 94.3 116.6 94.3 256c0 86.5 69.1 156.6 153.7 156.6 98.2 0 135-70.4 140.8-106.9H248v-85.3h236.1c2.3 12.7 3.9 24.9 3.9 41.4z"/>
+          </svg>
+          <span>使用 Google 登录</span>
         </Button>
         
         {!error && message && (

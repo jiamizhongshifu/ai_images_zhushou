@@ -6,6 +6,7 @@ import Link from "next/link";
 import { Lock, Mail } from "lucide-react";
 import FixLogin from "@/app/auth/sign-in/fix-login";
 import LoginForm from "./login-form";
+import OAuthHandler from "./oauth-handler";
 
 export default async function Login(props: { searchParams: Promise<Message> }) {
   const searchParams = await props.searchParams;
@@ -14,6 +15,9 @@ export default async function Login(props: { searchParams: Promise<Message> }) {
     <>
       {/* 添加登录修复组件，自动检测会话状态并重定向 */}
       <FixLogin />
+      
+      {/* 添加 OAuth 处理组件，处理 OAuth 重定向 */}
+      <OAuthHandler />
       
       <Card className="w-full max-w-md border-none shadow-lg">
         <CardHeader className="space-y-1 text-center pb-0">
