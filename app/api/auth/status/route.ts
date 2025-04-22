@@ -36,12 +36,12 @@ export async function GET(request: NextRequest) {
       console.log('[Auth Status API] 无有效会话');
       
       // 检查cookie是否有auth_valid标记
-      const cookieStore = cookies();
-      const authValid = cookieStore.get('auth_valid');
+      const cookiesList = await cookies();
+      const authValid = cookiesList.get('auth_valid');
       
       // 如果有auth_valid cookie但没有会话，可能是会话正在建立过程中
       if (authValid?.value === 'true') {
-        const authTime = cookieStore.get('auth_time');
+        const authTime = cookiesList.get('auth_time');
         const timeStr = authTime?.value || '0';
         const authTimeValue = parseInt(timeStr);
         const now = Date.now();

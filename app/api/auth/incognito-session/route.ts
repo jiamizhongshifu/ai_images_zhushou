@@ -38,8 +38,8 @@ export async function GET(request: NextRequest) {
       console.log('[Incognito Session API] 无有效会话');
       
       // 检查cookie中是否有auth_valid标记
-      const cookieStore = cookies();
-      const authValid = cookieStore.get('auth_valid');
+      const cookiesList = await cookies();
+      const authValid = cookiesList.get('auth_valid');
       
       if (authValid?.value === 'true') {
         console.log('[Incognito Session API] 从cookie检测到认证标记，但无法找到会话');
