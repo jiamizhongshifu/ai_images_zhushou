@@ -235,3 +235,28 @@ export const signOut = async () => {
   const supabase = authService.getSupabaseClient();
   await supabase.auth.signOut();
 };
+
+// 添加缺失的导出函数
+export const refreshSession = async (): Promise<Session | null> => {
+  const supabase = authService.getSupabaseClient();
+  const { data: { session }, error } = await supabase.auth.getSession();
+  if (error) {
+    console.error('[AuthService] 刷新会话失败:', error);
+    return null;
+  }
+  return session;
+};
+
+export const forceSyncAuthState = async (): Promise<void> => {
+  const supabase = authService.getSupabaseClient();
+  const { data: { session }, error } = await supabase.auth.getSession();
+  if (error) {
+    console.error('[AuthService] 强制同步认证状态失败:', error);
+    return;
+  }
+  
+  await authService['handleAuthChange'](
+    session ? 'SIGNED_IN' : 'SIGNED_OUT',
+    session
+  );
+};
