@@ -41,15 +41,6 @@ export interface CreditPackage {
 // 预定义的点数套餐
 export const CREDIT_PACKAGES: CreditPackage[] = [
   { 
-    id: 'test', 
-    name: '测试套餐', 
-    credits: 1,
-    baseCredits: 1,
-    bonusCredits: 0,
-    price: 1,
-    tag: '仅供测试'
-  },
-  { 
     id: 'basic', 
     name: '普通套餐', 
     credits: 35, 
