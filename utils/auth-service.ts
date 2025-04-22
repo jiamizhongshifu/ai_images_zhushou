@@ -223,6 +223,37 @@ class AuthService {
     }
     return AuthService.instance;
   }
+
+  public async refreshSession(): Promise<Session | null> {
+    try {
+      const { data: { session }, error } = await this.supabase.auth.getSession();
+      if (error) {
+        console.error('[AuthService] 刷新会话失败:', error);
+        return null;
+      }
+      return session;
+    } catch (error) {
+      console.error('[AuthService] 刷新会话时发生错误:', error);
+      return null;
+    }
+  }
+
+  public async forceSyncAuthState(): Promise<void> {
+    try {
+      const { data: { session }, error } = await this.supabase.auth.getSession();
+      if (error) {
+        console.error('[AuthService] 强制同步认证状态失败:', error);
+        return;
+      }
+      
+      await this.handleAuthChange(
+        session ? 'SIGNED_IN' : 'SIGNED_OUT',
+        session
+      );
+    } catch (error) {
+      console.error('[AuthService] 强制同步认证状态时发生错误:', error);
+    }
+  }
 }
 
 // 创建单例实例
@@ -238,25 +269,9 @@ export const signOut = async () => {
 
 // 添加缺失的导出函数
 export const refreshSession = async (): Promise<Session | null> => {
-  const supabase = authService.getSupabaseClient();
-  const { data: { session }, error } = await supabase.auth.getSession();
-  if (error) {
-    console.error('[AuthService] 刷新会话失败:', error);
-    return null;
-  }
-  return session;
+  return await authService.refreshSession();
 };
 
 export const forceSyncAuthState = async (): Promise<void> => {
-  const supabase = authService.getSupabaseClient();
-  const { data: { session }, error } = await supabase.auth.getSession();
-  if (error) {
-    console.error('[AuthService] 强制同步认证状态失败:', error);
-    return;
-  }
-  
-  await authService['handleAuthChange'](
-    session ? 'SIGNED_IN' : 'SIGNED_OUT',
-    session
-  );
+  await authService.forceSyncAuthState();
 };
