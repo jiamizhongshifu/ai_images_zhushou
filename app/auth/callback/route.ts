@@ -51,6 +51,29 @@ const clientScript = `
     }
   } else {
     console.log('[AuthCallback] 未找到 code_verifier，继续使用标准流程');
+    
+    // 添加额外代码：如果无法找到 code_verifier，尝试在5秒后刷新页面
+    setTimeout(function() {
+      if (document.querySelector('.sub-message')) {
+        document.querySelector('.sub-message').textContent = '验证超时，请点击下方按钮重试';
+      }
+      
+      // 创建重试按钮
+      const retryButton = document.createElement('button');
+      retryButton.innerText = '重新登录';
+      retryButton.style.padding = '10px 20px';
+      retryButton.style.backgroundColor = '#3b82f6';
+      retryButton.style.color = 'white';
+      retryButton.style.border = 'none';
+      retryButton.style.borderRadius = '4px';
+      retryButton.style.cursor = 'pointer';
+      retryButton.style.marginTop = '20px';
+      retryButton.onclick = function() {
+        window.location.href = '/sign-in?retry=true';
+      };
+      
+      document.body.appendChild(retryButton);
+    }, 5000);
   }
 })();
 </script>
