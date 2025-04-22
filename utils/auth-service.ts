@@ -254,6 +254,51 @@ class AuthService {
       console.error('[AuthService] 强制同步认证状态时发生错误:', error);
     }
   }
+
+  // 添加获取用户信息的方法
+  public async getUserInfo() {
+    try {
+      // 首先尝试从内存状态获取
+      if (this.memoryAuthState.user) {
+        return {
+          id: this.memoryAuthState.user.id,
+          email: this.memoryAuthState.user.email,
+          role: this.memoryAuthState.user.role,
+          avatar_url: this.memoryAuthState.user.user_metadata?.avatar_url
+        };
+      }
+
+      // 如果内存中没有，尝试从会话中获取
+      const { data: { session }, error } = await this.supabase.auth.getSession();
+      if (error) {
+        console.error('[AuthService] 获取用户会话失败:', error);
+        return null;
+      }
+
+      if (!session?.user) {
+        console.warn('[AuthService] 未找到有效的用户会话');
+        return null;
+      }
+
+      // 更新内存状态
+      await this.updateAuthState({
+        user: session.user,
+        email: session.user.email,
+        isAuthenticated: true,
+        session
+      });
+
+      return {
+        id: session.user.id,
+        email: session.user.email,
+        role: session.user.role,
+        avatar_url: session.user.user_metadata?.avatar_url
+      };
+    } catch (error) {
+      console.error('[AuthService] 获取用户信息时发生错误:', error);
+      return null;
+    }
+  }
 }
 
 // 创建单例实例
@@ -274,4 +319,9 @@ export const refreshSession = async (): Promise<Session | null> => {
 
 export const forceSyncAuthState = async (): Promise<void> => {
   await authService.forceSyncAuthState();
+};
+
+// 导出 getUserInfo 函数
+export const getUserInfo = async () => {
+  return await authService.getUserInfo();
 };
