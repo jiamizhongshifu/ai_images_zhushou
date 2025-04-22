@@ -109,7 +109,7 @@ export default function LoginForm({ message }: LoginFormProps) {
             access_type: 'offline',
             prompt: 'consent',
           },
-          redirectTo: `${window.location.origin}/auth/callback?redirect=${encodeURIComponent(redirectParam || '/protected')}`,
+          redirectTo: `${window.location.origin}/auth/callback?redirect=${encodeURIComponent(redirectParam || '/protected')}&auth_time=${Date.now()}`,
           skipBrowserRedirect: false,
         }
       });
