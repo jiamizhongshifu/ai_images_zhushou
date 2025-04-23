@@ -9,7 +9,7 @@ export async function GET(request: Request) {
   try {
     console.log('[Auth Callback] 开始处理认证回调');
     
-    const requestUrl = new URL(request.url);
+  const requestUrl = new URL(request.url);
     const code = requestUrl.searchParams.get('code');
     const error = requestUrl.searchParams.get('error');
     const error_description = requestUrl.searchParams.get('error_description');
@@ -51,7 +51,7 @@ export async function GET(request: Request) {
       return NextResponse.redirect(
         `${requestUrl.origin}/sign-in?error=${encodeURIComponent('无法获取有效会话')}`
       );
-    }
+  }
 
     console.log('[Auth Callback] 认证成功，重定向到受保护页面');
 

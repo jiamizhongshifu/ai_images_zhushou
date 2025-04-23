@@ -73,10 +73,10 @@ export async function middleware(request: NextRequest) {
         maxAge: 0
       });
       res.cookies.set('auth_logged_out', '', {
-        path: '/',
-        expires: new Date(0),
-        maxAge: 0
-      });
+          path: '/',
+          expires: new Date(0),
+          maxAge: 0
+        });
       res.cookies.set('logged_out', '', {
         path: '/',
         expires: new Date(0),
@@ -121,10 +121,10 @@ export async function middleware(request: NextRequest) {
           maxAge: 0
         });
         res.cookies.set('auth_logged_out', '', {
-          path: '/',
-          expires: new Date(0),
-          maxAge: 0
-        });
+            path: '/',
+            expires: new Date(0),
+            maxAge: 0
+          });
         res.cookies.set('logged_out', '', {
           path: '/',
           expires: new Date(0),

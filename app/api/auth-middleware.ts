@@ -176,7 +176,7 @@ export async function getCurrentUser(supabase: SupabaseClient): Promise<User> {
       );
     }
     
-    return user;
+  return user;
   } catch (error) {
     if (error instanceof AuthError) {
       throw error;
@@ -192,7 +192,7 @@ export async function getCurrentUser(supabase: SupabaseClient): Promise<User> {
  * API认证中间件
  */
 export async function withApiAuth(
-  req: Request,
+  req: Request, 
   handler: (user: User, supabase: SupabaseClient) => Promise<Response>
 ) {
   try {

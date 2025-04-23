@@ -21,7 +21,7 @@ const defaultUrl = process.env.VERCEL_URL
 
 export const metadata: Metadata = {
   metadataBase: new URL(defaultUrl),
-  title: "IMG图图 - AI图像创意平台",
+  title: "iMG图图 - AI图像创意平台",
   description: "将您的照片转化为魔幻风格的艺术作品，AI智能图像创作平台",
 };
 

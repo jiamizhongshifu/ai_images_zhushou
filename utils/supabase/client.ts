@@ -105,8 +105,8 @@ export const createClient = () => {
   return createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
+      {
+        cookies: {
         get(name: string) {
           if (!isBrowser) return '';
           return document.cookie
@@ -122,19 +122,19 @@ export const createClient = () => {
           if (options.secure) cookieStr += '; secure';
           if (typeof options.sameSite === 'string') {
             cookieStr += `; samesite=${options.sameSite.toLowerCase()}`;
-          }
+              }
           document.cookie = cookieStr;
         },
         remove(name: string, options: CookieOptions) {
           if (!isBrowser) return;
           document.cookie = `${name}=; path=${options.path || '/'}; expires=Thu, 01 Jan 1970 00:00:00 GMT`;
+          },
         },
-      },
-      auth: {
+        auth: {
         autoRefreshToken: true,
-        persistSession: true,
+          persistSession: true,
         detectSessionInUrl: true
-      },
-    }
-  );
+        },
+      }
+    );
 };

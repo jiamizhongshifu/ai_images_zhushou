@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Home, Edit3, History, HelpCircle, User, LogOut, LogIn, Gem, Loader2 } from "lucide-react";
+import { Home, Edit3, History, HelpCircle, User, LogOut, LogIn, Gem, Loader2, FileText } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { buttonVariants } from "@/components/ui/button";
 import { authService } from "@/utils/auth-service";
@@ -14,6 +14,7 @@ import { buildRelativeUrl } from '@/utils/url';
 import Image from 'next/image';
 import { Button } from '@/components/ui/button';
 import { limitRequest, REQUEST_KEYS, isRequestInCooldown } from '@/utils/request-limiter';
+import { ChangelogBadge } from "@/components/changelog-badge";
 
 // 定义CREDIT_EVENTS常量，与credit-service.ts中保持一致
 const CREDIT_EVENTS = {
@@ -50,21 +51,27 @@ export function MainNav({ providedAuthState }: MainNavProps) {
   // 导航项配置
   const navItems: NavItem[] = [
     {
-      name: "创作",
+      name: "图像创作",
       href: "/protected",
       icon: <Edit3 className="h-4 w-4 mr-2" />,
       requiresAuth: true,
     },
     {
-      name: "历史",
+      name: "历史记录",
       href: "/protected/history",
       icon: <History className="h-4 w-4 mr-2" />,
       requiresAuth: true,
     },
     {
-      name: "问答",
+      name: "常见问提",
       href: "/qa",
       icon: <HelpCircle className="h-4 w-4 mr-2" />,
+      requiresAuth: false,
+    },
+    {
+      name: "更新日志",
+      href: "/changelog",
+      icon: <FileText className="h-4 w-4 mr-2" />,
       requiresAuth: false,
     },
   ];
@@ -360,19 +367,21 @@ export function MainNav({ providedAuthState }: MainNavProps) {
                   >
                     {item.icon}
                     {item.name}
+                    {item.name === "更新日志" && <ChangelogBadge />}
                   </span>
                 ) : (
                   // 正常链接
                   <Link
                     href={item.href}
-            className={cn(
+                    className={cn(
                       "flex items-center text-muted-foreground hover:text-foreground transition-colors",
                       pathname === item.href && "text-foreground font-semibold"
                     )}
                     onClick={(e) => handleNavClick(e, item)}
-          >
-            {item.icon}
+                  >
+                    {item.icon}
                     {item.name}
+                    {item.name === "更新日志" && <ChangelogBadge />}
                   </Link>
                 )}
               </div>
