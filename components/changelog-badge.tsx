@@ -1,27 +1,44 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import { Bell } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { changelogData } from "@/data/changelog";
 
 export function ChangelogBadge() {
   const router = useRouter();
+  const pathname = usePathname();
   const [hasNewChanges, setHasNewChanges] = useState(false);
   
+  // 获取最新版本号
+  const getLatestVersion = () => {
+    const publishedVersions = changelogData
+      .filter(entry => entry.isPublished && entry.version !== "即将推出")
+      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    return publishedVersions[0]?.version || "";
+  };
+
   useEffect(() => {
-    // 检查用户是否已查看最新更新
+    const currentVersion = getLatestVersion();
     const lastViewedVersion = localStorage.getItem("last_viewed_changelog") || "";
-    const currentVersion = "v1.1.0"; // 当前最新版本
     
-    if (lastViewedVersion !== currentVersion) {
+    // 如果当前在更新日志页面，自动更新已查看状态
+    if (pathname === "/changelog" && currentVersion) {
+      localStorage.setItem("last_viewed_changelog", currentVersion);
+      setHasNewChanges(false);
+    } 
+    // 否则检查是否有新更新
+    else if (lastViewedVersion !== currentVersion && currentVersion) {
       setHasNewChanges(true);
     }
-  }, []);
+  }, [pathname]);
   
   const handleClick = () => {
-    // 更新查看记录
-    localStorage.setItem("last_viewed_changelog", "v1.1.0"); // 当前最新版本
+    const currentVersion = getLatestVersion();
+    if (currentVersion) {
+      localStorage.setItem("last_viewed_changelog", currentVersion);
+    }
     setHasNewChanges(false);
     router.push("/changelog");
   };
