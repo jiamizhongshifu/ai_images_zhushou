@@ -21,8 +21,40 @@ const defaultUrl = process.env.VERCEL_URL
 
 export const metadata: Metadata = {
   metadataBase: new URL(defaultUrl),
-  title: "iMG图图 - AI图像创意平台",
-  description: "将您的照片转化为魔幻风格的艺术作品，AI智能图像创作平台",
+  title: "iMG图图 - AI智能图像创作平台 | 一键生成高质量AI艺术作品",
+  description: "iMG图图是领先的AI图像创作平台，只需简单描述即可生成精美图像。支持多种风格，一键导出高清素材，满足您的创意需求。",
+  keywords: "iMG图图,AI图像,AI绘画,人工智能作图,AI艺术生成,智能图像处理,AI画图工具",
+  authors: [{ name: "iMG图图团队" }],
+  openGraph: {
+    type: "website",
+    locale: "zh_CN",
+    url: defaultUrl,
+    title: "iMG图图 - AI智能图像创作平台",
+    description: "只需简单描述，IMG图图AI即可为您生成精美图像，多种风格一键导出",
+    siteName: "IMG图图",
+    images: [
+      {
+        url: `${defaultUrl}/opengraph-image.png`,
+        width: 1200,
+        height: 630,
+        alt: "IMG图图 - AI智能图像创作平台"
+      }
+    ]
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "IMG图图 - AI智能图像创作平台",
+    description: "只需简单描述，IMG图图AI即可为您生成精美图像，多种风格一键导出",
+    images: [`${defaultUrl}/twitter-image.png`]
+  },
+  icons: {
+    icon: "/images/logo/bunny-logo.png",
+    shortcut: "/images/logo/bunny-logo.png",
+    apple: "/images/logo/bunny-logo.png"
+  },
+  alternates: {
+    canonical: defaultUrl
+  }
 };
 
 // 替换Geist字体为Ghiblit.ai风格的字体组合

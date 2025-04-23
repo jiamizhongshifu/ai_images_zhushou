@@ -1,0 +1,12 @@
+# IMG图图 - AI智能图像创作平台
+User-agent: *
+Allow: /
+
+# 禁止访问API路径
+Disallow: /api/
+Disallow: /auth/
+Disallow: /_next/
+Disallow: /api-docs/
+
+# 站点地图
+Sitemap: https://www.imgtool.com/sitemap.xml 

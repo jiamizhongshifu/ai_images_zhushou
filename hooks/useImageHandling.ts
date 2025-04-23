@@ -228,44 +228,41 @@ export default function useImageHandling(
       const urlToDownload = imageUrl.includes('openai.com') ? 
         getProxyImageUrl(imageUrl) : imageUrl;
       
-      // 尝试从缓存获取图片
-      const cache = await caches.open('image-downloads');
-      const cachedResponse = await cache.match(imageUrl);
-      
-      if (cachedResponse) {
-        const blob = await cachedResponse.blob();
-        await downloadBlob(blob, filename);
-        toast.success("图片下载成功", { id: toastId });
-        return;
-      }
-      
       // 构建下载API URL
-      let downloadUrl = `/api/download-image?url=${encodeURIComponent(urlToDownload)}`;
-      
-      // 如果提供了文件名，添加到URL
-      if (filename) {
-        const safeFilename = encodeURIComponent(filename);
-        downloadUrl += `&filename=${safeFilename}`;
-      }
-      
+      const downloadUrl = `/api/download-image?url=${encodeURIComponent(urlToDownload)}${
+        filename ? `&filename=${encodeURIComponent(filename)}` : ''
+      }`;
+
+      // 使用 streams 直接下载，避免内存中的额外复制
       const response = await fetch(downloadUrl);
       
       if (!response.ok) {
         const error = await response.json();
         throw new Error(error.message || '下载失败');
       }
+
+      // 获取文件名
+      const contentDisposition = response.headers.get('content-disposition');
+      const defaultFilename = filename || `image-${Date.now()}.png`;
+      const actualFilename = contentDisposition
+        ? contentDisposition.split('filename=')[1]?.replace(/["']/g, '') 
+        : defaultFilename;
+
+      // 使用浏览器原生下载能力
+      const a = document.createElement('a');
+      a.href = window.URL.createObjectURL(await response.blob());
+      a.download = actualFilename;
+      a.style.display = 'none';
+      a.click();
       
-      const blob = await response.blob();
+      // 延迟清理 URL 对象
+      setTimeout(() => window.URL.revokeObjectURL(a.href), 100);
       
-      // 缓存下载的图片
-      await cache.put(imageUrl, new Response(blob.slice(0)));
-      
-      await downloadBlob(blob, filename);
       toast.success("图片下载成功", { id: toastId });
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : '下载失败';
       toast.error(errorMessage, { id: toastId });
-      throw error; // 重新抛出错误以便调用者处理
+      throw error;
     }
   }, []);
 

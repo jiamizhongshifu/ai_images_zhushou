@@ -42,18 +42,18 @@ function Hero() {
             </div>
             <div className="flex gap-4 flex-col">
               <h1 className="text-5xl md:text-7xl max-w-lg tracking-tighter text-left font-regular">
-                AI赋能，图像创造无限可能
+                IMG图图: <span className="text-primary">AI智能图像创作平台</span>
               </h1>
               <p className="text-xl leading-relaxed tracking-tight text-muted-foreground max-w-md text-left">
-                用文字描述你想要的画面，AI即刻为你创作精美图像。
-                无需专业技能，轻松创造广告素材、社交媒体图片、产品展示、艺术作品等，
-                让创意不再受限于技术壁垒。
+                IMG图图让AI图像创作变得简单高效。只需输入文字描述，立即获得专业级图像作品。
+                无需设计经验，轻松创建广告素材、社交媒体图片、产品展示和艺术作品，
+                让您的创意不再受限。
               </p>
             </div>
             <div className="flex flex-row gap-4 relative z-20">
               <Link href="/sign-in">
                 <Button size="lg" className="gap-4 !opacity-100 !bg-primary border-0 font-medium">
-                  立即体验 <MoveRight className="w-4 h-4" />
+                  立即体验IMG图图 <MoveRight className="w-4 h-4" />
                 </Button>
               </Link>
             </div>
