@@ -42,12 +42,11 @@ function Hero() {
             </div>
             <div className="flex gap-4 flex-col">
               <h1 className="text-5xl md:text-7xl max-w-lg tracking-tighter text-left font-regular">
-                IMG图图: <span className="text-primary">AI智能图像创作平台</span>
+                IMG图图: <span className="text-primary">吉卜力风格AI图像创作平台</span>
               </h1>
               <p className="text-xl leading-relaxed tracking-tight text-muted-foreground max-w-md text-left">
-                IMG图图让AI图像创作变得简单高效。只需输入文字描述，立即获得专业级图像作品。
-                无需设计经验，轻松创建广告素材、社交媒体图片、产品展示和艺术作品，
-                让您的创意不再受限。
+                IMG图图(imgtutu)让AI图像创作变得简单高效。支持吉卜力、动物森友会、新海诚等多种风格，轻松创建专业级图像作品。
+                只需输入文字描述，立即获得动物森友会风格的可爱场景、新海诚风格的唯美画面，让您的创意不再受限。
               </p>
             </div>
             <div className="flex flex-row gap-4 relative z-20">

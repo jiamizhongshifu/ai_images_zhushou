@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Home, Edit3, History, HelpCircle, User, LogOut, LogIn, Gem, Loader2, FileText } from "lucide-react";
+import { Home, Edit3, History, HelpCircle, User, LogOut, LogIn, Gem, Loader2, FileText, Palette, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { buttonVariants } from "@/components/ui/button";
 import { authService } from "@/utils/auth-service";
@@ -15,6 +15,12 @@ import Image from 'next/image';
 import { Button } from '@/components/ui/button';
 import { limitRequest, REQUEST_KEYS, isRequestInCooldown } from '@/utils/request-limiter';
 import { ChangelogBadge } from "@/components/changelog-badge";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 // 定义CREDIT_EVENTS常量，与credit-service.ts中保持一致
 const CREDIT_EVENTS = {
@@ -29,6 +35,11 @@ type NavItem = {
   href: string;
   icon: React.ReactNode;
   requiresAuth?: boolean;
+  dropdownItems?: Array<{
+    name: string;
+    href: string;
+    icon?: React.ReactNode;
+  }>;
 };
 
 // 组件属性类型
@@ -353,6 +364,34 @@ export function MainNav({ providedAuthState }: MainNavProps) {
           {navItems.map((item) => {
             // 如果需要认证但未认证，禁用链接
             const isDisabled = item.requiresAuth && !isAuthenticated;
+            
+            // 如果有下拉菜单，使用DropdownMenu组件
+            if (item.dropdownItems) {
+              return (
+                <div key={item.href} className="relative">
+                  <DropdownMenu>
+                    <DropdownMenuTrigger className="flex items-center text-muted-foreground hover:text-foreground transition-colors focus-visible:outline-none">
+                      {item.icon}
+                      {item.name}
+                      <ChevronDown className="h-4 w-4 ml-1" />
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="center">
+                      {item.dropdownItems.map((dropdownItem) => (
+                        <DropdownMenuItem key={dropdownItem.href} asChild>
+                          <Link 
+                            href={dropdownItem.href}
+                            className="w-full flex items-center cursor-pointer"
+                          >
+                            {dropdownItem.icon}
+                            {dropdownItem.name}
+                          </Link>
+                        </DropdownMenuItem>
+                      ))}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
+              );
+            }
             
             return (
               <div key={item.href} className="relative">

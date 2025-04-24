@@ -21,30 +21,30 @@ const defaultUrl = process.env.VERCEL_URL
 
 export const metadata: Metadata = {
   metadataBase: new URL(defaultUrl),
-  title: "iMG图图 - AI智能图像创作平台 | 一键生成高质量AI艺术作品",
-  description: "iMG图图是领先的AI图像创作平台，只需简单描述即可生成精美图像。支持多种风格，一键导出高清素材，满足您的创意需求。",
-  keywords: "iMG图图,AI图像,AI绘画,人工智能作图,AI艺术生成,智能图像处理,AI画图工具",
-  authors: [{ name: "iMG图图团队" }],
+  title: "IMG图图 - 吉卜力风格AI图像创作 | 动物森友会、新海诚风格图片生成工具",
+  description: "IMG图图(imgtutu)是专业的AI图像创作平台，支持吉卜力、动物森友会、新海诚等多种风格。只需简单描述即可生成精美图像，一键导出高清素材。",
+  keywords: "imgtutu,img图图,吉卜力,动物森友会,新海诚,图片生成,AI图像,AI绘画,人工智能作图,AI艺术生成",
+  authors: [{ name: "IMG图图团队" }],
   openGraph: {
     type: "website",
     locale: "zh_CN",
     url: defaultUrl,
-    title: "iMG图图 - AI智能图像创作平台",
-    description: "只需简单描述，IMG图图AI即可为您生成精美图像，多种风格一键导出",
+    title: "IMG图图 - 吉卜力风格AI图像创作平台",
+    description: "使用IMG图图(imgtutu)轻松创作吉卜力、动物森友会、新海诚风格图像，多种风格一键导出",
     siteName: "IMG图图",
     images: [
       {
         url: `${defaultUrl}/opengraph-image.png`,
         width: 1200,
         height: 630,
-        alt: "IMG图图 - AI智能图像创作平台"
+        alt: "IMG图图 - 吉卜力风格AI图像创作平台"
       }
     ]
   },
   twitter: {
     card: "summary_large_image",
-    title: "IMG图图 - AI智能图像创作平台",
-    description: "只需简单描述，IMG图图AI即可为您生成精美图像，多种风格一键导出",
+    title: "IMG图图 - 吉卜力风格AI图像创作平台",
+    description: "使用IMG图图(imgtutu)轻松创作吉卜力、动物森友会、新海诚风格图像，多种风格一键导出",
     images: [`${defaultUrl}/twitter-image.png`]
   },
   icons: {

@@ -10,37 +10,37 @@ export function TransformationExamples() {
       id: 1,
       beforeImage: "/examples/zhenren.jpg",
       afterImage: "/examples/ghibli.jpg",
-      title: "吉卜力风格",
+      title: "吉卜力风格"
     },
     {
       id: 2,
       beforeImage: "/examples/zhenren.jpg",
       afterImage: "/examples/snoopy.jpg",
-      title: "史努比风格",
+      title: "史努比风格"
     },
     {
       id: 3,
       beforeImage: "/examples/zhenren.jpg",
       afterImage: "/examples/lego.jpg",
-      title: "乐高风格",
+      title: "乐高风格"
     },
     {
       id: 4,
       beforeImage: "/examples/zhenren.jpg",
       afterImage: "/examples/shinkai.jpg",
-      title: "新海诚风格",
+      title: "新海诚风格"
     },
     {
       id: 5,
       beforeImage: "/examples/zhenren.jpg",
       afterImage: "/examples/disney.jpg",
-      title: "迪士尼风格",
+      title: "迪士尼风格"
     },
     {
       id: 6,
       beforeImage: "/examples/zhenren.jpg",
       afterImage: "/examples/senyouhui.jpg",
-      title: "动物森友会风格",
+      title: "动物森友会风格"
     }
   ];
 
