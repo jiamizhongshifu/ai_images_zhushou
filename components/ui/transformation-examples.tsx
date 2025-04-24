@@ -57,14 +57,13 @@ export function TransformationExamples() {
         
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8 mb-12">
           {examples.map((example) => (
-            <div key={example.id} className="space-y-4 bg-card rounded-xl overflow-hidden p-3 shadow-sm">
-              <div className="aspect-square">
+            <div key={example.id} className="rounded-xl overflow-hidden shadow-sm">
+              <div className="aspect-video">
                 <ImageComparisonSlider 
                   beforeImage={example.beforeImage} 
                   afterImage={example.afterImage}
                 />
               </div>
-              <h3 className="font-medium text-center py-2">{example.title}</h3>
             </div>
           ))}
         </div>
