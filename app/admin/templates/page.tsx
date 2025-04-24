@@ -11,6 +11,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { ImageWithFallback } from "@/components/ui/image-with-fallback";
 import {
   Select,
   SelectContent,
@@ -18,6 +19,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { toast } from "react-hot-toast";
 
 // 模板类型
 interface Template {
@@ -64,9 +66,16 @@ export default function AdminTemplatesPage() {
       
       if (statusFilter !== "all") {
         params.append("status", statusFilter);
+      } else {
+        // 显式请求所有状态的模板
+        params.append("status", "all");
       }
+      
+      // 添加随机时间戳，确保不使用缓存数据
+      params.append("_t", Date.now().toString());
 
       // 发送请求
+      console.log('正在获取模板列表，参数:', params.toString());
       const response = await fetch(`/api/templates?${params.toString()}`);
       
       if (!response.ok) {
@@ -76,6 +85,7 @@ export default function AdminTemplatesPage() {
       const data = await response.json();
       
       if (data.success) {
+        console.log('获取到模板列表:', data.data.length, '条数据');
         setTemplates(data.data || []);
       } else {
         throw new Error(data.error || "获取模板列表失败");
@@ -93,6 +103,25 @@ export default function AdminTemplatesPage() {
     fetchTemplates();
   }, [searchQuery, statusFilter, sortField, sortOrder]);
 
+  // 添加路由变化监听，确保从创建页面返回时刷新列表
+  useEffect(() => {
+    // 在组件挂载时和路由变化时获取数据
+    const handleRouteChange = () => {
+      console.log('路由变化，刷新模板列表');
+      fetchTemplates();
+    };
+
+    // 监听路由变化
+    window.addEventListener('popstate', handleRouteChange);
+    
+    // 初始化时强制刷新一次
+    fetchTemplates();
+
+    return () => {
+      window.removeEventListener('popstate', handleRouteChange);
+    };
+  }, []);
+
   // 处理排序
   const handleSort = (field: string) => {
     if (field === sortField) {
@@ -106,13 +135,37 @@ export default function AdminTemplatesPage() {
   // 处理状态更新
   const handleStatusChange = async (id: string, newStatus: string) => {
     try {
-      // 这里应该有一个真实的API来更新状态
-      alert(`将更新模板ID: ${id} 的状态为: ${newStatus}`);
+      setIsLoading(true);
+      
+      // 调用API更新模板状态
+      const response = await fetch(`/api/templates/${id}`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ status: newStatus })
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => null);
+        throw new Error(errorData?.error || `更新状态失败 (${response.status})`);
+      }
+      
+      const data = await response.json();
+      
+      if (data.success) {
+        toast.success(`已将模板"${data.data.name}"状态更新为${newStatus === "published" ? "已发布" : "草稿"}`);
+      } else {
+        throw new Error(data.error || "更新状态失败");
+      }
+      
       // 重新获取数据
       await fetchTemplates();
     } catch (err) {
       console.error("更新状态失败:", err);
-      setError("更新状态失败");
+      setError(err instanceof Error ? err.message : "更新状态失败");
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -123,13 +176,33 @@ export default function AdminTemplatesPage() {
     }
     
     try {
-      // 这里应该有一个真实的API来删除模板
-      alert(`将删除模板ID: ${id}`);
+      setIsLoading(true);
+      
+      // 调用API删除模板
+      const response = await fetch(`/api/templates/${id}`, {
+        method: "DELETE"
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => null);
+        throw new Error(errorData?.error || `删除模板失败 (${response.status})`);
+      }
+      
+      const data = await response.json();
+      
+      if (data.success) {
+        toast.success("模板已成功删除");
+      } else {
+        throw new Error(data.error || "删除模板失败");
+      }
+      
       // 重新获取数据
       await fetchTemplates();
     } catch (err) {
       console.error("删除模板失败:", err);
-      setError("删除模板失败");
+      setError(err instanceof Error ? err.message : "删除模板失败");
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -149,12 +222,13 @@ export default function AdminTemplatesPage() {
     <div className="container mx-auto px-4 py-8">
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-2xl font-bold">模板管理</h1>
-        <Button asChild>
-          <Link href="/admin/templates/new">
-            <Plus className="h-4 w-4 mr-2" />
-            新建模板
-          </Link>
-        </Button>
+        <Link 
+          href="/admin/templates/new" 
+          className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-[#ffffff] font-bold py-3 px-6 rounded-lg shadow-md hover:shadow-lg transition-all"
+        >
+          <Plus className="h-5 w-5 text-white" strokeWidth={2.5} />
+          <span className="text-white text-base tracking-wide">新建模板</span>
+        </Link>
       </div>
 
       {/* 筛选和搜索 */}
@@ -253,7 +327,7 @@ export default function AdminTemplatesPage() {
                 <tr key={template.id} className="border-b">
                   <td className="p-3">
                     <div className="relative w-16 h-16 rounded-md overflow-hidden">
-                      <Image
+                      <ImageWithFallback
                         src={template.preview_image}
                         alt={template.name}
                         fill

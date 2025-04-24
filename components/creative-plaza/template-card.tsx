@@ -63,8 +63,11 @@ export function TemplateCard({ template }: TemplateCardProps) {
               variant="ghost" 
               size="sm" 
               className="text-xs p-0 h-auto hover:bg-transparent hover:text-primary"
+              asChild
             >
-              立即使用 <ChevronRight className="h-3 w-3 ml-1" />
+              <Link href={`/creative-plaza/template/${template.id}`}>
+                立即使用 <ChevronRight className="h-3 w-3 ml-1" />
+              </Link>
             </Button>
           </div>
           

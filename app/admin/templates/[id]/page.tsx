@@ -19,11 +19,12 @@ import {
 } from "@/components/ui/select";
 import { 
   Switch 
-} from "@/components/ui/switch";
+} from "../../ui/switch";
 import { 
   Card, 
   CardContent 
 } from "@/components/ui/card";
+import { toast } from "react-hot-toast";
 
 // 模板类型
 interface Template {
@@ -60,7 +61,6 @@ export default function EditTemplatePage() {
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [styles, setStyles] = useState<Style[]>([]);
   
   // 表单数据
   const [template, setTemplate] = useState<Template>({
@@ -68,14 +68,14 @@ export default function EditTemplatePage() {
     name: "",
     description: "",
     preview_image: "",
-    style_id: null,
     requires_image: false,
     prompt_required: true,
     prompt_guide: "",
     prompt_placeholder: "请输入你的创意描述...",
     base_prompt: "",
     tags: [],
-    status: "draft"
+    status: "published",
+    style_id: null
   });
   
   // 标签输入
@@ -96,53 +96,50 @@ export default function EditTemplatePage() {
     setError(null);
     
     try {
+      console.log('正在获取模板数据:', templateId);
       const response = await fetch(`/api/templates/${templateId}`);
       
       if (!response.ok) {
-        throw new Error("获取模板数据失败");
+        console.error('获取模板失败:', {
+          status: response.status,
+          statusText: response.statusText
+        });
+        
+        const errorData = await response.json().catch(() => null);
+        console.error('错误详情:', errorData);
+        
+        throw new Error(
+          errorData?.error || 
+          `获取模板失败 (HTTP ${response.status}: ${response.statusText})`
+        );
       }
       
       const data = await response.json();
+      console.log('获取到的模板数据:', data);
       
       if (data.success) {
         setTemplate(data.data);
-        setPreviewUrl(data.data.preview_image);
+        // 如果有预览图片，设置预览URL
+        if (data.data.preview_image) {
+          setPreviewUrl(data.data.preview_image);
+        }
       } else {
         throw new Error(data.error || "获取模板数据失败");
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "获取模板数据失败");
       console.error("获取模板数据错误:", err);
+      const errorMessage = err instanceof Error 
+        ? err.message 
+        : "获取模板数据失败，请检查网络连接或刷新页面重试";
+      setError(errorMessage);
     } finally {
       setIsLoading(false);
-    }
-  };
-  
-  // 获取风格列表
-  const fetchStyles = async () => {
-    try {
-      const response = await fetch("/api/styles");
-      
-      if (!response.ok) {
-        throw new Error("获取风格列表失败");
-      }
-      
-      const data = await response.json();
-      
-      if (data.success) {
-        setStyles(data.data || []);
-      } else {
-        throw new Error(data.error || "获取风格列表失败");
-      }
-    } catch (err) {
-      console.error("获取风格列表错误:", err);
     }
   };
   
   // 初始加载
   useEffect(() => {
     fetchTemplateData();
-    fetchStyles();
   }, [templateId]);
   
   // 处理表单输入变化
@@ -158,7 +155,17 @@ export default function EditTemplatePage() {
   
   // 处理选择变化
   const handleSelectChange = (name: string, value: string) => {
-    setTemplate(prev => ({ ...prev, [name]: value === "null" ? null : value }));
+    console.log(`选择${name}改变为:`, value);
+    
+    // 对于风格ID，确保"null"字符串被转换为null值
+    if (name === "style_id") {
+      setTemplate(prev => ({ 
+        ...prev, 
+        [name]: value === "null" ? null : value 
+      }));
+    } else {
+      setTemplate(prev => ({ ...prev, [name]: value }));
+    }
   };
   
   // 处理标签添加
@@ -189,22 +196,58 @@ export default function EditTemplatePage() {
       // 创建预览URL
       const reader = new FileReader();
       reader.onloadend = () => {
-        setPreviewUrl(reader.result as string);
+        const previewImageUrl = reader.result as string;
+        setPreviewUrl(previewImageUrl);
+        // 清除template中的preview_image，因为我们将使用新上传的图片
+        setTemplate(prev => ({
+          ...prev,
+          preview_image: ""
+        }));
       };
       reader.readAsDataURL(file);
     }
   };
   
-  // 处理保存
-  const handleSave = async () => {
+  // 处理图片删除
+  const handleImageDelete = () => {
+    setPreviewUrl("");
+    setImageFile(null);
+    setTemplate(prev => ({
+      ...prev,
+      preview_image: ""
+    }));
+  };
+  
+  // 提交表单
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    console.log('提交表单:', {
+      isNewTemplate,
+      imageFile: !!imageFile,
+      previewUrl,
+      templatePreviewImage: template.preview_image
+    });
+    
     // 表单验证
     if (!template.name.trim()) {
-      setError("模板名称不能为空");
+      setError("请输入模板名称");
       return;
     }
     
-    if (!previewUrl) {
+    if (!template.description.trim()) {
+      setError("请输入模板描述");
+      return;
+    }
+    
+    // 修改图片验证逻辑
+    if (!imageFile && !previewUrl) {
       setError("请上传预览图片");
+      return;
+    }
+    
+    if (template.requires_image && !template.prompt_required) {
+      setError("当需要上传图片时，不能禁用提示词输入");
       return;
     }
     
@@ -212,66 +255,143 @@ export default function EditTemplatePage() {
     setError(null);
     
     try {
-      // 上传图片（如果有新图片）
-      let finalImageUrl = template.preview_image;
-      
-      if (imageFile) {
-        const formData = new FormData();
-        formData.append("file", imageFile);
-        
-        const uploadResponse = await fetch("/api/upload", {
-          method: "POST",
-          body: formData,
-        });
-        
-        if (!uploadResponse.ok) {
-          throw new Error("图片上传失败");
-        }
-        
-        const uploadData = await uploadResponse.json();
-        if (uploadData.success) {
-          finalImageUrl = uploadData.url;
-        } else {
-          throw new Error(uploadData.error || "图片上传失败");
-        }
-      }
-      
-      // 准备提交的数据
+      // 准备要发送的数据
       const templateData = {
         ...template,
-        preview_image: finalImageUrl
+        // 如果是新建或有新上传的图片，先不发送图片数据
+        preview_image: ''
       };
       
-      // 创建或更新模板
-      const url = isNewTemplate 
-        ? "/api/templates" 
-        : `/api/templates/${templateId}`;
-      
+      // 调用API创建或更新模板
+      const url = isNewTemplate ? "/api/templates" : `/api/templates/${templateId}`;
       const method = isNewTemplate ? "POST" : "PUT";
+      
+      console.log('发送请求:', {
+        url,
+        method,
+        templateData
+      });
       
       const response = await fetch(url, {
         method,
         headers: {
-          "Content-Type": "application/json",
+          "Content-Type": "application/json"
         },
-        body: JSON.stringify(templateData),
+        body: JSON.stringify(templateData)
       });
       
       if (!response.ok) {
-        throw new Error(`${isNewTemplate ? "创建" : "更新"}模板失败`);
+        const errorData = await response.json().catch(() => null);
+        throw new Error(errorData?.error || `HTTP error! status: ${response.status}`);
       }
       
       const data = await response.json();
       
-      if (data.success) {
-        // 保存成功，跳转回列表页
-        router.push("/admin/templates");
-      } else {
-        throw new Error(data.error || `${isNewTemplate ? "创建" : "更新"}模板失败`);
+      if (!data.success) {
+        throw new Error(data.error || "保存模板失败");
       }
+      
+      const savedTemplateId = data.data.id;
+      console.log('模板保存成功:', savedTemplateId);
+      
+      // 如果有新上传的图片，需要单独处理图片上传
+      if (imageFile) {
+        const formData = new FormData();
+        formData.append('file', imageFile);
+        
+        console.log('开始上传图片:', {
+          templateId: savedTemplateId,
+          imageType: imageFile.type,
+          imageSize: imageFile.size
+        });
+        
+        // 确保使用保存后的模板ID，并等待一段时间确保模板已创建
+        if (isNewTemplate) {
+          console.log('等待模板创建完成...');
+          // 增加等待时间到3秒
+          await new Promise(resolve => setTimeout(resolve, 3000));
+        }
+        
+        // 添加重试机制
+        let retryCount = 0;
+        const maxRetries = 3;
+        const retryDelay = 2000; // 2秒的重试延迟
+        
+        while (retryCount < maxRetries) {
+          try {
+            // 先验证模板是否存在
+            const checkResponse = await fetch(`/api/templates/${savedTemplateId}`);
+            if (!checkResponse.ok) {
+              console.log(`第${retryCount + 1}次检查：模板尚未就绪`);
+              await new Promise(resolve => setTimeout(resolve, retryDelay));
+              retryCount++;
+              continue;
+            }
+            
+            const checkData = await checkResponse.json();
+            if (!checkData.success) {
+              console.log(`第${retryCount + 1}次检查：模板数据无效`);
+              await new Promise(resolve => setTimeout(resolve, retryDelay));
+              retryCount++;
+              continue;
+            }
+            
+            console.log('模板验证成功，开始上传图片');
+            
+            const uploadResponse = await fetch(`/api/templates/${savedTemplateId}/upload-preview`, {
+              method: 'POST',
+              body: formData
+            });
+            
+            if (!uploadResponse.ok) {
+              const errorData = await uploadResponse.json().catch(() => null);
+              console.error('上传失败:', {
+                status: uploadResponse.status,
+                statusText: uploadResponse.statusText,
+                error: errorData
+              });
+              
+              if (uploadResponse.status === 404 && retryCount < maxRetries - 1) {
+                console.log(`第${retryCount + 1}次尝试上传失败，等待后重试...`);
+                await new Promise(resolve => setTimeout(resolve, retryDelay));
+                retryCount++;
+                continue;
+              }
+              
+              throw new Error(errorData?.error || '上传预览图片失败');
+            }
+            
+            const uploadData = await uploadResponse.json();
+            if (!uploadData.success) {
+              throw new Error(uploadData.error || '上传预览图片失败');
+            }
+            
+            console.log('图片上传成功');
+            break;
+          } catch (error) {
+            console.error('上传过程出错:', error);
+            if (retryCount === maxRetries - 1) {
+              throw error;
+            }
+            console.log(`第${retryCount + 1}次尝试失败，等待后重试...`);
+            await new Promise(resolve => setTimeout(resolve, retryDelay));
+            retryCount++;
+          }
+        }
+      }
+      
+      // 如果是新建模板，跳转到编辑页面
+      if (isNewTemplate) {
+        toast.success(`模板创建成功! ID: ${savedTemplateId}`);
+        // 添加时间戳参数，确保返回列表页面时不使用缓存数据
+        router.push(`/admin/templates?t=${Date.now()}`);
+      } else {
+        toast.success(`模板保存成功! ID: ${savedTemplateId}`);
+      }
+      
     } catch (err) {
-      setError(err instanceof Error ? err.message : `${isNewTemplate ? "创建" : "更新"}模板失败`);
-      console.error(`${isNewTemplate ? "创建" : "更新"}模板错误:`, err);
+      console.error("保存模板错误:", err);
+      setError(err instanceof Error ? err.message : "保存模板失败");
     } finally {
       setIsSaving(false);
     }
@@ -336,26 +456,6 @@ export default function EditTemplatePage() {
                     placeholder="输入模板描述"
                     rows={3}
                   />
-                </div>
-                
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">风格分类</label>
-                  <Select
-                    value={template.style_id === null ? "null" : template.style_id}
-                    onValueChange={(value) => handleSelectChange("style_id", value)}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="选择风格类型" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="null">无风格</SelectItem>
-                      {styles.map((style) => (
-                        <SelectItem key={style.id} value={style.id}>
-                          {style.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
                 </div>
                 
                 <div className="space-y-2">
@@ -469,60 +569,31 @@ export default function EditTemplatePage() {
                   <label htmlFor="base_prompt" className="text-sm font-medium">
                     基础提示词
                   </label>
+                  <div className="mb-2">
+                    <p className="text-xs text-muted-foreground mb-2">
+                      您可以通过在基础提示词中添加 <code className="bg-muted rounded px-1">{"{user_prompt}"}</code> 来指定用户输入提示词的位置。
+                      不添加占位符时，用户提示词会默认添加在基础提示词之前。
+                    </p>
+                  </div>
                   <Textarea
                     id="base_prompt"
                     name="base_prompt"
                     value={template.base_prompt}
                     onChange={handleInputChange}
-                    placeholder="输入基础提示词，将与用户提示词组合使用"
+                    placeholder="输入基础提示词，例如：a photo of {user_prompt}, high quality, detailed"
                     rows={4}
                   />
+                  <div className="mt-2 p-3 bg-muted/30 rounded text-sm">
+                    <p className="font-medium mb-1">预览效果：</p>
+                    <p className="text-muted-foreground text-xs">
+                      {template.base_prompt.includes("{user_prompt}") 
+                        ? template.base_prompt.replace("{user_prompt}", "<用户输入的提示词>") 
+                        : "<用户输入的提示词> " + template.base_prompt}
+                    </p>
+                  </div>
                 </div>
               </CardContent>
             </Card>
-            
-            <div className="flex justify-between">
-              <Button
-                variant="outline"
-                onClick={() => router.back()}
-              >
-                取消
-              </Button>
-              <div className="flex gap-2">
-                <Button
-                  variant="default"
-                  onClick={handleSave}
-                  disabled={isSaving}
-                >
-                  {isSaving ? (
-                    <span className="flex items-center gap-2">
-                      <div className="h-4 w-4 border-2 border-current border-t-transparent animate-spin rounded-full"></div>
-                      保存中...
-                    </span>
-                  ) : (
-                    <span className="flex items-center gap-2">
-                      <Save className="h-4 w-4" />
-                      保存
-                    </span>
-                  )}
-                </Button>
-                {!isNewTemplate && (
-                  <Button
-                    variant="destructive"
-                    onClick={() => {
-                      if (confirm("确定要删除此模板吗？此操作不可撤销。")) {
-                        // 删除模板逻辑
-                        alert("删除模板：" + templateId);
-                        router.push("/admin/templates");
-                      }
-                    }}
-                  >
-                    <Trash className="h-4 w-4 mr-2" />
-                    删除
-                  </Button>
-                )}
-              </div>
-            </div>
           </div>
           
           {/* 右侧预览 */}
@@ -544,10 +615,7 @@ export default function EditTemplatePage() {
                         variant="destructive"
                         size="icon"
                         className="absolute top-2 right-2 h-8 w-8"
-                        onClick={() => {
-                          setPreviewUrl("");
-                          setImageFile(null);
-                        }}
+                        onClick={handleImageDelete}
                       >
                         <X className="h-4 w-4" />
                       </Button>
@@ -592,40 +660,96 @@ export default function EditTemplatePage() {
             
             <Card>
               <CardContent className="p-6 space-y-4">
-                <h2 className="text-lg font-medium">发布状态</h2>
+                <h2 className="text-lg font-medium">操作</h2>
                 
                 <div className="space-y-4">
-                  <p className="text-sm text-muted-foreground">
-                    当前状态: 
-                    <Badge
-                      variant={template.status === "published" ? "default" : "outline"}
-                      className="ml-2"
-                    >
-                      {template.status === "published" ? "已发布" : "草稿"}
-                    </Badge>
-                  </p>
+                  {isNewTemplate ? (
+                    // 新建模式：显示发布状态和发布按钮
+                    <>
+                      <div className="flex items-center text-sm text-muted-foreground">
+                        <span>当前状态:</span>
+                        <Badge
+                          variant={template.status === "published" ? "default" : "outline"}
+                          className="ml-2"
+                        >
+                          {template.status === "published" ? "已发布" : "草稿"}
+                        </Badge>
+                      </div>
+                      
+                      <div className="flex gap-2">
+                        <Button
+                          variant={template.status === "draft" ? "outline" : "default"}
+                          className="flex-1"
+                          onClick={() => {
+                            setTemplate(prev => ({ ...prev, status: "draft" }));
+                          }}
+                        >
+                          草稿
+                        </Button>
+                        <Button
+                          variant="default"
+                          className="flex-1"
+                          onClick={handleSubmit}
+                          disabled={isSaving}
+                        >
+                          {isSaving ? (
+                            <span className="flex items-center gap-2">
+                              <div className="h-4 w-4 border-2 border-current border-t-transparent animate-spin rounded-full"></div>
+                              创建中...
+                            </span>
+                          ) : (
+                            <span className="flex items-center gap-2">
+                              <Sparkles className="h-4 w-4 mr-2" />
+                              创建并发布
+                            </span>
+                          )}
+                        </Button>
+                      </div>
+                    </>
+                  ) : (
+                    // 编辑模式：显示保存和删除按钮
+                    <div className="flex gap-2">
+                      <Button
+                        variant="default"
+                        className="flex-1"
+                        onClick={handleSubmit}
+                        disabled={isSaving}
+                      >
+                        {isSaving ? (
+                          <span className="flex items-center gap-2">
+                            <div className="h-4 w-4 border-2 border-current border-t-transparent animate-spin rounded-full"></div>
+                            保存中...
+                          </span>
+                        ) : (
+                          <span className="flex items-center gap-2">
+                            <Save className="h-4 w-4" />
+                            保存更改
+                          </span>
+                        )}
+                      </Button>
+                      <Button
+                        variant="destructive"
+                        onClick={() => {
+                          if (confirm("确定要删除此模板吗？此操作不可撤销。")) {
+                            // 删除模板逻辑
+                            alert("删除模板：" + templateId);
+                            router.push("/admin/templates");
+                          }
+                        }}
+                      >
+                        <Trash className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  )}
                   
-                  <div className="flex gap-2">
-                    <Button
-                      variant={template.status === "draft" ? "outline" : "default"}
-                      className="flex-1"
-                      onClick={() => {
-                        setTemplate(prev => ({ ...prev, status: "draft" }));
-                      }}
-                    >
-                      草稿
-                    </Button>
-                    <Button
-                      variant={template.status === "published" ? "outline" : "default"}
-                      className="flex-1"
-                      onClick={() => {
-                        setTemplate(prev => ({ ...prev, status: "published" }));
-                      }}
-                    >
-                      <Sparkles className="h-4 w-4 mr-2" />
-                      发布
-                    </Button>
-                  </div>
+                  <Button
+                    variant="outline"
+                    className="w-full"
+                    onClick={() => router.push("/admin/templates")}
+                  >
+                    <ArrowLeft className="h-4 w-4 mr-2" />
+                    返回列表
+                  </Button>
                 </div>
               </CardContent>
             </Card>

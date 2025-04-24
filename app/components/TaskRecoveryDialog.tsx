@@ -1,152 +1,105 @@
 "use client";
 
-import { useState, useEffect } from 'react';
-import { 
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-  DialogFooter
-} from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
-import { Clock, RefreshCw, AlertCircle } from "lucide-react";
-import { PendingTask, TaskStatus, shouldRecoverTask } from "@/utils/taskRecovery";
+import React, { useState } from 'react';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
+import { Button } from '@/components/ui/button';
+import { PendingTask, removePendingTask } from '@/utils/taskRecovery';
+import { format } from 'date-fns';
+import { zhCN } from 'date-fns/locale';
 
-interface TaskRecoveryDialogProps {
-  onRecover: (task: PendingTask) => Promise<void> | void;
-  onDiscard: (taskId: string) => void;
+export interface TaskRecoveryDialogProps {
+  task: PendingTask;
+  onRecover: (task: PendingTask) => Promise<void>;
+  onDiscard: () => void;
+  open: boolean;
+  setOpen: (open: boolean) => void;
 }
 
-export default function TaskRecoveryDialog({ 
-  onRecover, 
-  onDiscard 
+export function TaskRecoveryDialog({
+  task,
+  onRecover,
+  onDiscard,
+  open,
+  setOpen,
 }: TaskRecoveryDialogProps) {
-  const [open, setOpen] = useState(false);
-  const [pendingTask, setPendingTask] = useState<PendingTask | null>(null);
-  
-  useEffect(() => {
-    // 页面加载时检查本地存储中的未完成任务
-    const checkPendingTasks = () => {
-      try {
-        // 使用与taskRecovery.ts相同的存储键
-        const TASKS_STORAGE_KEY = 'pending_image_tasks';
-        const storedTasks = localStorage.getItem(TASKS_STORAGE_KEY);
-        if (!storedTasks) return;
-        
-        const tasks: PendingTask[] = JSON.parse(storedTasks);
-        if (!tasks || tasks.length === 0) return;
-        
-        // 查找最近的任务
-        const latestTask = tasks
-          .filter(task => shouldRecoverTask(task)) // 使用shouldRecoverTask函数过滤
-          .sort((a, b) => b.timestamp - a.timestamp)[0];
-        
-        // 如果找到需要恢复的任务，显示对话框
-        if (latestTask) {
-          console.log(`[TaskRecoveryDialog] 发现需要恢复的任务: ${latestTask.taskId}`);
-          setPendingTask(latestTask);
-          setOpen(true);
-        } else {
-          console.log('[TaskRecoveryDialog] 没有需要恢复的任务');
-        }
-      } catch (error) {
-        console.error('[TaskRecoveryDialog] 检查未完成任务出错:', error);
-      }
-    };
-    
-    // 延迟执行，确保页面已完全加载
-    const timer = setTimeout(checkPendingTasks, 1000);
-    return () => clearTimeout(timer);
-  }, []);
-  
-  if (!pendingTask) return null;
-  
-  // 格式化时间显示
-  const formatTime = (timestamp: number) => {
-    return new Date(timestamp).toLocaleString('zh-CN', {
-      year: 'numeric',
-      month: 'numeric',
-      day: 'numeric',
-      hour: 'numeric',
-      minute: 'numeric'
-    });
+  const [isRecovering, setIsRecovering] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleRecover = async () => {
+    setIsRecovering(true);
+    setError(null);
+    try {
+      await onRecover(task);
+      // 成功后关闭对话框
+      setOpen(false);
+    } catch (err) {
+      setError('恢复任务失败，请重试。');
+      console.error('任务恢复失败:', err);
+    } finally {
+      setIsRecovering(false);
+    }
   };
-  
-  // 获取时间经过描述
-  const getTimeElapsed = (timestamp: number) => {
-    const seconds = Math.floor((Date.now() - timestamp) / 1000);
-    
-    if (seconds < 60) return `${seconds}秒前`;
-    if (seconds < 3600) return `${Math.floor(seconds / 60)}分钟前`;
-    if (seconds < 86400) return `${Math.floor(seconds / 3600)}小时前`;
-    return `${Math.floor(seconds / 86400)}天前`;
-  };
-  
-  const handleRecover = () => {
-    setOpen(false);
-    onRecover(pendingTask);
-  };
-  
+
   const handleDiscard = () => {
+    removePendingTask(task.id);
+    onDiscard();
     setOpen(false);
-    onDiscard(pendingTask.taskId);
   };
+
+  const formattedTime = task.timestamp
+    ? format(new Date(task.timestamp), 'yyyy年MM月dd日 HH:mm:ss', { locale: zhCN })
+    : '未知时间';
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle className="flex items-center">
-            <Clock className="w-5 h-5 mr-2 text-primary" />
-            检测到未完成的任务
-          </DialogTitle>
-          <DialogDescription>
-            发现一个未完成的图片生成任务，创建于{getTimeElapsed(pendingTask.timestamp)}。
-            您可以继续处理该任务或者放弃此任务。
-          </DialogDescription>
+          <DialogTitle>发现未完成的任务</DialogTitle>
         </DialogHeader>
-        
-        <div className="grid gap-4 py-4">
-          <div className="border rounded-md p-4 bg-muted/20">
-            <div className="flex flex-col space-y-2">
-              <div className="text-sm text-muted-foreground">
-                <span className="font-medium text-foreground">任务ID:</span> {pendingTask.taskId}
+        <div className="space-y-4 py-4">
+          <p>我们检测到您有一个未完成的图像生成任务：</p>
+          
+          <div className="rounded-md bg-muted p-4 space-y-2 text-sm">
+            <div>
+              <span className="font-medium">提示词：</span> {task.prompt}
+            </div>
+            <div>
+              <span className="font-medium">风格：</span> {task.style}
+            </div>
+            {task.uploadedImage && (
+              <div>
+                <span className="font-medium">已上传参考图片</span>
               </div>
-              <div className="text-sm text-muted-foreground">
-                <span className="font-medium text-foreground">创建时间:</span> {formatTime(pendingTask.timestamp)}
-              </div>
-              <div className="text-sm text-muted-foreground">
-                <span className="font-medium text-foreground">风格:</span> {pendingTask.params?.style || '未指定'}
-              </div>
-              <div className="text-sm text-muted-foreground line-clamp-2">
-                <span className="font-medium text-foreground">提示词:</span> {pendingTask.params?.prompt || '未指定'}
-              </div>
+            )}
+            <div>
+              <span className="font-medium">创建时间：</span> {formattedTime}
+            </div>
+            <div>
+              <span className="font-medium">尝试次数：</span> {task.attemptCount || 1}
             </div>
           </div>
           
-          <div className="flex items-center bg-amber-50 dark:bg-amber-950/30 p-3 rounded-md">
-            <AlertCircle className="w-5 h-5 mr-2 text-amber-500" />
-            <p className="text-sm text-amber-700 dark:text-amber-400">
-              继续处理可能需要一些时间，具体取决于后台服务状态
-            </p>
-          </div>
+          {error && (
+            <div className="rounded-md bg-destructive/15 p-3 text-destructive text-sm">
+              {error}
+            </div>
+          )}
+          
+          <p>您希望如何处理这个任务？</p>
         </div>
-        
-        <DialogFooter>
+        <DialogFooter className="flex justify-between sm:justify-between">
           <Button 
             variant="outline" 
             onClick={handleDiscard}
-            className="border-destructive/30 text-destructive hover:text-destructive/80 hover:bg-destructive/10"
+            disabled={isRecovering}
           >
-            放弃任务
+            丢弃任务
           </Button>
           <Button 
             onClick={handleRecover}
-            className="bg-primary hover:bg-primary/90"
+            disabled={isRecovering}
           >
-            <RefreshCw className="w-4 h-4 mr-2" />
-            继续处理
+            {isRecovering ? '恢复中...' : '恢复任务'}
           </Button>
         </DialogFooter>
       </DialogContent>

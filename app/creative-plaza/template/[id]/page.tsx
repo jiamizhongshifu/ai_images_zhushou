@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useParams } from "next/navigation";
 import Image from "next/image";
 import Link from "next/link";
 import { ChevronLeft, Sparkles, Upload, AlertTriangle, Loader2 } from "lucide-react";
@@ -27,13 +27,10 @@ interface Template {
   use_count: number;
 }
 
-export default function TemplateDetailPage({
-  params,
-}: {
-  params: { id: string };
-}) {
+export default function TemplateDetailPage() {
   const router = useRouter();
-  const { id } = params;
+  const params = useParams();
+  const id = params?.id as string;
 
   // 状态管理
   const [template, setTemplate] = useState<Template | null>(null);

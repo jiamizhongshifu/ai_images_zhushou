@@ -132,7 +132,7 @@ function createTuziClient() {
   const baseURL = apiConfig.apiUrl || process.env.OPENAI_BASE_URL || "https://api.tu-zi.com/v1/chat/completions";
   
   // 使用环境变量中的模型
-  const imageModel = process.env.OPENAI_MODEL || "gpt-4o-image-vip"; 
+  const imageModel = process.env.OPENAI_MODEL || "gpt-image-1-vip"; 
   
   logger.info(`创建图资API客户端，使用BASE URL: ${baseURL}`);
   logger.debug(`API密钥状态: ${apiKey ? '已配置' : '未配置'} (长度: ${apiKey?.length || 0})`);
@@ -188,7 +188,7 @@ async function saveGenerationHistory(
     }
     
     // 使用环境变量中的模型名称
-    const modelUsed = process.env.OPENAI_MODEL || 'gpt-4o-all';
+    const modelUsed = process.env.OPENAI_MODEL || 'gpt-image-1-vip';
     
     // 构建基本数据对象
     const historyData: any = {
@@ -1148,151 +1148,61 @@ export async function POST(request: NextRequest) {
           logger.info(`图片比例参数: aspectRatio=${aspectRatio}, standardAspectRatio=${standardAspectRatio || '未指定'}`);
         }
 
-        // 创建用户消息内容数组
-        const userMessageContent: Array<ChatCompletionContentPart> = [];
+        // 构建单条消息内容 - 合并模式
+        let userContent = '';
+        let finalPrompt = '';
         
-        // 初始化提示词变量
-        let promptText = prompt || "";
-        let finalPrompt = "";
-        
-        // 构建最简化的提示词 - 彻底重写风格名称处理
-        if (image) {
-          // 1. 确保使用正确的风格名称
-          let styleName = "";
-          if (style) {
-            // 修正已知错误拼写
-            styleName = style === "吉普力" ? "吉卜力" : style;
-          }
-          
-          // 导入styles.ts中的函数
+        // 构建提示词
+        if (style) {
           const { generatePromptWithStyle } = await import('@/app/config/styles');
-          
-          // 使用风格配置中的模板构建提示词
-          if (style) {
-            // 使用配置中的提示词模板
-            finalPrompt = generatePromptWithStyle(style, prompt || "生成图像");
-            logger.info(`使用风格配置模板构建提示词，风格: ${style}, 长度=${finalPrompt.length}字符`);
-          } else {
-            // 没有指定风格，使用原始提示词
-            finalPrompt = prompt || "生成图像";
-          }
-          
-          // 添加简单明确的比例指令
-          if (aspectRatio) {
-            const [width, height] = aspectRatio.split(':').map(Number);
-            const ratio = width / height;
-            
-            // 避免破坏原始提示词结构，在末尾添加比例信息
-            if (ratio > 1) {
-              finalPrompt += `，生成横向图片`;
-            } else if (ratio < 1) {
-              finalPrompt += `，生成竖向图片`;
-            } else {
-              finalPrompt += `，生成正方形图片`;
-            }
-          }
-          
-          // 处理图片数据...
-          let imageData;
-          if (image.startsWith('data:image/')) {
-            imageData = image;
-          } else {
-            // 为原始base64添加data URL前缀
-            const mimeType = 'image/jpeg'; // 默认JPEG
-            imageData = `data:${mimeType};base64,${image}`;
-          }
-          
-          // 验证图片数据
-          if (!imageData || imageData.length < 100) {
-            throw new Error('图片数据无效');
-          }
-          
-          // 添加图片到消息内容
-          userMessageContent.push({
-            type: "image_url",
-            image_url: {
-              url: imageData
-            }
-          });
-          
-          // 添加文本提示
-          userMessageContent.push({
-            type: "text",
-            text: finalPrompt
-          });
-          
-          logger.info(`图片处理：使用${style ? '风格配置模板' : '原始'}提示词，长度=${finalPrompt.length}字符`);
+          finalPrompt = generatePromptWithStyle(style, prompt || "生成图像");
+          logger.info(`使用风格配置模板构建提示词，风格: ${style}, 长度=${finalPrompt.length}字符`);
         } else {
-          // 导入styles.ts中的函数
-          const { generatePromptWithStyle } = await import('@/app/config/styles');
-          
-          // 使用风格配置中的模板构建提示词
-          if (style) {
-            // 使用配置中的提示词模板
-            finalPrompt = generatePromptWithStyle(style, prompt || "生成图像");
-            logger.info(`使用风格配置模板构建提示词，风格: ${style}, 长度=${finalPrompt.length}字符`);
-          } else {
-            // 没有指定风格，使用原始提示词
-            finalPrompt = prompt || "生成图像";
-          }
-          
-          // 添加简单明确的比例指令
-          if (aspectRatio) {
-            const [width, height] = aspectRatio.split(':').map(Number);
-            const ratio = width / height;
-            
-            // 避免破坏原始提示词结构，在末尾添加比例信息
-            if (ratio > 1) {
-              finalPrompt += `，生成横向图片`;
-            } else if (ratio < 1) {
-              finalPrompt += `，生成竖向图片`;
-            } else {
-              finalPrompt += `，生成正方形图片`;
-            }
-          }
-
-          // 处理图片数据...
-          let imageData;
-          if (image.startsWith('data:image/')) {
-            imageData = image;
-          } else {
-            // 为原始base64添加data URL前缀
-            const mimeType = 'image/jpeg'; // 默认JPEG
-            imageData = `data:${mimeType};base64,${image}`;
-          }
-          
-          // 验证图片数据
-          if (!imageData || imageData.length < 100) {
-            throw new Error('图片数据无效');
-            }
-            
-          // 添加图片到消息内容
-          userMessageContent.push({
-            type: "image_url",
-            image_url: {
-              url: imageData
-            }
-          });
-          
-          // 添加文本提示
-          userMessageContent.push({
-            type: "text",
-            text: finalPrompt
-          });
-          
-          logger.info(`图片处理：使用${style ? '风格配置模板' : '原始'}提示词，长度=${finalPrompt.length}字符`);
+          finalPrompt = prompt || "生成图像";
         }
         
-        // 构建单一用户消息 - 简化消息结构
+        // 添加比例指令
+        if (aspectRatio) {
+          const [width, height] = aspectRatio.split(':').map(Number);
+          const ratio = width / height;
+          
+          if (ratio > 1) {
+            finalPrompt += `，生成横向图片`;
+          } else if (ratio < 1) {
+            finalPrompt += `，生成竖向图片`;
+          } else {
+            finalPrompt += `，生成正方形图片`;
+          }
+        }
+
+        // 处理图片数据
+        let imageData = null;
+        if (image) {
+          if (image.startsWith('data:image/')) {
+            imageData = image;
+          } else {
+            const mimeType = 'image/jpeg';
+            imageData = `data:${mimeType};base64,${image}`;
+          }
+          
+          // 验证图片数据
+          if (!imageData || imageData.length < 100) {
+            throw new Error('图片数据无效');
+          }
+        }
+        
+        logger.info(`图片处理：使用${style ? '风格配置模板' : '原始'}提示词，长度=${finalPrompt.length}字符`);
+        
+        // 构建单一用户消息 - 单一内容项
         messages = [{
           role: 'user',
-          content: userMessageContent
+          content: finalPrompt
         }];
         
         logger.debug(`构建消息完成，消息数组长度: ${messages.length}`);
-        logger.debug(`消息内容项目数: ${userMessageContent.length}`);
+        logger.debug(`消息内容项目数: 1`); // 固定为1
         
-        // 记录最终提示词内容（完整记录，用于调试）
+        // 记录最终提示词内容
         logger.info(`最终提示词: "${finalPrompt}"`);
         
         // 图像生成参数
@@ -1310,26 +1220,38 @@ export async function POST(request: NextRequest) {
           throw new Error('消息结构不完整，缺少用户消息');
         }
         
-        // 确保用户消息包含图片数据 (如果有上传图片)
+        // 确保用户消息包含必要的内容
+        const userMessage = messages.find(msg => msg.role === 'user');
+        if (!userMessage) {
+          logger.error('无法找到用户消息');
+          throw new Error('消息结构错误，缺少用户消息');
+        }
+        
+        if (!Array.isArray(userMessage.content)) {
+          logger.error('用户消息内容不是数组格式');
+          throw new Error('用户消息格式错误，应为数组格式');
+        }
+        
+        // 检查消息内容
+        const messageContent = userMessage.content;
+        
+        // 确保有文本内容
+        const hasTextContent = messageContent.some(item => item.type === 'text');
+        if (!hasTextContent) {
+          logger.error('用户消息中缺少文本提示');
+          throw new Error('消息格式错误，缺少文本提示');
+        }
+        
+        // 如果有图片，确保消息中包含图片
         if (image) {
-          const userMessage = messages.find(msg => msg.role === 'user');
-          if (!userMessage) {
-            logger.error('无法找到用户消息');
-            throw new Error('消息结构错误，缺少用户消息');
-          }
-          
-          if (!Array.isArray(userMessage.content)) {
-            logger.error('用户消息内容不是数组格式');
-            throw new Error('用户消息格式错误，应为数组格式');
-          }
-          
-          const hasImage = userMessage.content.some(item => item.type === 'image_url');
-          if (!hasImage) {
+          const hasImageContent = messageContent.some(item => item.type === 'image_url');
+          if (!hasImageContent) {
             logger.error('用户消息中缺少图片数据');
             throw new Error('图片数据丢失，请重新上传图片');
           }
-          
-          logger.info('消息结构验证通过，包含用户图片数据');
+          logger.info('消息结构验证通过，包含用户图片数据和提示词');
+        } else {
+          logger.info('消息结构验证通过，包含用户提示词');
         }
         
         // 重要：在执行API调用前，将任务状态从pending更新为processing
@@ -1337,7 +1259,7 @@ export async function POST(request: NextRequest) {
           const { error: statusUpdateError } = await supabaseAdmin
                   .from('image_tasks')
                   .update({
-              status: 'processing',
+                    status: 'processing',
                     updated_at: new Date().toISOString()
                   })
                   .eq('task_id', taskId);
@@ -1345,14 +1267,14 @@ export async function POST(request: NextRequest) {
           if (statusUpdateError) {
             logger.error(`更新任务状态为processing失败: ${statusUpdateError.message}`);
             // 继续执行，不中断流程，但记录错误
-                } else {
+          } else {
             logger.stateChange(taskId, 'pending', 'processing');
             logger.info(`已更新任务状态为processing, 任务ID: ${taskId}`);
-                }
+          }
         } catch (statusError) {
           logger.error(`更新任务状态异常: ${statusError instanceof Error ? statusError.message : String(statusError)}`);
-                // 继续执行，不中断流程
-              }
+          // 继续执行，不中断流程
+        }
               
         // 定义重试逻辑所需的变量
         const MAX_RETRY_ATTEMPTS = 1; // 最多尝试一次重试 (共2次尝试)
@@ -1408,22 +1330,37 @@ export async function POST(request: NextRequest) {
               // 设置超时处理
               const API_TIMEOUT = parseInt(process.env.OPENAI_TIMEOUT || '180000');
               const timeoutPromise = new Promise((_, reject) => {
-                    setTimeout(() => {
+                setTimeout(() => {
                   reject(new Error(`API请求超时，超过${API_TIMEOUT/1000}秒未响应`));
                 }, API_TIMEOUT);
               });
               
               logger.info(`设置API请求超时: ${API_TIMEOUT/1000}秒`);
               
-              // 简化API调用 - 完全采用py.md中的简洁模式
+              // 使用明确的生成操作提示
+              const systemPrompt = "请基于上传的图片和提示词生成新图像，直接返回生成的图片URL。";
+              
+              // 简化API调用 - 完全采用py.md中的简洁模式并添加系统提示
               const apiPromise = tuziClient.client.chat.completions.create({
                 model: process.env.OPENAI_MODEL || 'gpt-4o-image-vip',
                 messages: [
-                  // 移除系统提示，简化调用结构
+                  // 添加明确的系统提示，强调执行生成而非分析
                   {
-                    role: 'user',
-                    content: userMessageContent
-                  }
+                    role: 'system',
+                    content: systemPrompt
+                  },
+                  // 用户消息
+                  messages[0],
+                  // 单独添加图片消息(如果有)
+                  ...(imageData ? [{
+                    role: 'user' as const,
+                    content: [{
+                      type: "image_url" as const,
+                      image_url: {
+                        url: imageData
+                      }
+                    }]
+                  }] : [])
                 ],
                 stream: true,
                 max_tokens: 4096,
@@ -1439,7 +1376,7 @@ export async function POST(request: NextRequest) {
               // 增强API参数日志记录
               logger.info(`详细API调用参数：
 - 模型: ${process.env.OPENAI_MODEL || 'gpt-4o-image-vip'}
-- 仅包含用户消息，无系统提示
+- 添加系统提示，明确指示执行生成操作
 - 提示词中自然表达比例需求
 - 图片上传: ${image ? '是' : '否'}
 - 响应格式: JSON

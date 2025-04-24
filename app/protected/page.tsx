@@ -26,8 +26,8 @@ import useImageGeneration from "@/hooks/useImageGeneration";
 import useImageHandling from "@/hooks/useImageHandling";
 import useNotification from "@/hooks/useNotification";
 import TaskStatusListener from "@/app/components/TaskStatusListener";
-import TaskRecoveryDialog from "@/app/components/TaskRecoveryDialog";
-import { PendingTask } from "@/utils/taskRecovery";
+import TaskRecoveryDialog from "@/components/TaskRecoveryDialog";
+import { StoredTaskInfo } from "@/utils/taskStorage";
 import { supabaseClient } from "@/utils/supabase-client";
 
 // 动态导入CreditRechargeDialog组件
@@ -326,7 +326,7 @@ export default function ProtectedPage() {
   };
 
   // 处理任务恢复
-  const handleTaskRecover = async (task: PendingTask) => {
+  const handleTaskRecover = async (task: StoredTaskInfo) => {
     try {
       // 重置错误状态
       setError("");
@@ -526,8 +526,8 @@ export default function ProtectedPage() {
       {currentTaskId && (
         <TaskStatusListener
           taskId={currentTaskId}
-          onCompleted={handleTaskCompleted}
-          onError={handleTaskError}
+          onTaskCompleted={handleTaskCompleted}
+          onTaskError={handleTaskError}
         />
       )}
       
