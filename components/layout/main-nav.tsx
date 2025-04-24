@@ -68,6 +68,12 @@ export function MainNav({ providedAuthState }: MainNavProps) {
       requiresAuth: true,
     },
     {
+      name: "创意广场",
+      href: "/creative-plaza",
+      icon: <Palette className="h-4 w-4 mr-2" />,
+      requiresAuth: false,
+    },
+    {
       name: "历史记录",
       href: "/protected/history",
       icon: <History className="h-4 w-4 mr-2" />,

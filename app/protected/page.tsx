@@ -542,7 +542,7 @@ export default function ProtectedPage() {
         <div className="flex flex-col items-center mb-6 md:mb-8">
           <h1 className="text-3xl md:text-4xl font-bold text-foreground mb-2 md:mb-3 font-quicksand bg-gradient-to-r from-primary to-primary-700 bg-clip-text text-transparent">照片风格转换</h1>
           <p className="text-base md:text-lg text-muted-foreground text-center max-w-2xl font-nunito">
-            将您的照片转化为魔幻风格的艺术作品，上传照片并选择风格，创造独特的视觉效果
+            将您的照片转化为魔幻风格的艺术作品，选择风格并上传照片，创造独特的视觉效果
           </p>
         </div>
 
@@ -562,11 +562,15 @@ export default function ProtectedPage() {
           <div className="flex flex-col gap-6 p-6 rounded-xl border bg-card text-card-foreground shadow-ghibli-sm transition-all duration-300 hover:shadow-ghibli">
             <div className="flex flex-col space-y-1.5 font-quicksand">
               <h3 className="text-xl font-bold leading-none tracking-tight font-quicksand text-foreground">创建新图像</h3>
-              <p className="text-sm text-muted-foreground">上传参考图片并填写提示词生成新图像</p>
+              <p className="text-sm text-muted-foreground">选择风格并上传参考图片生成新图像</p>
             </div>
             
             {/* 表单内容 */}
             <div className="w-full flex flex-col gap-6">
+              <StyleSelector
+                activeStyle={activeStyle}
+                onStyleChange={handleStyleChange}
+              />
               <EnhancedImageUploader 
                 uploadedImage={uploadedImage} 
                 setUploadedImage={setUploadedImage}
@@ -578,10 +582,6 @@ export default function ProtectedPage() {
                 onDownload={handleDownloadGeneratedImage}
                 onContinueCreation={handleContinueCreation}
               />
-              <StyleSelector
-                activeStyle={activeStyle}
-                onStyleChange={handleStyleChange}
-              />
               <PromptInput
                 prompt={prompt}
                 onPromptChange={setPrompt}
@@ -589,6 +589,7 @@ export default function ProtectedPage() {
                 isGenerating={isGenerating}
                 canGenerate={canGenerate()}
                 hasLowCredits={credits !== null && credits <= 0}
+                activeStyle={activeStyle}
               />
             </div>
           </div>
@@ -659,7 +660,7 @@ export default function ProtectedPage() {
                       <ImageIcon className="h-6 w-6 text-primary/60" />
                     </div>
                     <p className="text-foreground/80 text-center">尚未生成任何图片</p>
-                    <p className="text-muted-foreground text-sm text-center mt-1">上传图片并选择风格开始创作</p>
+                    <p className="text-muted-foreground text-sm text-center mt-1">选择风格并上传图片开始创作</p>
                   </div>
                 </div>
               )}

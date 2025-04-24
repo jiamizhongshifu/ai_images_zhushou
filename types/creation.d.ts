@@ -51,6 +51,7 @@ declare module '@/components/creation/prompt-input' {
     isGenerating: boolean;
     canGenerate: boolean;
     hasLowCredits?: boolean;
+    activeStyle?: string;
   }
   
   const PromptInput: FC<PromptInputProps>;

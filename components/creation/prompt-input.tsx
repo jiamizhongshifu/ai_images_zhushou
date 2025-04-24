@@ -10,6 +10,7 @@ export interface PromptInputProps {
   isGenerating: boolean;
   canGenerate: boolean;
   hasLowCredits?: boolean;
+  activeStyle?: string;
 }
 
 export default function PromptInput({
@@ -19,6 +20,7 @@ export default function PromptInput({
   isGenerating,
   canGenerate,
   hasLowCredits = false,
+  activeStyle = "自定义",
 }: PromptInputProps) {
   const [focused, setFocused] = useState(false);
   const [showPlaceholder, setShowPlaceholder] = useState(true);
@@ -41,6 +43,11 @@ export default function PromptInput({
   const handleBlur = () => {
     setFocused(false);
   };
+  
+  // 根据activeStyle确定placeholder文本
+  const placeholderText = activeStyle === "自定义" 
+    ? "描述您想要的图像效果..." 
+    : "描述您想要的图像效果(非必填)...";
   
   return (
     <div className="space-y-3 w-full">
@@ -65,7 +72,7 @@ export default function PromptInput({
             <div className={`absolute top-4 left-4 text-muted-foreground/70 pointer-events-none transition-opacity duration-300 ${
               focused ? 'opacity-70' : 'opacity-100'
             }`}>
-              描述您想要的图像效果...
+              {placeholderText}
             </div>
           )}
         </div>
