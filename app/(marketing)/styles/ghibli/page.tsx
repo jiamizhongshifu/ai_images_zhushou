@@ -29,7 +29,7 @@ export default function GhibliPage() {
           </div>
           <div className="relative aspect-square rounded-lg overflow-hidden">
             <Image
-              src="/images/feat_05.jpeg"
+              src="/images/feat_06.jpg"
               alt="吉卜力风格AI生成图片示例"
               fill
               className="object-cover"

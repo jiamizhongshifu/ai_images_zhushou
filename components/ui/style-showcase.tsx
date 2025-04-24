@@ -17,7 +17,7 @@ export function StyleShowcase() {
       id: "animalcrossing",
       title: "动物森友会风格",
       description: "探索动物森友会的可爱世界，创作温馨治愈的岛屿场景和圆润可爱的角色。",
-      image: "/examples/senyouhui.jpg",
+      image: "/examples/after-6.png",
       href: "/styles/animalcrossing",
     },
     {

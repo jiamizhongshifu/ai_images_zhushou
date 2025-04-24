@@ -8,38 +8,38 @@ export function TransformationExamples() {
   const examples = [
     {
       id: 1,
-      beforeImage: "/examples/zhenren.jpg",
-      afterImage: "/examples/ghibli.jpg",
+      beforeImage: "/examples/before-2.webp",
+      afterImage: "/examples/after-2.webp",
       title: "吉卜力风格"
     },
     {
       id: 2,
-      beforeImage: "/examples/zhenren.jpg",
-      afterImage: "/examples/snoopy.jpg",
+      beforeImage: "/examples/before-3.webp",
+      afterImage: "/examples/after-3.png",
       title: "史努比风格"
     },
     {
       id: 3,
-      beforeImage: "/examples/zhenren.jpg",
-      afterImage: "/examples/lego.jpg",
+      beforeImage: "/examples/before-1.jpg",
+      afterImage: "/examples/after-1.png",
       title: "乐高风格"
     },
     {
       id: 4,
-      beforeImage: "/examples/zhenren.jpg",
-      afterImage: "/examples/shinkai.jpg",
+      beforeImage: "/examples/before-4.jpg",
+      afterImage: "/examples/after-4.png",
       title: "新海诚风格"
     },
     {
       id: 5,
-      beforeImage: "/examples/zhenren.jpg",
-      afterImage: "/examples/disney.jpg",
+      beforeImage: "/examples/before-5.jpg",
+      afterImage: "/examples/after-5.png",
       title: "迪士尼风格"
     },
     {
       id: 6,
-      beforeImage: "/examples/zhenren.jpg",
-      afterImage: "/examples/senyouhui.jpg",
+      beforeImage: "/examples/before-6.jpg",
+      afterImage: "/examples/after-6.png",
       title: "动物森友会风格"
     }
   ];
