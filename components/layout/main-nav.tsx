@@ -63,7 +63,7 @@ export function MainNav({ providedAuthState }: MainNavProps) {
       requiresAuth: true,
     },
     {
-      name: "常见问提",
+      name: "常见问题",
       href: "/qa",
       icon: <HelpCircle className="h-4 w-4 mr-2" />,
       requiresAuth: false,
