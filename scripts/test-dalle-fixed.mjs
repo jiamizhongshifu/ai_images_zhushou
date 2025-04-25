@@ -50,7 +50,7 @@ async function testGenerateImage() {
   try {
     console.log('图像生成测试工具（修复版）');
     console.log('----------------------');
-    console.log('使用固定的dall-e-3模型，忽略环境变量设置\n');
+    console.log('使用固定的gpt-image-1-vip模型，忽略环境变量设置\n');
     
     // 获取提示词
     const defaultPrompt = '一朵美丽的红色玫瑰花';

@@ -254,10 +254,11 @@ async function testDallE(apiKey, fetchOptions) {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          model: "dall-e-3",
-          prompt: "一只小猫，简单的白色背景，测试图像",
+          model: "gpt-image-1-vip",
+          prompt: "可爱的卡通动物，简单风格",
           n: 1,
-          size: "1024x1024"
+          size: "1024x1024",
+          response_format: "url"
         }),
         signal: controller.signal,
         ...fetchOptions

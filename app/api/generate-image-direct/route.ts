@@ -294,24 +294,30 @@ function getImageSize(aspectRatio: string | null): "1024x1024" | "1792x1024" | "
 
 // 直接生成图像API - 按照tuzi-openai.md重写
 export async function POST(request: NextRequest) {
-  // 防止并发请求
-  if (isProcessing) {
-    return new Response(JSON.stringify({ 
-      success: false, 
-      error: '系统正在处理另一个请求，请稍后再试' 
-    }), {
-      status: 429,
-      headers: { 'Content-Type': 'application/json' },
-    });
-  }
-  
-  isProcessing = true;
-  const startTime = Date.now();
+  let useBackupStrategy = false; // 标记是否使用备用策略
   let timeoutChecker: NodeJS.Timeout | null = null;
-  let isTimeoutWarned = false;
-  let useBackupStrategy = false;
+  let isTimeoutWarned = false; // 添加回这个变量
+  const startTime = Date.now();
   
+  // 用于处理图片内容的变量
+  let base64Image: string | null = null;
+
   try {
+    // 防止并发请求
+    if (isProcessing) {
+      logger.warn('并发请求被阻止');
+      return new Response(JSON.stringify({ 
+        success: false, 
+        error: '系统正在处理其他请求，请稍后再试' 
+      }), {
+        status: 429,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    
+    // 设置并发锁
+    isProcessing = true;
+    
     // 设置超时监控
     timeoutChecker = setInterval(() => {
       const elapsedTime = Date.now() - startTime;
@@ -459,7 +465,6 @@ export async function POST(request: NextRequest) {
     
     try {
       // 处理图片内容 - 支持文件路径或base64
-      let base64Image: string | null = null;
       let imageType: string = 'png';
       
       if (imageContent) {
@@ -571,15 +576,52 @@ export async function POST(request: NextRequest) {
       logger.info(`发送API请求前，已用时间: ${(Date.now() - startTime)/1000}秒`);
       
       // 调用图资API生成图像
-      const response = await tuziClient.images.generate({
-        model: useBackupStrategy ? 'dall-e-3' : (process.env.OPENAI_MODEL || 'gpt-4o-image-vip'), // 如果接近超时，使用更快的模型
-        prompt: finalPrompt,
-        n: 1,
-        quality: useBackupStrategy ? "standard" : "hd", // 降级使用标准质量
-        size: getImageSize(useStandardRatio || originalAspectRatio),
-        response_format: "url",
-        user: user.id
-      });
+      let response: any; // 使用any类型暂时避开类型检查问题
+      if (base64Image) {
+        // 如果有上传图片，使用聊天完成API
+        logger.info(`检测到有用户上传图片，使用聊天API进行图像生成`);
+        
+        // 使用带有图片的消息调用API
+        const chatResponse = await tuziClient.chat.completions.create({
+          model: useBackupStrategy ? 'gpt-image-1-vip' : (process.env.OPENAI_MODEL || 'gpt-4o-image-vip'),
+          messages: messages,
+          stream: false,
+          user: user.id
+        });
+        
+        // 从聊天完成响应中提取图片URL
+        if (chatResponse && chatResponse.choices && chatResponse.choices[0] && chatResponse.choices[0].message) {
+          const assistantContent = chatResponse.choices[0].message.content || "";
+          
+          // 从响应中提取URL
+          const urlRegex = /(https?:\/\/[^\s"'<>]+\.(png|jpg|jpeg|gif|webp))/i;
+          const urlMatch = assistantContent.match(urlRegex);
+          
+          if (urlMatch && urlMatch[1]) {
+            logger.info(`成功从聊天响应中提取图片URL`);
+            response = {
+              data: [{ url: urlMatch[1] }]
+            };
+          } else {
+            logger.error(`无法从聊天响应中提取图片URL: ${assistantContent.substring(0, 200)}...`);
+            throw new Error('API返回的响应中不包含有效的图片URL');
+          }
+        } else {
+          logger.error(`聊天API响应不包含有效的消息内容`);
+          throw new Error('API返回的响应格式不正确');
+        }
+      } else {
+        // 没有上传图片，使用普通的图像生成API
+        response = await tuziClient.images.generate({
+          model: useBackupStrategy ? 'gpt-image-1-vip' : (process.env.OPENAI_MODEL || 'gpt-4o-image-vip'), // 如果接近超时，使用更快的模型
+          prompt: finalPrompt,
+          n: 1,
+          quality: useBackupStrategy ? "standard" : "hd", // 降级使用标准质量
+          size: getImageSize(useStandardRatio || originalAspectRatio),
+          response_format: "url",
+          user: user.id
+        });
+      }
       
       logger.info(`API响应接收完成，总用时: ${(Date.now() - startTime)/1000}秒`);
       
@@ -631,16 +673,99 @@ export async function POST(request: NextRequest) {
         // 使用提示词的简化版本
         const shortenedPrompt = prompt ? prompt.substring(0, Math.min(prompt.length, 1500)) : "生成图像";
         
-        // 使用较快的dall-e-3模型重试
-        const retryResponse = await tuziClient.images.generate({
-          model: 'dall-e-3', // 降级到更快的模型
-          prompt: shortenedPrompt, // 使用简化版提示词
-          n: 1,
-          quality: "standard", // 使用标准质量提高速度
-          size: "1024x1024", // 使用标准尺寸
-          response_format: "url",
-          user: `${user.id}_retry`
-        });
+        // 使用较快的模型重试
+        let retryResponse: any;
+        
+        if (base64Image) {
+          // 如果有上传图片，还是需要使用聊天API，但使用简化的提示词
+          logger.info(`使用备用策略重试，包含上传图片`);
+          
+          // 重新构建消息但使用简化的提示词
+          const backupMessages: any[] = [
+            {
+              role: 'system',
+              content: [
+                {
+                  type: 'text',
+                  text: '你是一个先进的图像生成系统，能够根据图片和文字提示生成图像。请尽可能保持与参考图片相似的构图和风格。'
+                }
+              ]
+            },
+            {
+              role: 'user',
+              content: []
+            }
+          ];
+          
+          // 添加图片内容
+          backupMessages[1].content.push({
+            type: "image_url",
+            image_url: {
+              url: base64Image
+            }
+          });
+          
+          // 添加文本内容
+          backupMessages[1].content.push({
+            type: "text",
+            text: `${shortenedPrompt}`
+          });
+          
+          try {
+            // 使用聊天API调用
+            const backupChatResponse = await tuziClient.chat.completions.create({
+              model: 'gpt-4o-mini', // 使用更快的模型
+              messages: backupMessages,
+              stream: false,
+              user: `${user.id}_retry`
+            });
+            
+            // 从聊天完成响应中提取图片URL
+            if (backupChatResponse && backupChatResponse.choices && backupChatResponse.choices[0] && backupChatResponse.choices[0].message) {
+              const assistantContent = backupChatResponse.choices[0].message.content || "";
+              
+              // 从响应中提取URL
+              const urlRegex = /(https?:\/\/[^\s"'<>]+\.(png|jpg|jpeg|gif|webp))/i;
+              const urlMatch = assistantContent.match(urlRegex);
+              
+              if (urlMatch && urlMatch[1]) {
+                logger.info(`使用备用策略成功从聊天响应中提取图片URL`);
+                retryResponse = {
+                  data: [{ url: urlMatch[1] }]
+                };
+              } else {
+                logger.error(`无法从备用策略聊天响应中提取图片URL: ${assistantContent.substring(0, 200)}...`);
+                throw new Error('备用API返回的响应中不包含有效的图片URL');
+              }
+            } else {
+              throw new Error('备用API返回的响应格式不正确');
+            }
+          } catch (backupError) {
+            // 如果带图片的备用调用失败，退回到不带图片的gpt-image-1-vip
+            logger.warn(`带图片的备用策略失败，尝试使用备用模型: ${backupError instanceof Error ? backupError.message : String(backupError)}`);
+            
+            retryResponse = await tuziClient.images.generate({
+              model: 'gpt-image-1-vip', // 使用备用图像生成模型
+              prompt: `${shortenedPrompt}`,
+              n: 1,
+              quality: "standard", // 使用标准质量提高速度
+              size: "1024x1024", // 使用标准尺寸
+              response_format: "url",
+              user: `${user.id}_retry_backup`
+            });
+          }
+        } else {
+          // 没有上传图片，使用普通的备用模型
+          retryResponse = await tuziClient.images.generate({
+            model: 'gpt-image-1-vip', // 使用备用图像生成模型
+            prompt: shortenedPrompt, // 使用简化版提示词
+            n: 1,
+            quality: "standard", // 使用标准质量提高速度
+            size: "1024x1024", // 使用标准尺寸
+            response_format: "url",
+            user: `${user.id}_retry`
+          });
+        }
         
         logger.info(`备用策略API响应接收完成，总用时: ${(Date.now() - startTime)/1000}秒`);
         

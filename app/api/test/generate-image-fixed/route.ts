@@ -20,7 +20,7 @@ function createApiClient() {
   
   console.log(`[测试生成] 创建API客户端，使用BASE URL: ${baseURL}`);
   console.log(`[测试生成] API密钥状态: ${apiKey ? '已配置' : '未配置'} (长度: ${apiKey?.length || 0})`);
-  console.log(`[测试生成] 图像生成使用固定模型: dall-e-3 (忽略环境变量)`);
+  console.log(`[测试生成] 图像生成使用固定模型: gpt-image-1-vip (忽略环境变量)`);
   
   if (!apiKey) {
     console.error('[测试生成] API密钥未配置，请检查环境变量OPENAI_API_KEY');
@@ -49,13 +49,15 @@ export async function POST(request: NextRequest) {
     console.log('[测试生成] 开始调用OpenAI API...');
     console.time('image-generation');
     
-    // 使用固定的dall-e-3模型，忽略环境变量中的模型
+    // 使用固定的gpt-image-1-vip模型，忽略环境变量中的模型
     const response = await apiClient.images.generate({
-      model: "dall-e-3", // 固定使用dall-e-3
+      model: "gpt-image-1-vip", // 固定使用gpt-image-1-vip
       prompt: finalPrompt,
       n: 1,
       size: "1024x1024",
-      response_format: "url"
+      quality: "hd",
+      style: "vivid",
+      response_format: 'url'
     });
     
     console.timeEnd('image-generation');
@@ -65,7 +67,7 @@ export async function POST(request: NextRequest) {
       status: 'success',
       message: '图像生成成功',
       imageUrl: response.data[0].url,
-      model: "dall-e-3"
+      model: "gpt-image-1-vip"
     });
   } catch (error) {
     console.error('[测试生成] 图像生成失败:', error);
@@ -94,7 +96,7 @@ export async function POST(request: NextRequest) {
       status: 'failed',
       error: errorMessage,
       details: errorDetails,
-      model: "dall-e-3"
+      model: "gpt-image-1-vip"
     }, { status: 500 });
   }
 } 

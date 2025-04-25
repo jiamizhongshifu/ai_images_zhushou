@@ -58,18 +58,19 @@ async function testCreateTaskRecord() {
     
     // 创建测试任务
     const { data, error } = await supabase
-      .from('image_tasks')
+      .from('ai_image_tasks')
       .insert({
         id: recordId, 
         user_id: user.id,
         task_id: taskId,
         status: 'pending',
         prompt: '测试任务 - ' + new Date().toISOString(),
-        provider: 'dall-e-3',
+        provider: 'gpt-image-1-vip',
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
       })
-      .select();
+      .select()
+      .single();
     
     if (error) {
       console.error('创建任务记录失败:', error.message);
@@ -77,7 +78,7 @@ async function testCreateTaskRecord() {
       // 检查表结构
       console.log('\n正在检查表结构...');
       const { data: tableInfo, error: tableError } = await supabase
-        .rpc('table_info', { table_name: 'image_tasks' });
+        .rpc('table_info', { table_name: 'ai_image_tasks' });
       
       if (tableError) {
         console.error('获取表结构失败:', tableError.message);
@@ -95,7 +96,7 @@ async function testCreateTaskRecord() {
     // 查询验证
     console.log('\n正在验证任务记录...');
     const { data: taskData, error: taskError } = await supabase
-      .from('image_tasks')
+      .from('ai_image_tasks')
       .select('*')
       .eq('id', recordId)
       .single();

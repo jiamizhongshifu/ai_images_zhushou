@@ -56,13 +56,14 @@ const openai = new OpenAI({
 async function generateImage() {
   try {
     const response = await openai.images.generate({
-      model: "dall-e-3", // 或 "dall-e-2"
+      model: "gpt-image-1-vip",
       prompt: '一只穿着太空服的柴犬在火星上行走，数字艺术风格',
       n: 1,
       size: '1024x1024',
-      quality: "standard", // 可选 "standard" 或 "hd" (仅适用于dall-e-3)
-      style: "natural", // 可选 "natural" 或 "vivid" (仅适用于dall-e-3)
-      response_format: 'url', // 或 'b64_json' 返回 base64 编码的图片
+      quality: "standard",
+      style: "natural",
+      response_format: 'url',
+      user: "user-123"
     });
 
     const imageUrl = response.images[0].url;
@@ -77,16 +78,14 @@ generateImage();
 
 ### 🧾 参数说明
 
-- `model`（string）：使用的模型，可选 `"dall-e-3"` 或 `"dall-e-2"`。
-- `prompt`（string）：描述您希望生成的图像内容。
-- `n`（number）：生成的图片数量（DALL-E 3最大值为4，DALL-E 2最大值为10）。
-- `size`（string）：图片尺寸
-  - DALL-E 3支持: `1024x1024`、`1792x1024`、`1024x1792`
-  - DALL-E 2支持: `256x256`、`512x512`、`1024x1024`
-- `quality`（string）：图像质量，可选 `"standard"` 或 `"hd"`（仅适用于DALL-E 3）。
-- `style`（string）：图像风格，可选 `"natural"` 或 `"vivid"`（仅适用于DALL-E 3）。
-- `response_format`（string）：返回格式，`url`（默认）返回图片链接，`b64_json` 返回 base64 编码的图片。
-- `user`（string，可选）：用于追踪用户的标识符。
+- `model`（string）：使用的模型，应为 `"gpt-image-1-vip"` 或其他支持的图像生成模型。
+- `prompt`（string）：生成图像的文本描述，最多1000个字符。
+- `n`（integer）：要生成的图像数量，默认为1。
+- `size`（string）：图像的尺寸，可选 `"256x256"`, `"512x512"`, 或 `"1024x1024"`。
+- `response_format`（string）：响应格式，可选 `"url"` 或 `"b64_json"`。
+- `quality`（string）：图像质量，可选 "standard" 或 "hd"，会影响生成速度和消耗的点数。
+- `style`（string）：风格偏好，可选 "natural" 或 "vivid"。
+- `user`（string）：标识最终用户的唯一标识符，用于监控和检测滥用。
 
 ### 🖼 下载并保存图片（可选）
 

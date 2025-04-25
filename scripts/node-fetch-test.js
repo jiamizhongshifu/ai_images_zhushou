@@ -157,20 +157,19 @@ async function testDallE(apiKey, agent) {
     const timeout = setTimeout(() => controller.abort(), 60000);
     
     // 调用API
-    const response = await fetch('https://api.openai.com/v1/images/generations', {
+    const response = await fetch(`${apiUrl}/images/generations`, {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`
       },
       body: JSON.stringify({
-        model: "dall-e-3",
-        prompt: "一只小猫，简单的白色背景，测试图像",
+        model: "gpt-image-1-vip",
+        prompt: "可爱的卡通猫，简单白色背景，测试图像",
         n: 1,
-        size: "1024x1024"
-      }),
-      agent,
-      signal: controller.signal
+        size: "1024x1024",
+        response_format: "url"
+      })
     });
     
     clearTimeout(timeout);
