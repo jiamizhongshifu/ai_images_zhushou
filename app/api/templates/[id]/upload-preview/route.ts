@@ -2,9 +2,11 @@ import type { NextApiRequest } from 'next';
 import { NextRequest, NextResponse } from 'next/server';
 import { templateStore } from '../../supabase-store';
 
+type Params = { id: string };
+
 export async function POST(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Params }
 ): Promise<NextResponse> {
   try {
     const { id: templateId } = params;
