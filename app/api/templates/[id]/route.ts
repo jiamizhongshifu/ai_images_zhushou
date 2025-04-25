@@ -3,21 +3,15 @@ import { handleError } from '@/utils/error-handler';
 import { v4 as uuidv4 } from 'uuid';
 import { templateStore } from '../supabase-store';
 
-interface RouteContext {
-  params: {
-    id: string;
-  };
-}
-
 /**
  * 获取单个模板详情
  */
 export async function GET(
   req: NextRequest,
-  context: RouteContext
+  { params }: { params: { id: string } }
 ): Promise<Response> {
   try {
-    const { id: templateId } = context.params;
+    const { id: templateId } = params;
     console.log(`获取模板详情，ID: ${templateId}`);
     
     if (!templateId) {
@@ -56,10 +50,10 @@ export async function GET(
  */
 export async function PATCH(
   req: NextRequest,
-  context: RouteContext
+  { params }: { params: { id: string } }
 ): Promise<Response> {
   try {
-    const { id: templateId } = context.params;
+    const { id: templateId } = params;
     console.log(`更新模板，ID: ${templateId}`);
     
     if (!templateId || typeof templateId !== 'string') {
@@ -98,10 +92,10 @@ export async function PATCH(
  */
 export async function PUT(
   req: NextRequest,
-  context: RouteContext
+  { params }: { params: { id: string } }
 ): Promise<Response> {
   try {
-    const { id: templateId } = context.params;
+    const { id: templateId } = params;
     console.log(`替换模板，ID: ${templateId}`);
     
     const template = await templateStore.getTemplate(templateId);
@@ -142,10 +136,10 @@ export async function PUT(
  */
 export async function DELETE(
   req: NextRequest,
-  context: RouteContext
+  { params }: { params: { id: string } }
 ): Promise<Response> {
   try {
-    const { id: templateId } = context.params;
+    const { id: templateId } = params;
     console.log(`删除模板，ID: ${templateId}`);
     
     if (!templateId) {
