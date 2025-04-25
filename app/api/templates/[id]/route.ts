@@ -7,11 +7,11 @@ import { templateStore } from '../supabase-store';
  * 获取单个模板详情
  */
 export async function GET(
-  request: Request,
-  { params }: { params: { id: string } }
-): Promise<NextResponse> {
+  _req: Request,
+  context: { params: Record<string, string> }
+): Promise<Response> {
   try {
-    const id = params.id;
+    const id = context.params.id;
     
     if (!id) {
       return NextResponse.json({
@@ -48,11 +48,11 @@ export async function GET(
  * 更新模板使用次数
  */
 export async function PATCH(
-  request: Request,
-  { params }: { params: { id: string } }
-): Promise<NextResponse> {
+  _req: Request,
+  context: { params: Record<string, string> }
+): Promise<Response> {
   try {
-    const { id } = params;
+    const { id } = context.params;
     
     if (!id || typeof id !== 'string') {
       return NextResponse.json(
@@ -90,10 +90,10 @@ export async function PATCH(
  */
 export async function PUT(
   request: Request,
-  { params }: { params: { id: string } }
-): Promise<NextResponse> {
+  context: { params: Record<string, string> }
+): Promise<Response> {
   try {
-    const id = params.id;
+    const id = context.params.id;
     
     if (!id) {
       return NextResponse.json({
@@ -134,11 +134,11 @@ export async function PUT(
  * 删除模板
  */
 export async function DELETE(
-  request: Request,
-  { params }: { params: { id: string } }
-): Promise<NextResponse> {
+  _req: Request,
+  context: { params: Record<string, string> }
+): Promise<Response> {
   try {
-    const id = params.id;
+    const id = context.params.id;
     
     if (!id) {
       return NextResponse.json({
