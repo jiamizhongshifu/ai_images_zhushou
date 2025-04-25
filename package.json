@@ -60,6 +60,7 @@
     "@next/env": "^15.2.4",
     "@supabase/supabase-js": "^2.49.4",
     "@types/node": "22.10.2",
+    "@types/pg": "^8.11.14",
     "@types/react": "^19.0.2",
     "@types/react-dom": "19.0.2",
     "@types/uuid": "^10.0.0",
