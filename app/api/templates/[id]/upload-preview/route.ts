@@ -9,10 +9,10 @@ type RouteSegment = {
 
 export async function POST(
   request: NextRequest,
-  segment: RouteSegment
+  { params }: { params: Record<string, string | string[]> }
 ): Promise<Response> {
   try {
-    const { id: templateId } = segment.params;
+    const templateId = params.id as string;
     console.log(`尝试上传图片到模板 ID: ${templateId}`);
     
     // 获取所有模板ID列表用于调试

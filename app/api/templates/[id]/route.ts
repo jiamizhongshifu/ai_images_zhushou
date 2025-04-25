@@ -1,23 +1,17 @@
-import type { NextApiRequest } from 'next';
 import { NextRequest, NextResponse } from 'next/server';
 import { handleError } from '@/utils/error-handler';
 import { v4 as uuidv4 } from 'uuid';
 import { templateStore } from '../supabase-store';
-
-type RouteSegment = {
-  params: { id: string };
-  searchParams?: { [key: string]: string | string[] | undefined };
-};
 
 /**
  * 获取单个模板详情
  */
 export async function GET(
   request: NextRequest,
-  segment: RouteSegment
-): Promise<Response> {
+  { params }: { params: Record<string, string | string[]> }
+) {
   try {
-    const { id: templateId } = segment.params;
+    const templateId = params.id as string;
     console.log(`获取模板详情，ID: ${templateId}`);
     
     if (!templateId) {
@@ -56,10 +50,10 @@ export async function GET(
  */
 export async function PATCH(
   request: NextRequest,
-  segment: RouteSegment
-): Promise<Response> {
+  { params }: { params: Record<string, string | string[]> }
+) {
   try {
-    const { id: templateId } = segment.params;
+    const templateId = params.id as string;
     console.log(`更新模板，ID: ${templateId}`);
     
     if (!templateId || typeof templateId !== 'string') {
@@ -98,10 +92,10 @@ export async function PATCH(
  */
 export async function PUT(
   request: NextRequest,
-  segment: RouteSegment
-): Promise<Response> {
+  { params }: { params: Record<string, string | string[]> }
+) {
   try {
-    const { id: templateId } = segment.params;
+    const templateId = params.id as string;
     console.log(`替换模板，ID: ${templateId}`);
     
     const template = await templateStore.getTemplate(templateId);
@@ -142,10 +136,10 @@ export async function PUT(
  */
 export async function DELETE(
   request: NextRequest,
-  segment: RouteSegment
-): Promise<Response> {
+  { params }: { params: Record<string, string | string[]> }
+) {
   try {
-    const { id: templateId } = segment.params;
+    const templateId = params.id as string;
     console.log(`删除模板，ID: ${templateId}`);
     
     if (!templateId) {
