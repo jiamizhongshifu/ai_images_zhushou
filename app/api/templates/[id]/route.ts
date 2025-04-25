@@ -6,7 +6,10 @@ import { templateStore } from '../supabase-store';
 /**
  * 获取单个模板详情
  */
-export async function GET(req, { params }) {
+export async function GET(
+  req: NextRequest,
+  { params }: { params: { id: string } }
+) {
   try {
     const id = params.id;
     
@@ -44,7 +47,10 @@ export async function GET(req, { params }) {
 /**
  * 更新模板使用次数
  */
-export async function PATCH(req, { params }) {
+export async function PATCH(
+  req: NextRequest,
+  { params }: { params: { id: string } }
+) {
   try {
     const { id } = params;
     
@@ -82,49 +88,52 @@ export async function PATCH(req, { params }) {
 /**
  * 更新模板
  */
-export async function PUT(req, { params }) {
+export async function PUT(
+  req: NextRequest,
+  { params }: { params: { id: string } }
+) {
   try {
-    const id = params.id;
+    const { id } = params;
+    const template = await templateStore.getTemplate(id);
     
-    if (!id) {
-      return NextResponse.json({
-        success: false,
-        error: '缺少模板ID'
-      }, { status: 400 });
+    if (!template) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "未找到模板"
+        },
+        { status: 404 }
+      );
     }
     
-    const updates = await req.json();
-    
-    // 更新时添加更新时间
-    updates.updated_at = new Date().toISOString();
-    
-    console.log(`更新模板: ${id}`, updates);
-    const updatedTemplate = await templateStore.updateTemplate(id, updates);
-    
-    if (!updatedTemplate) {
-      return NextResponse.json({
-        success: false,
-        error: '未找到模板'
-      }, { status: 404 });
-    }
+    const updatedTemplate = await templateStore.updateTemplate(id, {
+      use_count: (template.use_count || 0) + 1,
+      updated_at: new Date().toISOString()
+    });
     
     return NextResponse.json({
       success: true,
       data: updatedTemplate
     });
-  } catch (error: any) {
-    console.error('更新模板失败:', error);
-    return NextResponse.json({
-      success: false,
-      error: error.message || '更新模板失败'
-    }, { status: 500 });
+  } catch (error) {
+    console.error('更新模板使用次数失败:', error);
+    return NextResponse.json(
+      {
+        success: false,
+        error: "更新模板使用次数失败"
+      },
+      { status: 500 }
+    );
   }
 }
 
 /**
  * 删除模板
  */
-export async function DELETE(req, { params }) {
+export async function DELETE(
+  req: NextRequest,
+  { params }: { params: { id: string } }
+) {
   try {
     const id = params.id;
     
