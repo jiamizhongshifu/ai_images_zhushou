@@ -6,12 +6,9 @@ import { templateStore } from '../supabase-store';
 /**
  * 获取单个模板详情
  */
-export async function GET(
-  _req: Request,
-  context: { params: Record<string, string> }
-): Promise<Response> {
+export async function GET(req, { params }) {
   try {
-    const id = context.params.id;
+    const id = params.id;
     
     if (!id) {
       return NextResponse.json({
@@ -47,12 +44,9 @@ export async function GET(
 /**
  * 更新模板使用次数
  */
-export async function PATCH(
-  _req: Request,
-  context: { params: Record<string, string> }
-): Promise<Response> {
+export async function PATCH(req, { params }) {
   try {
-    const { id } = context.params;
+    const { id } = params;
     
     if (!id || typeof id !== 'string') {
       return NextResponse.json(
@@ -88,12 +82,9 @@ export async function PATCH(
 /**
  * 更新模板
  */
-export async function PUT(
-  request: Request,
-  context: { params: Record<string, string> }
-): Promise<Response> {
+export async function PUT(req, { params }) {
   try {
-    const id = context.params.id;
+    const id = params.id;
     
     if (!id) {
       return NextResponse.json({
@@ -102,7 +93,7 @@ export async function PUT(
       }, { status: 400 });
     }
     
-    const updates = await request.json();
+    const updates = await req.json();
     
     // 更新时添加更新时间
     updates.updated_at = new Date().toISOString();
@@ -133,12 +124,9 @@ export async function PUT(
 /**
  * 删除模板
  */
-export async function DELETE(
-  _req: Request,
-  context: { params: Record<string, string> }
-): Promise<Response> {
+export async function DELETE(req, { params }) {
   try {
-    const id = context.params.id;
+    const id = params.id;
     
     if (!id) {
       return NextResponse.json({
