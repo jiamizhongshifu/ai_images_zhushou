@@ -1,10 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { templateStore } from '../../supabase-store';
 
-export async function POST(
-  request: NextRequest,
-  { params }: { params: { id: string } }
-) {
+export async function POST(req, { params }) {
   try {
     const templateId = params.id;
     console.log(`尝试上传图片到模板 ID: ${templateId}`);
@@ -41,7 +38,7 @@ export async function POST(
     console.log(`找到模板: ${template.name} (ID: ${template.id})`);
     
     // 解析FormData
-    const formData = await request.formData();
+    const formData = await req.formData();
     const file = formData.get("file") as File;
     
     if (!file) {
