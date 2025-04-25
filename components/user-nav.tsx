@@ -86,7 +86,7 @@ export default function UserNav() {
           
           // 同步全局状态
           await forceSyncAuthState();
-          await refreshUserState({ forceRefresh: false, showLoading: false });
+          await refreshUserState();
         } else {
           console.log('[UserNav] 直接获取用户失败:', error);
           setLocalUserLoaded(false);
