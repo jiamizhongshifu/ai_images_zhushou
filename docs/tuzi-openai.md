@@ -1,4 +1,4 @@
-# gpt-4o-image-vip
+# gpt-image-1-vip
 
 ## OpenAPI
 
@@ -11,7 +11,7 @@ info:
 paths:
   /v1/chat/completions:
     post:
-      summary: gpt-4o-image-vip
+      summary: gpt-image-1-vip
       deprecated: false
       description: ''
       tags:
@@ -26,7 +26,7 @@ paths:
               x-apifox-orders: []
             example:
               stream: true
-              model: gpt-4o-image-vip
+              model: gpt-image-1-vip
               messages:
                 - content: 画个牛马
                   role: user

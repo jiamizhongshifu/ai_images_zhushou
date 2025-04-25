@@ -32,13 +32,37 @@ export function UserStateProvider({ children }: { children: React.ReactNode }) {
     if (!isAuthenticated) return;
     
     try {
-      // 这里通常会有一个API调用来获取积分
-      // 模拟一个API调用
+      setIsLoading(true);
       console.log('[UserStateProvider] 刷新用户积分');
-      const randomCredits = Math.floor(Math.random() * 1000);
-      setCredits(randomCredits);
+      
+      // 调用真实API获取点数
+      const response = await fetch('/api/credits/get?force=1', {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+          'Cache-Control': 'no-cache'
+        },
+        cache: 'no-store'
+      });
+      
+      if (!response.ok) {
+        throw new Error(`API请求失败: ${response.status}`);
+      }
+      
+      const data = await response.json();
+      
+      if (data.success && data.credits !== undefined) {
+        setCredits(data.credits);
+        console.log('[UserStateProvider] 获取到用户积分:', data.credits);
+      } else {
+        console.error('[UserStateProvider] API返回格式错误:', data);
+        throw new Error('API返回数据格式错误');
+      }
     } catch (error) {
       console.error('[UserStateProvider] 获取用户积分失败:', error);
+      // 不重置点数，保留之前的值
+    } finally {
+      setIsLoading(false);
     }
   }, [isAuthenticated]);
 

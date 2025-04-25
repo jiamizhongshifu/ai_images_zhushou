@@ -59,7 +59,7 @@ let cachedTuziModels: string[] | null = null;
 
 // 网络请求配置
 const MAX_RETRIES = 3;
-const RETRY_DELAY = 2000; // 毫秒
+const RETRY_DELAY = 3000; // 增加到3秒
 const TIMEOUT = 270000; // 270秒，给Vercel平台留出30秒处理开销
 
 // 延时函数
@@ -165,17 +165,32 @@ async function generateImage({
       // 构建消息内容 - 按照tuzi-openai.md文档格式
       let messageContent = formattedPrompt;
       
+      // 优先从全局存储中获取已有的genId
+      if (!genId && global._lastGenIds) {
+        const cacheKey = JSON.stringify({ prompt, style, aspectRatio });
+        const cachedGenId = global._lastGenIds[cacheKey];
+        if (cachedGenId) {
+          genId = cachedGenId;
+          logger.info(`从缓存中恢复gen_id: ${genId}`);
+        }
+      }
+      
       // 如果有genId（修改已有图片的场景），则使用JSON格式
-      if (genId || base64Image) {
+      if (genId) {
+        // 如果已经获取到gen_id，始终使用相同的gen_id进行请求
+        const promptData = {
+          prompt: formattedPrompt,
+          ratio: aspectRatio || "1:1",
+          gen_id: genId
+        };
+        messageContent = JSON.stringify(promptData);
+        logger.info(`使用现有gen_id: ${genId}继续请求进度`);
+      } else if (base64Image) {
+        // 如果只有图片但没有genId
         const promptData: any = {
           prompt: formattedPrompt,
           ratio: aspectRatio || "1:1"
         };
-        
-        // 如果有genId，添加到请求中
-        if (genId) {
-          promptData.gen_id = genId;
-        }
         
         // 将对象转为字符串作为消息内容
         messageContent = JSON.stringify(promptData);
@@ -221,6 +236,16 @@ async function generateImage({
         if (genIdMatch && genIdMatch[1]) {
           genId = genIdMatch[1];
           logger.info(`提取到gen_id: ${genId}`);
+          
+          // 保存gen_id到临时存储，确保在请求间保持一致
+          try {
+            // 使用全局变量保存genId，避免文件系统操作
+            global._lastGenIds = global._lastGenIds || {};
+            global._lastGenIds[JSON.stringify({ prompt, style, aspectRatio })] = genId;
+            logger.info(`已保存gen_id到内存: ${genId}`);
+          } catch (err) {
+            logger.warn(`保存gen_id失败: ${err instanceof Error ? err.message : String(err)}`);
+          }
         }
         
         // 检查生成进度
@@ -229,12 +254,24 @@ async function generateImage({
           const progress = parseInt(progressMatch[1]);
           logger.info(`图片生成进度: ${progress}%`);
           
-          // 如果进度小于100%，等待一段时间后重试
-          if (progress < 100 && retryCount < MAX_RETRIES) {
-            retryCount++;
-            logger.info(`图片生成中，进度: ${progress}%，等待后继续...`);
-            await delay(RETRY_DELAY);
-            continue;
+          // 每次接收到进度更新，记录时间戳
+          const now = Date.now();
+          global._lastProgressTime = global._lastProgressTime || {};
+          const taskKey = genId || JSON.stringify({ prompt, style, aspectRatio });
+          const lastTime = global._lastProgressTime[taskKey] || 0;
+          global._lastProgressTime[taskKey] = now;
+          
+          // 关键修改：只有当进度小于100%时才等待，但不增加重试计数
+          if (progress < 100) {
+            // 根据上次进度更新时间动态调整等待时间
+            // 如果最近有进度更新，等待较短时间；如果长时间无更新，等待较长时间
+            const timeSinceLastUpdate = now - lastTime;
+            const waitTime = timeSinceLastUpdate < 3000 ? 3000 : 
+                            (timeSinceLastUpdate < 10000 ? 6000 : 10000);
+            
+            logger.info(`图片生成中，进度: ${progress}%，等待${waitTime/1000}秒继续...`);
+            await delay(waitTime);
+            continue; // 继续循环，但不增加重试计数
           }
         }
         
@@ -263,10 +300,10 @@ async function generateImage({
         logger.info(`API响应内容: ${assistantContent.substring(0, 500)}...`);
         
         // 如果未能提取URL但是有生成ID，可能是中间状态，需要继续尝试
-        if (genId && retryCount < MAX_RETRIES) {
-          retryCount++;
-          await delay(RETRY_DELAY);
-          continue;
+        if (genId) {
+          logger.info(`有genId但未提取到图片URL，等待后继续请求: ${genId}`);
+          await delay(5000); // 等待5秒
+          continue; // 不增加重试计数，继续请求
         }
       }
       
@@ -285,10 +322,9 @@ async function generateImage({
       
       if (retryCount < MAX_RETRIES) {
         retryCount++;
-        logger.warn(`第${retryCount}次重试，错误: ${lastError.message}`);
-        // 针对网络错误增加更长的延迟
-        const networkErrorDelay = lastError.message.includes('网络连接错误') ? RETRY_DELAY * 2 : RETRY_DELAY;
-        await delay(networkErrorDelay);
+        logger.warn(`发生错误，第${retryCount}次重试，错误: ${lastError.message}`);
+        // 使用更长的延迟
+        await delay(RETRY_DELAY * 3);
       } else {
         throw lastError;
       }
@@ -674,7 +710,7 @@ function extractImageUrl(content: string): string | null {
   // 尝试解析JSON
   try {
     const jsonData = JSON.parse(content);
-    
+        
     // 检查各种可能的URL字段名
     const possibleFields = ['image_url', 'imageUrl', 'url', 'image', 'generated_image'];
     
@@ -693,5 +729,11 @@ function extractImageUrl(content: string): string | null {
     }
   }
   
-  return null;
+    return null;
+  }
+
+// 声明全局变量类型
+declare global {
+  var _lastGenIds: Record<string, string>;
+  var _lastProgressTime: Record<string, number>;
 } 

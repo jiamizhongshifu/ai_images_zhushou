@@ -3,6 +3,76 @@
  * 用于从图像生成服务向主应用发送任务进度更新
  */
 
+// 添加节流控制
+const progressUpdateCache = new Map<string, {
+  lastUpdateTime: number;  // 上次更新时间
+  lastProgress: number;    // 上次更新的进度
+  lastStage: string;       // 上次更新的阶段
+  pendingUpdate: boolean;  // 是否有待处理的更新
+}>();
+
+// 最小更新间隔（毫秒）
+const MIN_UPDATE_INTERVAL = 3000; // 3秒
+
+/**
+ * 检查任务参数是否符合要求，返回修复后的参数
+ * @param data 任务参数
+ * @returns 修复后的任务参数
+ */
+function validateAndFixTaskParameters(data: any): any {
+  // 如果没有数据，直接返回
+  if (!data) return data;
+
+  // 复制数据以避免直接修改原始对象
+  const fixedData = { ...data };
+
+  // 检查并处理尺寸参数
+  if (fixedData.size === '1024x1024' && fixedData.ratio) {
+    // 从比例计算合适的尺寸
+    let ratio: number;
+    try {
+      // 比例可能是字符串格式，例如 "4:3" 或 "3:4"
+      if (typeof fixedData.ratio === 'string' && fixedData.ratio.includes(':')) {
+        const [width, height] = fixedData.ratio.split(':').map(Number);
+        ratio = width / height;
+      } else {
+        ratio = Number(fixedData.ratio);
+      }
+
+      // 处理无效比例
+      if (isNaN(ratio) || ratio <= 0) {
+        console.warn(`[图片任务] 警告: 无效的比例值 ${fixedData.ratio}，使用默认比例 1:1`);
+        ratio = 1;
+      }
+
+      // 基于比例计算新尺寸
+      let newSize: string;
+      if (ratio < 0.9) { // 竖屏图像
+        newSize = '1024x1792';
+      } else if (ratio > 1.1) { // 横屏图像
+        newSize = '1792x1024';
+      } else { // 接近正方形
+        newSize = '1024x1024';
+      }
+
+      // 如果计算出的尺寸与当前不同，则更新并记录
+      if (newSize !== fixedData.size) {
+        console.log(`[图片任务] 根据宽高比(${ratio.toFixed(2)})调整尺寸: ${fixedData.size} -> ${newSize}`);
+        fixedData.size = newSize;
+      }
+    } catch (e) {
+      console.error('[图片任务] 计算图像尺寸时出错:', e);
+    }
+  }
+
+  // 检查参考图像设置
+  if (fixedData.referenceImage === true && (!fixedData.imageData && !fixedData.imageHash)) {
+    console.warn('[图片任务] 警告: 启用了参考图像但未提供图像数据或哈希值');
+  }
+
+  return fixedData;
+}
+
 /**
  * 更新任务进度
  * @param taskId 任务ID
@@ -17,7 +87,8 @@ export async function updateTaskProgress(
   progress: number,
   stage: string,
   apiBaseUrl: string = process.env.NEXT_PUBLIC_APP_URL || 'https://www.imgtutu.ai',
-  apiKey: string = process.env.TASK_PROCESS_SECRET_KEY || ''
+  apiKey: string = process.env.TASK_PROCESS_SECRET_KEY || '',
+  additionalData: any = {}
 ): Promise<Response | null> {
   try {
     // 输出进度更新日志
@@ -32,6 +103,36 @@ export async function updateTaskProgress(
     if (progress < 0 || progress > 100) {
       console.warn(`[图片任务] 警告: 进度值 ${progress} 超出范围，已调整到有效范围`);
       progress = Math.max(0, Math.min(100, progress));
+    }
+    
+    // 获取当前时间
+    const currentTime = Date.now();
+    
+    // 检查节流控制 - 如果上次更新时间太近，则跳过本次更新
+    // 除非是进度为100%（完成）或0%（开始）或阶段发生变化
+    const taskCacheKey = `${taskId}`;
+    const taskCache = progressUpdateCache.get(taskCacheKey);
+    
+    if (taskCache) {
+      const timeSinceLastUpdate = currentTime - taskCache.lastUpdateTime;
+      const isSameStage = taskCache.lastStage === stage;
+      const isSmallProgressChange = Math.abs(progress - taskCache.lastProgress) < 10;
+      
+      // 特殊情况：始终更新的条件
+      const isSpecialProgress = progress === 0 || progress === 100;
+      const isStageChange = !isSameStage;
+      
+      // 如果时间间隔太短，且不是特殊情况，跳过更新
+      if (timeSinceLastUpdate < MIN_UPDATE_INTERVAL && 
+          !isSpecialProgress && !isStageChange && isSmallProgressChange) {
+        console.log(`[图片任务] 跳过更新：间隔过短(${timeSinceLastUpdate}ms < ${MIN_UPDATE_INTERVAL}ms)，非关键进度`);
+        
+        // 记录有待处理的更新
+        taskCache.pendingUpdate = true;
+        progressUpdateCache.set(taskCacheKey, taskCache);
+        
+        return null;
+      }
     }
     
     // 构建完整URL
@@ -55,12 +156,41 @@ export async function updateTaskProgress(
       }
     }
     
-    // 发送更新请求，使用重试机制
-    const response = await sendWithRetry(url, {
+    // 构建请求数据
+    let requestData = {
       taskId,
       progress,
-      stage
-    }, apiKey);
+      stage,
+      ...additionalData
+    };
+    
+    // 验证并修复任务参数
+    requestData = validateAndFixTaskParameters(requestData);
+    
+    // 发送更新请求，使用重试机制
+    const response = await sendWithRetry(url, requestData, apiKey);
+    
+    // 更新任务缓存
+    progressUpdateCache.set(taskCacheKey, {
+      lastUpdateTime: currentTime,
+      lastProgress: progress,
+      lastStage: stage,
+      pendingUpdate: false
+    });
+    
+    // 记录最新的进度到本地存储，作为降级机制
+    try {
+      if (typeof localStorage !== 'undefined') {
+        const progressKey = `task_progress_${taskId}`;
+        localStorage.setItem(progressKey, JSON.stringify({
+          progress,
+          stage,
+          timestamp: currentTime
+        }));
+      }
+    } catch (storageError) {
+      console.warn(`[图片任务] 无法保存进度到本地存储:`, storageError);
+    }
     
     return response;
   } catch (error) {
@@ -91,39 +221,19 @@ async function sendWithRetry(
   let retries = 0;
   let lastError: any = null;
   
-  // 准备多种认证头格式
-  const authHeaders: Record<string, string>[] = [
-    { 'Authorization': `Bearer ${apiKey}` },
-    { 'x-api-key': apiKey },
-    { 'X-API-Key': apiKey }
-  ];
+  // 请求头部
+  const headers = {
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${apiKey}`
+  };
   
   while (retries <= maxRetries) {
     try {
-      // 使用当前重试次数对应的认证头
-      const currentHeaderIndex = retries % authHeaders.length;
-      
-      // 调整日志级别，减少正常尝试时的日志量
-      if (retries === 0) {
-        console.log(`[图片任务] 尝试更新任务进度 (taskId: ${data.taskId})`);
-      } else {
-        console.log(`[图片任务] 重试更新任务进度 (尝试 ${retries + 1}/${maxRetries + 1}) - 使用备用认证头`);
-      }
-      
-      // 使用AbortController设置请求超时 - 增加到15秒
+      // 超时控制
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 15000); // 15秒超时，原来是5秒
-      
-      // 构建请求头
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json'
-      };
-      
-      // 添加认证头
-      const authHeader = authHeaders[currentHeaderIndex];
-      Object.keys(authHeader).forEach(key => {
-        headers[key] = authHeader[key];
-      });
+      const timeoutId = setTimeout(() => {
+        controller.abort();
+      }, 5000); // 5秒超时
       
       try {
         const response = await fetch(url, {
@@ -150,14 +260,27 @@ async function sendWithRetry(
             console.warn(`[图片任务] 建议: ${errorData.suggestion || '运行数据库迁移脚本'}`);
             
             // 这种情况下不继续重试，但不视为致命错误
+            console.log(`[图片任务降级] 在本地记录 ${data.taskId} 进度: ${data.progress}%, 阶段: ${data.stage}`);
+            return null;
+          }
+          
+          // 检查是否是列不存在错误 (500错误但包含列不存在信息)
+          if (response.status === 500 && 
+             (errorData.details?.includes('column') && 
+              errorData.details?.includes('does not exist'))) {
+            console.warn(`[图片任务] 列不存在错误: ${errorData.details}`);
+            console.warn(`[图片任务] 建议运行数据库迁移脚本添加必要的列`);
+            
+            // 这种情况下不继续重试，使用降级机制
+            console.log(`[图片任务降级] 在本地记录 ${data.taskId} 进度: ${data.progress}%, 阶段: ${data.stage}`);
             return null;
           }
           
           console.error(`[图片任务] 更新任务 ${data.taskId} 进度失败: HTTP ${response.status}, 错误:`, errorData);
           lastError = { status: response.status, data: errorData };
           
-          // 如果不是认证错误，不再重试
-          if (response.status !== 401) {
+          // 如果是认证错误(401)或临时服务器错误(5xx)，可以重试
+          if (response.status !== 401 && (response.status < 500 || response.status >= 600)) {
             break;
           }
         }
@@ -165,36 +288,26 @@ async function sendWithRetry(
         // 确保超时定时器被清除
         clearTimeout(timeoutId);
       }
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
       
-      // 检查是否是超时或网络错误
-      if (errorMsg.includes('abort') || errorMsg.includes('timeout')) {
-        console.warn(`[图片任务] 更新进度请求超时 (尝试 ${retries + 1}/${maxRetries + 1}), URL: ${url}`);
-      } else {
-        console.error(`[图片任务] 更新进度请求异常 (尝试 ${retries + 1}/${maxRetries + 1}):`, error);
+      retries++;
+      
+      if (retries <= maxRetries) {
+        // 使用指数退避策略，增加每次重试的等待时间
+        const delay = Math.pow(2, retries) * 500; // 500ms, 1000ms, 2000ms
+        console.log(`[图片任务] 第${retries}次重试，等待 ${delay}ms...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
       }
+    } catch (error) {
+      console.error(`[图片任务] 更新任务 ${data.taskId} 进度失败:`, error);
       
-      lastError = error;
-    }
-    
-    retries++;
-    
-    // 最后一次尝试失败，但不影响图片生成流程
-    if (retries > maxRetries) {
-      console.warn(`[图片任务] 所有进度更新尝试失败，使用降级策略: 仅记录到日志 (taskId: ${data.taskId})`);
+      // 使用降级策略：直接在日志中记录进度，不阻塞主流程
+      console.log(`[图片任务降级] 任务 ${data.taskId} 进度更新: ${data.progress}%, 阶段: ${data.stage} (仅记录到日志)`);
       
-      // 这里实现降级策略，确保即使无法更新进度也不影响主流程
+      // 错误不会传播到调用方，确保不影响图片生成流程
       return null;
     }
-    
-    // 重试前等待一会，使用指数退避
-    const delay = Math.min(1000 * Math.pow(1.5, retries), 5000);
-    await new Promise(resolve => setTimeout(resolve, delay));
   }
   
-  // 所有尝试都失败
-  console.error(`[图片任务] 任务 ${data.taskId} 进度更新失败，已尝试 ${retries} 次:`, lastError);
   return null;
 }
 
@@ -234,4 +347,4 @@ export function reportProgress(
       // 降级：仅记录到控制台
       console.log(`[图片任务降级] 任务 ${taskId} 进度: ${progress}%, 阶段: ${stage} (记录到控制台)`);
     });
-} 
+}

@@ -110,13 +110,16 @@ if (typeof window !== 'undefined') {
   }
 }
 
-/**
- * 用户点数服务类
- */
+// 用户点数服务类
 class CreditService {
   private static instance: CreditService;
   private pendingAuthCheck: boolean = false;
   private lastAuthCheck: number = 0;
+  // 添加内存缓存
+  private _memoryCache: { credits: number | null; timestamp: number } = {
+    credits: null,
+    timestamp: 0
+  };
 
   private constructor() {
     // 初始化时立即同步一次缓存中的点数
@@ -142,7 +145,7 @@ class CreditService {
           console.log('[CreditService] 用户已登录，获取最新点数');
           this.fetchCredits(true).then(credits => {
             // 发送点数刷新完成事件
-            eventBus.emit(CREDIT_EVENTS.CREDITS_CHANGED, this.getCreditState());
+            eventBus.emit(CREDIT_EVENTS.CREDITS_CHANGED, credits);
             console.log('[CreditService] 已发送点数变化事件:', credits);
           }).catch(err => {
             console.error('[CreditService] 获取点数失败:', err);
@@ -187,6 +190,7 @@ class CreditService {
    */
   private syncFromCache(): void {
     try {
+      // 首先尝试从API缓存获取
       const cachedData = cacheService.get<CreditsResponse>(CREDITS_CACHE_KEY);
       if (cachedData && cachedData.success && cachedData.credits !== undefined) {
         this.setCreditState({
@@ -195,6 +199,38 @@ class CreditService {
           isLoading: false
         });
         console.log('[CreditService] 从缓存同步点数:', cachedData.credits);
+        
+        // 同时更新内存缓存
+        this._memoryCache = {
+          credits: cachedData.credits,
+          timestamp: Date.now()
+        };
+        
+        return;
+      }
+      
+      // 如果API缓存失败，尝试从本地存储获取
+      try {
+        const localData = localStorage.getItem('user_credits');
+        if (localData) {
+          const parsedData = JSON.parse(localData);
+          if (parsedData && parsedData.credits !== undefined) {
+            this.setCreditState({
+              credits: parsedData.credits,
+              lastUpdate: Date.now(),
+              isLoading: false
+            });
+            console.log('[CreditService] 从本地存储同步点数:', parsedData.credits);
+            
+            // 同时更新内存缓存
+            this._memoryCache = {
+              credits: parsedData.credits,
+              timestamp: Date.now()
+            };
+          }
+        }
+      } catch (e) {
+        console.warn('[CreditService] 从本地存储同步点数失败:', e);
       }
     } catch (error) {
       console.error('[CreditService] 从缓存同步点数失败:', error);
@@ -267,162 +303,180 @@ class CreditService {
 
   /**
    * 获取最新点数
-   * @param forceRefresh 是否强制刷新缓存
-   * @returns 用户点数
+   * @param forceRefresh 是否强制刷新
+   * @returns 点数值，失败时返回null
    */
   public async fetchCredits(forceRefresh: boolean = false): Promise<number | null> {
-    // 如果已经在获取中，返回上一次结果或null
-    if (refreshPromise) {
-      console.log('[CreditService] 正在进行中的点数请求，等待结果');
-      try {
-        return await refreshPromise;
-      } catch (error) {
-        console.error('[CreditService] 等待进行中的点数请求时出错:', error);
-        return null;
-      }
+    // 检查用户是否已登录
+    if (!authService.isAuthenticated()) {
+      console.log('[CreditService] 用户未登录，跳过获取点数');
+      return null;
     }
     
-    try {
+    // 开始加载状态
+    this.setCreditState({
+      isLoading: true
+    });
+    
+    // 从缓存获取数据，作为快速响应
+    const cachedCredits = this.getCachedCredits();
+    if (cachedCredits !== null && !forceRefresh) {
+      // 如果有缓存且不强制刷新，立即使用缓存值
+      console.log('[CreditService] 使用缓存的点数:', cachedCredits);
+      this.setCreditState({
+        credits: cachedCredits,
+        lastUpdate: Date.now(),
+        isLoading: false
+      });
+      return cachedCredits;
+    }
+    
+    // 检查是否已经有请求在进行中
+    if (isRefreshing && !forceRefresh) {
+      console.log('[CreditService] 正在进行中的点数请求，等待结果');
+      return refreshPromise;
+    }
+    
+    // 标记正在刷新
+    isRefreshing = true;
+    
+    // 使用Promise包装以便重用
+    refreshPromise = (async () => {
+      const startTime = Date.now();
       console.log('[CreditService] 开始获取用户点数， 强制刷新:', forceRefresh);
       
-      isRefreshing = true;
-      this.setCreditState({ isLoading: true });
+      let lastKnownCredits = cachedCredits; // 保存最后已知的点数用于错误恢复
       
-      // 如果非强制刷新且缓存有效，则使用缓存数据
-      if (!forceRefresh) {
-        const cachedData = cacheService.get<CreditsResponse>(CREDITS_CACHE_KEY);
-        if (cachedData && cachedData.success && cachedData.credits !== undefined) {
-          const cacheAge = Date.now() - (cachedData.timestamp || 0);
-          console.log(`[CreditService] 发现缓存点数: ${cachedData.credits}, 缓存时间: ${cacheAge}ms`);
+      try {
+        // 检查缓存，除非强制刷新
+        if (!forceRefresh) {
+          const cachedData = cacheService.get<CreditsResponse>(CREDITS_CACHE_KEY);
           
-          if (cacheAge < CREDITS_CACHE_TTL) {
+          // 如果缓存有效且不强制刷新，直接使用缓存
+          if (cachedData && cachedData.success && cachedData.credits !== undefined &&
+              (Date.now() - (cachedData.timestamp || 0) < CREDITS_CACHE_TTL)) {
             console.log('[CreditService] 使用缓存点数:', cachedData.credits);
-            this.setCreditState({ isLoading: false });
+            
+            // 更新状态
+            this.setCreditState({
+              credits: cachedData.credits,
+              lastUpdate: Date.now(),
+              isLoading: false
+            });
+            
+            // 更新内存缓存
+            this._memoryCache = {
+              credits: cachedData.credits,
+              timestamp: Date.now()
+            };
+            
             return cachedData.credits;
-          } else {
-            console.log('[CreditService] 缓存已过期，需要刷新');
           }
         } else {
-          console.log('[CreditService] 未找到有效缓存点数，需要获取');
+          console.log('[CreditService] 强制刷新，跳过缓存检查');
         }
-      } else {
-        console.log('[CreditService] 强制刷新，跳过缓存检查');
-      }
-      
-      // 创建获取点数的Promise
-      refreshPromise = (async () => {
-        try {
-          // 标记API调用的开始时间，用于性能分析
-          const startTime = Date.now();
+        
+        // 调用API获取点数
+        console.log('[CreditService] 调用API获取用户点数');
+        const response = await fetch('/api/credits/get' + (forceRefresh ? '?force=1' : ''), {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+            'Cache-Control': 'no-cache'
+          },
+          cache: 'no-store'
+        });
+        
+        // 处理响应
+        if (response.ok) {
+          const data: CreditsResponse = await response.json();
           
-          console.log('[CreditService] 调用API获取用户点数');
-          
-          // 请求API获取点数
-          const url = `/api/credits/get${forceRefresh ? '?force=1' : ''}`;
-          
-          const fetchPromise = fetch(url, {
-            method: 'GET',
-            headers: {
-              'Content-Type': 'application/json',
-              'Cache-Control': 'no-cache, no-store',
-              'Pragma': 'no-cache'
-            },
-            credentials: 'include',
-          });
-          
-          // 设置超时
-          const timeoutPromise = new Promise<Response>((_, reject) => {
-            setTimeout(() => reject(new Error('获取点数请求超时')), 5000);
-          });
-          
-          // 使用Promise.race实现超时处理
-          const response = await Promise.race([fetchPromise, timeoutPromise]);
-          
-          if (!response.ok) {
-            // 增强错误处理，添加状态码和响应文本
-            const errorText = await response.text().catch(() => '无法获取错误详情');
-            throw new Error(`获取点数失败: ${response.status} ${response.statusText}, ${errorText}`);
-          }
-          
-          // 尝试解析响应
-          try {
-            const data: CreditsResponse = await response.json();
+          if (data.success && data.credits !== undefined) {
+            console.log('[CreditService] 获取点数成功:', data.credits);
             
-            // 添加时间戳，用于缓存过期判断
-            data.timestamp = Date.now();
+            // 缓存结果
+            cacheService.set(CREDITS_CACHE_KEY, {
+              ...data,
+              timestamp: Date.now()
+            }, CREDITS_CACHE_TTL);
             
-            // 记录API调用耗时
-            console.log(`[CreditService] 获取点数API调用成功，耗时: ${Date.now() - startTime}ms, 点数: ${data.credits}`);
+            // 更新状态
+            this.setCreditState({
+              credits: data.credits,
+              lastUpdate: Date.now(),
+              isLoading: false
+            });
             
-            if (data.success && data.credits !== undefined) {
-              // 缓存结果
-              cacheService.set(CREDITS_CACHE_KEY, data, CREDITS_CACHE_TTL);
-              
-              // 更新状态
-              this.setCreditState({
+            // 更新内存缓存
+            this._memoryCache = {
+              credits: data.credits,
+              timestamp: Date.now()
+            };
+            
+            // 尝试安全地更新localStorage，即使在受限环境也不会抛出错误
+            try {
+              localStorage.setItem('user_credits', JSON.stringify({
                 credits: data.credits,
-                lastUpdate: Date.now()
-              });
-              
-              // 在客户端页面显式触发更新
-              if (typeof window !== 'undefined') {
-                eventBus.emit(CREDIT_EVENTS.CREDITS_CHANGED, { credits: data.credits });
-              }
-              
-              return data.credits;
-            } else {
-              console.error('[CreditService] API返回错误:', data.error || '未知错误');
-              throw new Error(data.error || '获取点数失败');
+                timestamp: Date.now()
+              }));
+            } catch (e) {
+              console.warn('[CreditService] 无法写入本地存储:', e);
             }
-          } catch (parseError) {
-            console.error('[CreditService] 解析API响应失败:', parseError);
-            throw new Error('解析获取点数响应失败');
+            
+            // 计算API调用耗时
+            const duration = Date.now() - startTime;
+            console.log(`[CreditService] 获取点数API调用成功，耗时: ${duration}ms, 点数:`, data.credits);
+            
+            // 发送点数变化事件
+            eventBus.emit(CREDIT_EVENTS.CREDITS_CHANGED, data.credits);
+            
+            return data.credits;
+          } else {
+            console.error('[CreditService] API返回数据格式错误:', data);
+            throw new Error(data.error || '获取点数失败');
           }
-        } catch (fetchError) {
-          console.error('[CreditService] 获取点数时出错:', fetchError);
-          
-          // 获取失败时尝试使用缓存数据（即使已过期）
-          const cachedData = cacheService.get<CreditsResponse>(CREDITS_CACHE_KEY);
-          if (cachedData && cachedData.success && cachedData.credits !== undefined) {
-            console.log('[CreditService] API调用失败，使用过期缓存:', cachedData.credits);
-            return cachedData.credits;
+        } else {
+          // 尝试读取错误信息
+          let errorMsg = '获取点数失败';
+          try {
+            const errorData = await response.json();
+            errorMsg = errorData.error || errorMsg;
+          } catch (e) {
+            // 忽略JSON解析错误
           }
           
-          // 如果没有缓存，抛出错误
-          throw fetchError;
-        } finally {
-          this.setCreditState({ isLoading: false });
-          isRefreshing = false;
-          refreshPromise = null;
+          console.error(`[CreditService] API请求失败 (${response.status}): ${errorMsg}`);
+          throw new Error(errorMsg);
         }
-      })();
-      
-      // 等待并返回结果
-      return await refreshPromise;
-    } catch (error) {
-      console.error('[CreditService] 获取用户点数失败:', error);
-      
-      // 即使出错，也尝试获取缓存
-      try {
-        const cachedData = cacheService.get<CreditsResponse>(CREDITS_CACHE_KEY);
-        if (cachedData && cachedData.success && cachedData.credits !== undefined) {
-          console.log('[CreditService] 出错后使用缓存点数:', cachedData.credits);
-          return cachedData.credits;
+      } catch (error) {
+        console.error('[CreditService] 获取点数错误:', error);
+        
+        // 更新状态，停止加载，但保持当前点数不变
+        this.setCreditState({
+          isLoading: false
+        });
+        
+        // 返回最后已知点数作为降级策略
+        if (lastKnownCredits !== null) {
+          console.log('[CreditService] 降级策略：返回最后已知点数:', lastKnownCredits);
+          // 发送错误事件
+          eventBus.emit('credits_error', { 
+            error: error instanceof Error ? error.message : String(error),
+            lastKnownCredits
+          });
+          return lastKnownCredits;
         }
-      } catch (cacheError) {
-        console.error('[CreditService] 获取缓存点数失败:', cacheError);
-      }
-      
-      // 所有尝试都失败，返回null
-      return null;
-    } finally {
-      // 确保状态正确重置
-      this.setCreditState({ isLoading: false });
-      setTimeout(() => {
+        
+        // 完全失败的情况
+        return null;
+      } finally {
+        // 重置刷新状态
         isRefreshing = false;
         refreshPromise = null;
-      }, 300);
-    }
+      }
+    })();
+    
+    return refreshPromise;
   }
   
   /**
@@ -499,6 +553,36 @@ class CreditService {
   public triggerRefresh(): void {
     console.log('[CreditService] 触发点数刷新事件');
     eventBus.emit(CREDIT_EVENTS.CREDITS_REFRESH_NEEDED);
+  }
+
+  /**
+   * 获取缓存的点数
+   * 优先使用内存缓存，避免存储访问错误
+   */
+  public getCachedCredits(): number | null {
+    // 优先使用内存缓存，避免存储访问错误
+    if (this._memoryCache.credits !== null && 
+        Date.now() - this._memoryCache.timestamp < 30 * 60 * 1000) {
+      return this._memoryCache.credits;
+    }
+    
+    // 尝试从localStorage获取，但忽略错误
+    try {
+      const cachedData = localStorage.getItem('user_credits');
+      if (cachedData) {
+        const parsedData = JSON.parse(cachedData);
+        if (parsedData && parsedData.credits !== undefined) {
+          const { credits, timestamp } = parsedData;
+          if (Date.now() - timestamp < 30 * 60 * 1000) {
+            return credits;
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('[CreditService] 无法访问本地存储:', e);
+    }
+    
+    return null;
   }
 }
 

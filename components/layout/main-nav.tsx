@@ -362,6 +362,52 @@ export function MainNav({ providedAuthState }: MainNavProps) {
     console.log('[MainNav] 导航到:', item.href);
   }, [isAuthenticated, handleLoginClick]);
 
+  // 添加点数刷新处理
+  useEffect(() => {
+    if (isClient && isAuthenticated) {
+      console.log('[MainNav] 设置点数变化事件监听');
+      
+      // 页面导航时刷新点数
+      const pageNavHandler = () => {
+        console.log('[MainNav] 检测到页面导航，触发点数刷新');
+        creditService.triggerRefresh();
+      };
+      
+      // 点数变化事件处理
+      const creditsChangedHandler = (newCredits: number) => {
+        console.log('[MainNav] 检测到点数变化:', newCredits);
+      };
+      
+      // 点数刷新需求事件处理
+      const refreshNeededHandler = () => {
+        console.log('[MainNav] 检测到点数刷新需求');
+        creditService.fetchCredits(true).catch(e => {
+          console.warn('[MainNav] 刷新点数失败:', e);
+        });
+      };
+      
+      // 注册事件监听
+      const unsubPageNav = creditService.onEvent(CREDIT_EVENTS.PAGE_NAVIGATED, pageNavHandler);
+      const unsubCreditsChanged = creditService.onEvent(CREDIT_EVENTS.CREDITS_CHANGED, creditsChangedHandler);
+      const unsubRefreshNeeded = creditService.onEvent(CREDIT_EVENTS.CREDITS_REFRESH_NEEDED, refreshNeededHandler);
+      
+      // 初始化时刷新一次点数
+      if (isAuthenticated) {
+        console.log('[MainNav] 组件挂载时刷新点数');
+        creditService.fetchCredits(false).catch(e => {
+          console.warn('[MainNav] 初始刷新点数失败:', e);
+        });
+      }
+      
+      return () => {
+        // 清理事件监听
+        unsubPageNav();
+        unsubCreditsChanged();
+        unsubRefreshNeeded();
+      };
+    }
+  }, [isClient, isAuthenticated]);
+
   return (
     <div className="flex items-center justify-between w-full">
       {/* 导航菜单居中布局 */}
