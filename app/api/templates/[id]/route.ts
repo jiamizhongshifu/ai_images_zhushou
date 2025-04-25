@@ -8,10 +8,10 @@ import { templateStore } from '../supabase-store';
  */
 export async function GET(
   request: NextRequest,
-  { params }: { params: Record<string, string | string[]> }
+  context: { params: { id: string } }
 ) {
   try {
-    const templateId = params.id as string;
+    const { id: templateId } = context.params;
     console.log(`获取模板详情，ID: ${templateId}`);
     
     if (!templateId) {
@@ -50,10 +50,10 @@ export async function GET(
  */
 export async function PATCH(
   request: NextRequest,
-  { params }: { params: Record<string, string | string[]> }
+  context: { params: { id: string } }
 ) {
   try {
-    const templateId = params.id as string;
+    const { id: templateId } = context.params;
     console.log(`更新模板，ID: ${templateId}`);
     
     if (!templateId || typeof templateId !== 'string') {
@@ -92,10 +92,10 @@ export async function PATCH(
  */
 export async function PUT(
   request: NextRequest,
-  { params }: { params: Record<string, string | string[]> }
+  context: { params: { id: string } }
 ) {
   try {
-    const templateId = params.id as string;
+    const { id: templateId } = context.params;
     console.log(`替换模板，ID: ${templateId}`);
     
     const template = await templateStore.getTemplate(templateId);
@@ -136,10 +136,10 @@ export async function PUT(
  */
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: Record<string, string | string[]> }
+  context: { params: { id: string } }
 ) {
   try {
-    const templateId = params.id as string;
+    const { id: templateId } = context.params;
     console.log(`删除模板，ID: ${templateId}`);
     
     if (!templateId) {
