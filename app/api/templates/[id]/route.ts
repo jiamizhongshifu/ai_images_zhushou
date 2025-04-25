@@ -3,19 +3,15 @@ import { handleError } from '@/utils/error-handler';
 import { v4 as uuidv4 } from 'uuid';
 import { templateStore } from '../supabase-store';
 
-type PageParams = {
-  id: string;
-};
-
 /**
  * 获取单个模板详情
  */
 export async function GET(
-  request: NextRequest,
-  context: { params: PageParams }
-) {
+  request: Request,
+  { params }: { params: { id: string } }
+): Promise<NextResponse> {
   try {
-    const id = context.params.id;
+    const id = params.id;
     
     if (!id) {
       return NextResponse.json({
@@ -52,11 +48,11 @@ export async function GET(
  * 更新模板使用次数
  */
 export async function PATCH(
-  request: NextRequest,
-  context: { params: PageParams }
-) {
+  request: Request,
+  { params }: { params: { id: string } }
+): Promise<NextResponse> {
   try {
-    const { id } = context.params;
+    const { id } = params;
     
     if (!id || typeof id !== 'string') {
       return NextResponse.json(
@@ -93,11 +89,11 @@ export async function PATCH(
  * 更新模板
  */
 export async function PUT(
-  request: NextRequest,
-  context: { params: PageParams }
-) {
+  request: Request,
+  { params }: { params: { id: string } }
+): Promise<NextResponse> {
   try {
-    const id = context.params.id;
+    const id = params.id;
     
     if (!id) {
       return NextResponse.json({
@@ -138,11 +134,11 @@ export async function PUT(
  * 删除模板
  */
 export async function DELETE(
-  request: NextRequest,
-  context: { params: PageParams }
-) {
+  request: Request,
+  { params }: { params: { id: string } }
+): Promise<NextResponse> {
   try {
-    const id = context.params.id;
+    const id = params.id;
     
     if (!id) {
       return NextResponse.json({
