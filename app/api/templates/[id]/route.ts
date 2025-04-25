@@ -3,15 +3,21 @@ import { handleError } from '@/utils/error-handler';
 import { v4 as uuidv4 } from 'uuid';
 import { templateStore } from '../supabase-store';
 
+type RouteContext = {
+  params: {
+    id: string;
+  };
+};
+
 /**
  * 获取单个模板详情
  */
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  context: RouteContext
 ) {
   try {
-    const id = params.id;
+    const id = context.params.id;
     
     if (!id) {
       return NextResponse.json({
@@ -49,10 +55,10 @@ export async function GET(
  */
 export async function PATCH(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  context: RouteContext
 ) {
   try {
-    const { id } = params;
+    const { id } = context.params;
     
     if (!id || typeof id !== 'string') {
       return NextResponse.json(
@@ -90,10 +96,10 @@ export async function PATCH(
  */
 export async function PUT(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  context: RouteContext
 ) {
   try {
-    const id = params.id;
+    const id = context.params.id;
     
     if (!id) {
       return NextResponse.json({
@@ -135,10 +141,10 @@ export async function PUT(
  */
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  context: RouteContext
 ) {
   try {
-    const id = params.id;
+    const id = context.params.id;
     
     if (!id) {
       return NextResponse.json({
