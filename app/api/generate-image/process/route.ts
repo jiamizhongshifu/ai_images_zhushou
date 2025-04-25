@@ -58,7 +58,9 @@ let isProcessing = false;
 let cachedTuziModels: string[] | null = null;
 
 // 网络请求配置
-const TIMEOUT = 180000; // 3分钟超时
+const MAX_RETRIES = 3;
+const RETRY_DELAY = 2000; // 毫秒
+const TIMEOUT = 270000; // 270秒，给Vercel平台留出30秒处理开销
 
 // 延时函数
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));

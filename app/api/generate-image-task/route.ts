@@ -1227,31 +1227,39 @@ export async function POST(request: NextRequest) {
           throw new Error('消息结构错误，缺少用户消息');
         }
         
-        if (!Array.isArray(userMessage.content)) {
-          logger.error('用户消息内容不是数组格式');
-          throw new Error('用户消息格式错误，应为数组格式');
-        }
-        
-        // 检查消息内容
-        const messageContent = userMessage.content;
-        
-        // 确保有文本内容
-        const hasTextContent = messageContent.some(item => item.type === 'text');
-        if (!hasTextContent) {
-          logger.error('用户消息中缺少文本提示');
-          throw new Error('消息格式错误，缺少文本提示');
-        }
-        
-        // 如果有图片，确保消息中包含图片
-        if (image) {
-          const hasImageContent = messageContent.some(item => item.type === 'image_url');
-          if (!hasImageContent) {
-            logger.error('用户消息中缺少图片数据');
-            throw new Error('图片数据丢失，请重新上传图片');
+        // 支持字符串格式的消息内容
+        if (typeof userMessage.content === 'string') {
+          if (!userMessage.content.trim()) {
+            logger.error('用户消息内容为空');
+            throw new Error('消息内容不能为空');
           }
-          logger.info('消息结构验证通过，包含用户图片数据和提示词');
-        } else {
-          logger.info('消息结构验证通过，包含用户提示词');
+          logger.info('消息结构验证通过，包含用户文本提示词');
+        } 
+        // 支持数组格式的消息内容
+        else if (Array.isArray(userMessage.content)) {
+          // 确保有文本内容
+          const hasTextContent = userMessage.content.some(item => item.type === 'text');
+          if (!hasTextContent) {
+            logger.error('用户消息中缺少文本提示');
+            throw new Error('消息格式错误，缺少文本提示');
+          }
+          
+          // 如果有图片，确保消息中包含图片
+          if (image) {
+            const hasImageContent = userMessage.content.some(item => item.type === 'image_url');
+            if (!hasImageContent) {
+              logger.error('用户消息中缺少图片数据');
+              throw new Error('图片数据丢失，请重新上传图片');
+            }
+            logger.info('消息结构验证通过，包含用户图片数据和提示词');
+          } else {
+            logger.info('消息结构验证通过，包含用户提示词');
+          }
+        }
+        // 不支持其他格式
+        else {
+          logger.error('用户消息内容格式不支持');
+          throw new Error('消息格式错误，内容格式不支持');
         }
         
         // 重要：在执行API调用前，将任务状态从pending更新为processing
@@ -1328,7 +1336,7 @@ export async function POST(request: NextRequest) {
               }
               
               // 设置超时处理
-              const API_TIMEOUT = parseInt(process.env.OPENAI_TIMEOUT || '180000');
+              const API_TIMEOUT = 270000; // 270秒，不使用环境变量
               const timeoutPromise = new Promise((_, reject) => {
                 setTimeout(() => {
                   reject(new Error(`API请求超时，超过${API_TIMEOUT/1000}秒未响应`));
@@ -1337,30 +1345,33 @@ export async function POST(request: NextRequest) {
               
               logger.info(`设置API请求超时: ${API_TIMEOUT/1000}秒`);
               
-              // 使用明确的生成操作提示
-              const systemPrompt = "请基于上传的图片和提示词生成新图像，直接返回生成的图片URL。";
-              
-              // 简化API调用 - 完全采用py.md中的简洁模式并添加系统提示
+              // 简化API调用 - 只保留关键消息，去除系统提示
               const apiPromise = tuziClient.client.chat.completions.create({
-                model: process.env.OPENAI_MODEL || 'gpt-4o-image-vip',
+                model: process.env.OPENAI_MODEL || 'gpt-image-1-vip',
                 messages: [
-                  // 添加明确的系统提示，强调执行生成而非分析
+                  // 添加系统消息，明确告知模型需要生成图像
                   {
                     role: 'system',
-                    content: systemPrompt
+                    content: "你是一个专业的图像生成助手。请使用提供的信息生成一张图像，并返回图像URL。必须返回包含'image_url'字段的JSON对象。不要返回任何其他格式的内容。"
                   },
-                  // 用户消息
-                  messages[0],
-                  // 单独添加图片消息(如果有)
-                  ...(imageData ? [{
-                    role: 'user' as const,
-                    content: [{
-                      type: "image_url" as const,
-                      image_url: {
-                        url: imageData
-                      }
-                    }]
-                  }] : [])
+                  // 使用单个消息同时包含图片和文本指令
+                  {
+                    role: 'user',
+                    content: imageData 
+                      ? [
+                          {
+                            type: "image_url",
+                            image_url: {
+                              url: imageData
+                            }
+                          },
+                          {
+                            type: "text",
+                            text: `请基于图片创建一个新图像，风格：${finalPrompt}。返回的JSON必须包含image_url字段。`
+                          }
+                        ]
+                      : `创建一个新图像：${finalPrompt}。返回的JSON必须包含image_url字段。`
+                  }
                 ],
                 stream: true,
                 max_tokens: 4096,
@@ -1371,13 +1382,13 @@ export async function POST(request: NextRequest) {
               });
               
               // 记录使用更简化的API调用方式
-              logger.info(`使用简化的API调用方式，遵循官方文档推荐结构`);
+              logger.info(`使用简化的API调用方式，采用单一消息结构，同时包含图片和提示词`);
               
               // 增强API参数日志记录
               logger.info(`详细API调用参数：
 - 模型: ${process.env.OPENAI_MODEL || 'gpt-4o-image-vip'}
-- 添加系统提示，明确指示执行生成操作
-- 提示词中自然表达比例需求
+- 消息数量: 1条
+- 提示词中包含图片参考指令
 - 图片上传: ${image ? '是' : '否'}
 - 响应格式: JSON
               `);
@@ -1526,7 +1537,7 @@ export async function POST(request: NextRequest) {
                       logger.debug(`尝试从JSON中提取URL: ${JSON.stringify(jsonData).substring(0, 100)}...`);
                       logger.info(`完整JSON响应: ${JSON.stringify(jsonData)}`);
                       
-                      // 在JSON中查找URL字段
+                      // 在JSON中查找URL字段 - 添加更多可能的字段名
                       if (jsonData.url) {
                         imageUrl = jsonData.url;
                         logger.info(`从JSON的url字段中提取到图片URL: ${imageUrl}`);
@@ -1536,6 +1547,26 @@ export async function POST(request: NextRequest) {
                       } else if (jsonData.result_url) {
                         imageUrl = jsonData.result_url;
                         logger.info(`从JSON的result_url字段中提取到图片URL: ${imageUrl}`);
+                      } else if (jsonData.imageUrl) {
+                        imageUrl = jsonData.imageUrl;
+                        logger.info(`从JSON的imageUrl字段中提取到图片URL: ${imageUrl}`);
+                      } else if (jsonData.imgUrl) {
+                        imageUrl = jsonData.imgUrl;
+                        logger.info(`从JSON的imgUrl字段中提取到图片URL: ${imageUrl}`);
+                      } else if (jsonData.output) {
+                        if (typeof jsonData.output === 'string') {
+                          imageUrl = jsonData.output;
+                          logger.info(`从JSON的output字段中提取到图片URL: ${imageUrl}`);
+                        } else if (jsonData.output?.url) {
+                          imageUrl = jsonData.output.url;
+                          logger.info(`从JSON的output.url字段中提取到图片URL: ${imageUrl}`);
+                        } else if (jsonData.output?.image) {
+                          imageUrl = jsonData.output.image;
+                          logger.info(`从JSON的output.image字段中提取到图片URL: ${imageUrl}`);
+                        }
+                      } else if (jsonData.data?.url) {
+                        imageUrl = jsonData.data.url;
+                        logger.info(`从JSON的data.url字段中提取到图片URL: ${imageUrl}`);
                       }
                       
                       // 记录与比例相关的字段（用于调试）

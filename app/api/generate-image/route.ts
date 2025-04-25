@@ -13,7 +13,7 @@ const BACKUP_MODEL = "gpt-4o-image-vip";
 // 网络请求配置
 const MAX_RETRIES = 3;
 const RETRY_DELAY = 2000; // 毫秒
-const TIMEOUT = 180000; // 增加超时时间到3分钟
+const TIMEOUT = 270000; // 270秒，给Vercel平台留出30秒处理开销
 
 // 图片处理配置
 const MAX_IMAGE_WIDTH = 1024;  // 最大图片宽度
