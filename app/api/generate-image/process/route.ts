@@ -72,7 +72,7 @@ function createTuziClient() {
   
   // 优先使用环境变量中的配置
   const apiKey = apiConfig.apiKey || process.env.OPENAI_API_KEY;
-  const baseURL = apiConfig.apiUrl || process.env.OPENAI_BASE_URL || "https://api.tu-zi.com/v1/chat/completions";
+  const baseURL = apiConfig.apiUrl || process.env.OPENAI_BASE_URL || "https://api.tu-zi.com/v1";
   
   logger.info(`创建图资API客户端，使用BASE URL: ${baseURL}，模型: ${process.env.OPENAI_MODEL || 'gpt-4o-image-vip'}`);
   
@@ -80,8 +80,271 @@ function createTuziClient() {
   return new OpenAI({
     apiKey: apiKey,
     baseURL: baseURL,
-    defaultQuery: { model: process.env.OPENAI_MODEL || 'gpt-4o-image-vip' }
+    timeout: TIMEOUT,
+    defaultHeaders: {
+      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+      'Accept': 'application/json',
+      'Content-Type': 'application/json',
+      'Connection': 'keep-alive'
+    },
+    maxRetries: 2
   });
+}
+
+// 修改提示词构建逻辑
+function buildPrompt(style: string | null, originalPrompt: string | null, aspectRatio: string | null): string {
+  let finalPrompt = originalPrompt || "";
+  
+  // 添加样式信息
+  if (style) {
+    finalPrompt = `以${style}风格创作: ${finalPrompt}`;
+  }
+  
+  // 不再需要添加比例信息，因为现在通过JSON格式的ratio字段传递
+  
+  // 确保提示词简洁明了
+  return finalPrompt.trim() || "创建一张精美图片";
+}
+
+interface ExtendedImageGenerateParams {
+  model: string;
+  prompt: string;
+  n: number;
+  size: "1024x1024" | "256x256" | "512x512" | "1792x1024" | "1024x1792";
+  response_format: "url" | "b64_json";
+  reference_image?: string;
+  style?: string;
+  aspect_ratio?: string;
+}
+
+// 直接生成图像API
+async function generateImage({
+  prompt = '',
+  base64Image = null,
+  style = null,
+  aspectRatio = null,
+  useStandardRatio = null
+}: {
+  prompt?: string;
+  base64Image?: string | null;
+  style?: string | null;
+  aspectRatio?: string | null;
+  useStandardRatio?: string | null;
+}): Promise<{ imageUrl: string; genId: string | null }> {
+  let retryCount = 0;
+  let currentPrompt = prompt;
+  let lastError: Error | null = null;
+  let genId: string | null = null; // 保存图片生成ID
+
+  while (retryCount <= MAX_RETRIES) {
+    try {
+      logger.info(`开始生成图像，提示词: ${currentPrompt.substring(0, 100)}...`);
+      
+      // 创建API客户端 - 每次重试都创建新的客户端实例
+      const tuziClient = new OpenAI({
+        apiKey: process.env.OPENAI_API_KEY!,
+        baseURL: process.env.OPENAI_BASE_URL,
+        timeout: TIMEOUT,
+        defaultHeaders: {
+          'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+          'Accept': 'application/json',
+          'Connection': 'keep-alive'
+        },
+        // 重试网络错误
+        maxRetries: 3,
+        // 添加随机延迟避免429
+      });
+      
+      // 使用优化后的提示词
+      const formattedPrompt = buildPrompt(style, currentPrompt, aspectRatio);
+      
+      // 检查网络连接
+      logger.info(`尝试连接API服务器 ${process.env.OPENAI_BASE_URL}...`);
+      await checkApiConnectivity();
+      
+      // 构建消息内容 - 按照tuzi-openai.md文档格式
+      let messageContent = formattedPrompt;
+      
+      // 如果有genId（修改已有图片的场景），则使用JSON格式
+      if (genId || base64Image) {
+        const promptData: any = {
+          prompt: formattedPrompt,
+          ratio: aspectRatio || "1:1"
+        };
+        
+        // 如果有genId，添加到请求中
+        if (genId) {
+          promptData.gen_id = genId;
+        }
+        
+        // 将对象转为字符串作为消息内容
+        messageContent = JSON.stringify(promptData);
+      }
+      
+      logger.debug(`API请求消息内容: ${messageContent}`);
+      
+      // 使用聊天完成API接口
+      let response;
+      try {
+        response = await tuziClient.chat.completions.create({
+          model: process.env.OPENAI_MODEL || "gpt-image-1-vip",
+          messages: [
+            {
+              role: "user",
+              content: messageContent
+            }
+          ],
+          stream: false
+        });
+        
+        logger.debug(`API完成响应: ${JSON.stringify(response).substring(0, 200)}...`);
+      } catch (apiError) {
+        logger.error(`API调用失败: ${apiError instanceof Error ? apiError.message : '未知错误'}`);
+        // 如果是网络相关错误，重试
+        if (apiError instanceof Error && 
+           (apiError.message.includes('ECONNREFUSED') || 
+            apiError.message.includes('ETIMEDOUT') || 
+            apiError.message.includes('ENOTFOUND') ||
+            apiError.message.includes('network') ||
+            apiError.message.includes('connection'))) {
+          throw new Error(`网络连接错误: ${apiError.message}`);
+        }
+        throw apiError; // 其他错误直接抛出
+      }
+      
+      // 从聊天完成响应中提取图片URL
+      if (response && response.choices && response.choices[0] && response.choices[0].message) {
+        const assistantContent = response.choices[0].message.content || "";
+        
+        // 从响应中提取gen_id，以便后续修改图片使用
+        const genIdMatch = assistantContent.match(/> gen_id: `([^`]+)`/);
+        if (genIdMatch && genIdMatch[1]) {
+          genId = genIdMatch[1];
+          logger.info(`提取到gen_id: ${genId}`);
+        }
+        
+        // 检查生成进度
+        const progressMatch = assistantContent.match(/> 进度 (\d+)%/);
+        if (progressMatch && progressMatch[1]) {
+          const progress = parseInt(progressMatch[1]);
+          logger.info(`图片生成进度: ${progress}%`);
+          
+          // 如果进度小于100%，等待一段时间后重试
+          if (progress < 100 && retryCount < MAX_RETRIES) {
+            retryCount++;
+            logger.info(`图片生成中，进度: ${progress}%，等待后继续...`);
+            await delay(RETRY_DELAY);
+            continue;
+          }
+        }
+        
+        // 检查生成完成标志
+        const completedMatch = assistantContent.includes("生成完成 ✅");
+        if (completedMatch) {
+          logger.info("检测到生成完成标志");
+        }
+        
+        // 从Markdown语法中提取图片URL
+        const urlMatch = assistantContent.match(/!\[.*?\]\((.*?)\)/);
+        if (urlMatch && urlMatch[1]) {
+          logger.info(`成功从Markdown中提取图片URL`);
+          return { imageUrl: urlMatch[1], genId };
+        }
+        
+        // 尝试从纯文本响应中提取URL
+        const urlRegex = /(https?:\/\/[^\s"'<>]+\.(png|jpg|jpeg|gif|webp))/i;
+        const plainUrlMatch = assistantContent.match(urlRegex);
+        if (plainUrlMatch && plainUrlMatch[1]) {
+          logger.info(`成功从文本中提取图片URL`);
+          return { imageUrl: plainUrlMatch[1], genId };
+        }
+        
+        // 记录响应内容以便调试
+        logger.info(`API响应内容: ${assistantContent.substring(0, 500)}...`);
+        
+        // 如果未能提取URL但是有生成ID，可能是中间状态，需要继续尝试
+        if (genId && retryCount < MAX_RETRIES) {
+          retryCount++;
+          await delay(RETRY_DELAY);
+          continue;
+        }
+      }
+      
+      // 如果提取URL失败，尝试用简化的提示词重试
+      if (retryCount < MAX_RETRIES) {
+        retryCount++;
+        // 每次重试使用更直接的提示词
+        currentPrompt = `请生成一张${style ? style + '风格的' : ''}图片${aspectRatio ? '，比例为' + aspectRatio : ''}`;
+        logger.info(`第${retryCount}次重试，使用简化提示词: ${currentPrompt}`);
+        await delay(RETRY_DELAY);
+      } else {
+        throw new Error("无法从API响应中提取图片URL");
+      }
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+      
+      if (retryCount < MAX_RETRIES) {
+        retryCount++;
+        logger.warn(`第${retryCount}次重试，错误: ${lastError.message}`);
+        // 针对网络错误增加更长的延迟
+        const networkErrorDelay = lastError.message.includes('网络连接错误') ? RETRY_DELAY * 2 : RETRY_DELAY;
+        await delay(networkErrorDelay);
+      } else {
+        throw lastError;
+      }
+    }
+  }
+  
+  throw lastError || new Error("超过最大重试次数，图像生成失败");
+}
+
+// 检查API连接性
+async function checkApiConnectivity() {
+  try {
+    const baseUrl = process.env.OPENAI_BASE_URL || 'https://api.tu-zi.com/v1';
+    const urlObj = new URL(baseUrl);
+    
+    return new Promise<void>((resolve, reject) => {
+      dns.lookup(urlObj.hostname, (err) => {
+        if (err) {
+          logger.error(`DNS解析失败: ${err.message}`);
+          reject(new Error(`DNS解析失败: ${err.message}`));
+          return;
+        }
+        
+        const requestLib = urlObj.protocol === 'https:' ? https : http;
+        const req = requestLib.request(
+          {
+            hostname: urlObj.hostname,
+            port: urlObj.port || (urlObj.protocol === 'https:' ? 443 : 80),
+            path: '/healthz',
+            method: 'HEAD',
+            timeout: 5000,
+          },
+          (res) => {
+            logger.info(`API服务器连接成功，状态码: ${res.statusCode}`);
+            resolve();
+          }
+        );
+        
+        req.on('error', (error) => {
+          logger.error(`API服务器连接失败: ${error.message}`);
+          reject(new Error(`API服务器连接失败: ${error.message}`));
+        });
+        
+        req.on('timeout', () => {
+          req.destroy();
+          logger.error('API服务器连接超时');
+          reject(new Error('API服务器连接超时'));
+        });
+        
+        req.end();
+      });
+    });
+  } catch (error) {
+    logger.warn(`连接检查失败: ${error instanceof Error ? error.message : String(error)}`);
+    // 连接检查失败不阻止主流程
+  }
 }
 
 // 直接生成图像API - 按照tuzi-openai.md重写
@@ -209,9 +472,6 @@ export async function POST(request: NextRequest) {
       });
     }
     
-    // 创建图资API客户端
-    const tuziClient = createTuziClient();
-    
     // 扣除用户点数
     const supabaseAdmin = await createAdminClient();
     const { error: deductError } = await supabaseAdmin
@@ -269,132 +529,17 @@ export async function POST(request: NextRequest) {
         }
       }
       
-      let imageUrl: string | null = null;
-      const chunks: string[] = [];
-      
-      // 开始调用图资API生成图片
-      logger.info(`开始调用图资API生成图片，${base64Image ? '包含上传图片' : '无上传图片'}，${style ? `风格: ${style}` : '无风格选择'}`);
-      
-      // 构建消息数组，根据是否有prompt和图片决定使用什么模式
-      const messages: Array<{
-        role: 'system' | 'user' | 'assistant';
-        content: Array<{type: string; text?: string; image_url?: {url: string}}> | string;
-      }> = [];
-      
-      // 添加系统消息 - 修改为明确支持图像生成的提示词，使用数组格式
-      messages.push({
-        role: "system",
-        content: [
-          {
-            type: "text",
-            text: "你是一个先进的图像生成系统，可以根据用户提示创建图像并返回图像URL。你必须生成图像并返回图像URL。"
-          }
-        ]
-      });
-      
-      // 构建用户消息内容
-      const userMessageContent: Array<{type: string; text?: string; image_url?: {url: string}}> = [];
-      
-      // 添加文字提示
-      if (prompt && prompt.trim() !== '') {
-        userMessageContent.push({ 
-          type: "text", 
-          text: prompt 
-        });
-      }
-      
-      // 添加图片内容
-      if (base64Image) {
-        userMessageContent.push({ 
-          type: "image_url", 
-          image_url: { 
-            url: base64Image 
-          }
-        });
-      }
-      
-      // 添加风格描述
-      if (style && style !== '无风格') {
-        // 如果已有提示词，则添加风格指定；如果没有提示词，则以风格作为提示词
-        if (prompt && prompt.trim() !== '') {
-          userMessageContent.push({ 
-            type: "text", 
-            text: `请使用${style}风格绘制。` 
-          });
-        } else {
-          userMessageContent.push({ 
-            type: "text", 
-            text: `请用${style}风格处理这张图片。` 
-          });
-        }
-      }
-      
-      // 添加比例要求
-      if (useStandardRatio) {
-        userMessageContent.push({ 
-          type: "text", 
-          text: `请使用${useStandardRatio}的比例生成图片。` 
-        });
-      }
-      
-      // 添加用户消息
-      messages.push({
-        role: "user",
-        content: userMessageContent
-      });
-      
-      // 记录完整的请求消息
-      logger.debug(`API请求消息: ${JSON.stringify(messages)}`);
-      
       // 调用图资API创建图像
-      const response = await tuziClient.chat.completions.create({
-        model: "gpt-4o",
-        response_format: { type: "text" }, // 确保输出为文本
-        messages: messages as any, // 类型断言以解决类型问题
-        max_tokens: 4096,
-        temperature: 0.7,
-        stream: true, // 使用流式响应
-        tools: [], // 添加空工具数组
-        tool_choice: "auto" // 设置工具选择为自动
+      const { imageUrl, genId } = await generateImage({
+        prompt,
+        base64Image,
+        style,
+        aspectRatio,
+        useStandardRatio
       });
-      
-      // 处理流式响应
-      for await (const chunk of response) {
-        try {
-          const content = chunk.choices[0]?.delta?.content || '';
-          if (content) {
-            chunks.push(content);
-            logger.debug(`收到流式响应片段: ${content.substring(0, 50)}...`);
-            
-            // 尝试从当前片段中提取URL
-            const extractedUrl = extractUrlFromContent(content);
-            if (extractedUrl && !imageUrl) {
-              imageUrl = extractedUrl;
-              logger.info(`从流式响应中提取到图片URL: ${imageUrl}`);
-            }
-          }
-        } catch (chunkError) {
-          logger.warn(`处理响应片段出错: ${chunkError instanceof Error ? chunkError.message : String(chunkError)}`);
-        }
-      }
-      
-      // 如果没有从流中提取到URL，尝试从完整响应中提取
-      if (!imageUrl) {
-        const fullContent = chunks.join('');
-        const extractedUrl = extractUrlFromContent(fullContent);
-        if (extractedUrl) {
-          imageUrl = extractedUrl;
-          logger.info(`从完整响应中提取到图片URL: ${imageUrl}`);
-        } else {
-          // 记录完整响应内容，帮助调试
-          logger.warn(`未能从响应中提取图片URL，完整响应:`);
-          logger.warn(fullContent.substring(0, 1000) + (fullContent.length > 1000 ? '...(已截断)' : ''));
-          throw new Error('未能提取图片URL');
-        }
-      }
       
       // 保存历史记录
-      saveGenerationHistory(user.id, prompt, imageUrl, style || null, originalAspectRatio || null, standardAspectRatio || null);
+      saveGenerationHistory(user.id, prompt, imageUrl, style || null, originalAspectRatio || null, standardAspectRatio || null, genId);
       
       const endTime = Date.now();
       const duration = endTime - startTime;
@@ -477,7 +622,15 @@ export async function POST(request: NextRequest) {
 }
 
 // 保存生成历史到数据库，捕获但不传播错误
-async function saveGenerationHistory(userId: string, prompt: string, imageUrl: string, style: string | null = null, aspectRatio: string | null = null, standardAspectRatio: string | null = null) {
+async function saveGenerationHistory(
+  userId: string, 
+  prompt: string, 
+  imageUrl: string, 
+  style: string | null = null, 
+  aspectRatio: string | null = null, 
+  standardAspectRatio: string | null = null,
+  genId: string | null = null // 添加genId参数
+) {
   try {
     const supabaseAdmin = await createAdminClient();
     const { error: historyError } = await supabaseAdmin
@@ -492,6 +645,8 @@ async function saveGenerationHistory(userId: string, prompt: string, imageUrl: s
         ...(aspectRatio ? { aspect_ratio: aspectRatio } : {}),
         // 添加标准化比例字段
         ...(standardAspectRatio ? { standard_aspect_ratio: standardAspectRatio } : {}),
+        // 添加生成ID，用于后续修改
+        ...(genId ? { gen_id: genId } : {}),
         model_used: 'tuzi-gpt4o', // 记录使用的是图资API的GPT-4o
         created_at: new Date().toISOString()
       });
@@ -499,7 +654,7 @@ async function saveGenerationHistory(userId: string, prompt: string, imageUrl: s
     if (historyError) {
       logger.warn(`保存生成历史失败: ${historyError.message}`);
     } else {
-      logger.info(`成功保存生成历史记录${aspectRatio ? `，图片比例: ${aspectRatio}` : ''}${standardAspectRatio ? `，标准比例: ${standardAspectRatio}` : ''}`);
+      logger.info(`成功保存生成历史记录${genId ? `，生成ID: ${genId}` : ''}${aspectRatio ? `，图片比例: ${aspectRatio}` : ''}${standardAspectRatio ? `，标准比例: ${standardAspectRatio}` : ''}`);
     }
   } catch (error) {
     logger.warn(`保存历史记录过程中出错: ${error instanceof Error ? error.message : String(error)}`);
@@ -507,56 +662,36 @@ async function saveGenerationHistory(userId: string, prompt: string, imageUrl: s
   }
 }
 
-// 从API响应内容中提取URL
-function extractUrlFromContent(content: string): string | null {
+// 改进URL提取逻辑
+function extractImageUrl(content: string): string | null {
+  // 尝试从Markdown中提取图片URL (![alt](url) 格式)
+  const markdownRegex = /!\[.*?\]\((.*?)\)/;
+  const markdownMatch = content.match(markdownRegex);
+  if (markdownMatch && markdownMatch[1]) {
+    return markdownMatch[1];
+  }
+
+  // 尝试解析JSON
   try {
-    // 尝试匹配常见URL模式
-    const urlPatterns = [
-      /(https?:\/\/[^\s'"()<>]+)/, // 基本URL
-      /(https?:\/\/[^\s'"]+)/, // 更宽松的URL
-      /\b(https?:\/\/\S+)/, // 非空格的URL
-      /\[(https?:\/\/[^\]]+)\]/, // 方括号中的URL
-      /"(https?:\/\/[^"]+)"/, // 双引号中的URL
-      /'(https?:\/\/[^']+)'/, // 单引号中的URL
-      /链接[:：]\s*(https?:\/\/\S+)/, // 中文标记的URL
-      /URL[:：]\s*(https?:\/\/\S+)/, // URL标记
-      /image:?\s*(https?:\/\/\S+)/, // image标记
-      /源文件[地址链接]?[为是:：]\s*(https?:\/\/\S+)/ // 中文描述的图片URL
-    ];
+    const jsonData = JSON.parse(content);
     
-    // 尝试所有模式
-    for (const pattern of urlPatterns) {
-      const match = content.match(pattern);
-      if (match && match[1]) {
-        let extractedUrl = match[1].trim();
-        
-        // 记录匹配的模式和原始URL
-        logger.info(`匹配到URL模式: ${pattern}, 原始URL: ${extractedUrl}`);
-        
-        // 清理URL
-        if (extractedUrl.endsWith(')') && !extractedUrl.includes('(')) {
-          extractedUrl = extractedUrl.slice(0, -1);
-        }
-        
-        // 删除尾部特殊字符
-        extractedUrl = extractedUrl.replace(/[.,;:!?)]$/, '');
-        
-        // 删除其他可能的无效字符
-        extractedUrl = extractedUrl.replace(/["'<>{}]/, '');
-        
-        // 日志记录清理后的URL
-        logger.info(`提取到URL: ${extractedUrl}`);
-        
-        // 返回清理后的URL
-        return extractedUrl;
+    // 检查各种可能的URL字段名
+    const possibleFields = ['image_url', 'imageUrl', 'url', 'image', 'generated_image'];
+    
+    for (const field of possibleFields) {
+      if (jsonData[field] && typeof jsonData[field] === 'string' && 
+          (jsonData[field].startsWith('http') || jsonData[field].startsWith('data:'))) {
+        return jsonData[field];
       }
     }
-    
-    // 如果没有找到URL，记录整个内容以便分析
-    logger.warn(`无法从内容中提取URL，完整内容: ${content.substring(0, 500)}...`);
-    return null;
-  } catch (error) {
-    logger.error(`URL提取过程中出错: ${error instanceof Error ? error.message : String(error)}`);
-    return null;
+  } catch (e) {
+    // JSON解析失败，尝试正则表达式提取URL
+    const urlRegex = /(https?:\/\/[^\s"'<>]+\.(png|jpg|jpeg|gif|webp))/i;
+    const match = content.match(urlRegex);
+    if (match && match[0]) {
+      return match[0];
+    }
   }
+  
+  return null;
 } 

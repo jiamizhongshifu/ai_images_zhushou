@@ -10,6 +10,10 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import EnhancedImageUploader from "@/components/creation/enhanced-image-uploader";
+import useImageGeneration from "@/hooks/useImageGeneration";
+import useNotification from "@/hooks/useNotification";
+import { ImageGenerationSkeleton } from "@/components/ui/skeleton-generation";
+import useUserCredits from "@/hooks/useUserCredits";
 
 // 模板详情类型
 interface Template {
@@ -38,7 +42,28 @@ export default function TemplateDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [prompt, setPrompt] = useState("");
   const [uploadedImage, setUploadedImage] = useState<string | null>(null);
-  const [isGenerating, setIsGenerating] = useState(false);
+
+  const { showNotification } = useNotification();
+  const { credits, refetch: refreshCredits } = useUserCredits();
+  
+  // 使用图像生成钩子
+  const {
+    generatedImages,
+    setGeneratedImages,
+    isGenerating: isGeneratingImage,
+    error: generationError,
+    generateImage,
+    generationStage,
+    generationPercentage,
+  } = useImageGeneration(
+    showNotification,
+    async (imageUrl) => {
+      if (imageUrl) {
+        setGeneratedImages((prev) => [imageUrl, ...prev]);
+        await refreshCredits(false, true);
+      }
+    }
+  );
 
   // 获取模板详情
   useEffect(() => {
@@ -99,35 +124,36 @@ export default function TemplateDetailPage() {
     }
 
     setError(null);
-    setIsGenerating(true);
 
     try {
       // 更新使用次数
       await updateUseCount();
 
-      // 跳转到生成页面，携带参数
-      const searchParams = new URLSearchParams();
-      
-      // 添加模板ID
-      searchParams.append("templateId", id);
-      
-      // 添加提示词
-      if (prompt.trim()) {
-        searchParams.append("prompt", prompt);
-      }
-      
-      // 添加风格
-      if (template?.style_id) {
-        searchParams.append("style", template.style_id);
-      }
-      
-      // 跳转到受保护的创作页面，传递参数
-      // 注意：这里假设有一个现成的生成页面，实际项目中可能需要调整
-      router.push(`/protected?${searchParams.toString()}`);
+      // 合并模板基础提示词和用户输入
+      const finalPrompt = template?.base_prompt
+        ? `${template.base_prompt}${prompt.trim() ? "，" + prompt.trim() : ""}`
+        : prompt.trim();
+
+      // 构建生成参数
+      const params = {
+        prompt: finalPrompt,
+        style: template?.style_id || undefined,
+        templateId: id,
+        referenceImage: uploadedImage || undefined,
+      };
+
+      console.log("[模板详情] 生成参数:", {
+        basePrompt: template?.base_prompt,
+        userPrompt: prompt.trim(),
+        finalPrompt,
+        style: template?.style_id,
+      });
+
+      // 直接调用生成
+      await generateImage(params);
     } catch (err) {
       setError("生成图片失败，请重试");
       console.error("生成图片错误:", err);
-      setIsGenerating(false);
     }
   };
 
@@ -249,11 +275,11 @@ export default function TemplateDetailPage() {
             {/* 生成按钮 */}
             <Button
               onClick={handleGenerateImage}
-              disabled={isGenerating || (template.requires_image && !uploadedImage) || (template.prompt_required && !prompt.trim())}
+              disabled={isGeneratingImage || (template?.requires_image && !uploadedImage) || (template?.prompt_required && !prompt.trim())}
               className="w-full"
               size="lg"
             >
-              {isGenerating ? (
+              {isGeneratingImage ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                   生成中...
@@ -266,10 +292,39 @@ export default function TemplateDetailPage() {
               )}
             </Button>
 
+            {/* 生成结果展示 */}
+            {isGeneratingImage && (
+              <div className="mt-8">
+                <ImageGenerationSkeleton 
+                  stage={generationStage}
+                  percentage={generationPercentage}
+                  isGenerating={isGeneratingImage}
+                />
+              </div>
+            )}
+
+            {generatedImages.length > 0 && !isGeneratingImage && (
+              <div className="mt-8">
+                <h3 className="text-lg font-medium mb-4">生成结果</h3>
+                <div className="grid grid-cols-1 gap-4">
+                  {generatedImages.map((imageUrl, index) => (
+                    <div key={`generated-image-${index}`} className="relative aspect-square rounded-xl overflow-hidden">
+                      <Image
+                        src={imageUrl}
+                        alt={`生成结果 ${index + 1}`}
+                        fill
+                        className="object-cover"
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* 错误提示 */}
-            {error && (
+            {(error || generationError) && (
               <div className="bg-destructive/10 text-destructive p-4 rounded-lg text-sm">
-                {error}
+                {error || generationError}
               </div>
             )}
           </div>
