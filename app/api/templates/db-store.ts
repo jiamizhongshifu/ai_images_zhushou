@@ -83,7 +83,11 @@ export class TemplateDbStore {
       return rowToTemplate(result.rows[0]);
     } catch (error) {
       console.error('添加模板失败:', error);
-      throw new Error(`添加模板失败: ${error.message}`);
+      let errorMessage = '添加模板失败';
+      if (error instanceof Error) {
+        errorMessage += `: ${error.message}`;
+      }
+      throw new Error(errorMessage);
     }
   }
 
@@ -116,7 +120,11 @@ export class TemplateDbStore {
       return rowToTemplate(result.rows[0]);
     } catch (error) {
       console.error(`更新模板 ${id} 失败:`, error);
-      throw new Error(`更新模板失败: ${error.message}`);
+      let errorMessage = `更新模板失败`;
+      if (error instanceof Error) {
+        errorMessage += `: ${error.message}`;
+      }
+      throw new Error(errorMessage);
     }
   }
 
@@ -135,7 +143,11 @@ export class TemplateDbStore {
       return success;
     } catch (error) {
       console.error(`删除模板 ${id} 失败:`, error);
-      throw new Error(`删除模板失败: ${error.message}`);
+      let errorMessage = `删除模板失败`;
+      if (error instanceof Error) {
+        errorMessage += `: ${error.message}`;
+      }
+      throw new Error(errorMessage);
     }
   }
   
@@ -214,6 +226,7 @@ export class TemplateDbStore {
       return { templates, total };
     } catch (error) {
       console.error('查询模板失败:', error);
+      // 查询失败通常不应抛出错误，而是返回空结果
       return { templates: [], total: 0 };
     }
   }
