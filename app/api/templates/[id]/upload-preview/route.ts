@@ -4,10 +4,10 @@ import { templateStore } from '../../supabase-store';
 
 export async function POST(
   request: NextRequest,
-  context: { params: Record<string, string> }
-) {
+  { params }: { params: { id: string } }
+): Promise<NextResponse> {
   try {
-    const { id: templateId } = context.params;
+    const { id: templateId } = params;
     console.log(`尝试上传图片到模板 ID: ${templateId}`);
     
     // 获取所有模板ID列表用于调试

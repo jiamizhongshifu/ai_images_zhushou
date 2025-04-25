@@ -1,4 +1,3 @@
-import type { NextApiRequest } from 'next';
 import { NextRequest, NextResponse } from 'next/server';
 import { handleError } from '@/utils/error-handler';
 import { v4 as uuidv4 } from 'uuid';
@@ -9,10 +8,10 @@ import { templateStore } from '../supabase-store';
  */
 export async function GET(
   request: NextRequest,
-  context: { params: Record<string, string> }
-) {
+  { params }: { params: { id: string } }
+): Promise<NextResponse> {
   try {
-    const { id: templateId } = context.params;
+    const { id: templateId } = params;
     console.log(`获取模板详情，ID: ${templateId}`);
     
     if (!templateId) {
@@ -51,10 +50,10 @@ export async function GET(
  */
 export async function PATCH(
   request: NextRequest,
-  context: { params: Record<string, string> }
-) {
+  { params }: { params: { id: string } }
+): Promise<NextResponse> {
   try {
-    const { id: templateId } = context.params;
+    const { id: templateId } = params;
     console.log(`更新模板，ID: ${templateId}`);
     
     if (!templateId || typeof templateId !== 'string') {
@@ -93,10 +92,10 @@ export async function PATCH(
  */
 export async function PUT(
   request: NextRequest,
-  context: { params: Record<string, string> }
-) {
+  { params }: { params: { id: string } }
+): Promise<NextResponse> {
   try {
-    const { id: templateId } = context.params;
+    const { id: templateId } = params;
     console.log(`替换模板，ID: ${templateId}`);
     
     const template = await templateStore.getTemplate(templateId);
@@ -137,10 +136,10 @@ export async function PUT(
  */
 export async function DELETE(
   request: NextRequest,
-  context: { params: Record<string, string> }
-) {
+  { params }: { params: { id: string } }
+): Promise<NextResponse> {
   try {
-    const { id: templateId } = context.params;
+    const { id: templateId } = params;
     console.log(`删除模板，ID: ${templateId}`);
     
     if (!templateId) {
