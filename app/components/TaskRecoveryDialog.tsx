@@ -3,7 +3,7 @@
 import React, { useState } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
-import { PendingTask, removePendingTask } from '@/utils/taskRecovery';
+import { PendingTask, removePendingTask } from '@/app/utils/taskRecovery';
 import { format } from 'date-fns';
 import { zhCN } from 'date-fns/locale';
 
