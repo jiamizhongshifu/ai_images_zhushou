@@ -1,20 +1,15 @@
+import type { NextApiRequest } from 'next';
 import { NextRequest, NextResponse } from 'next/server';
 import { handleError } from '@/utils/error-handler';
 import { v4 as uuidv4 } from 'uuid';
 import { templateStore } from '../supabase-store';
 
-type Context = {
-  params: {
-    id: string;
-  };
-};
-
 /**
  * 获取单个模板详情
  */
 export async function GET(
-  _: NextRequest,
-  context: Context
+  request: NextRequest,
+  context: { params: Record<string, string> }
 ) {
   try {
     const { id: templateId } = context.params;
@@ -55,8 +50,8 @@ export async function GET(
  * 更新模板使用次数
  */
 export async function PATCH(
-  _: NextRequest,
-  context: Context
+  request: NextRequest,
+  context: { params: Record<string, string> }
 ) {
   try {
     const { id: templateId } = context.params;
@@ -97,8 +92,8 @@ export async function PATCH(
  * 更新模板
  */
 export async function PUT(
-  _: NextRequest,
-  context: Context
+  request: NextRequest,
+  context: { params: Record<string, string> }
 ) {
   try {
     const { id: templateId } = context.params;
@@ -141,8 +136,8 @@ export async function PUT(
  * 删除模板
  */
 export async function DELETE(
-  _: NextRequest,
-  context: Context
+  request: NextRequest,
+  context: { params: Record<string, string> }
 ) {
   try {
     const { id: templateId } = context.params;

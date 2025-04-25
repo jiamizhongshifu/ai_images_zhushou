@@ -1,15 +1,10 @@
+import type { NextApiRequest } from 'next';
 import { NextRequest, NextResponse } from 'next/server';
 import { templateStore } from '../../supabase-store';
 
-type Context = {
-  params: {
-    id: string;
-  };
-};
-
 export async function POST(
   request: NextRequest,
-  context: Context
+  context: { params: Record<string, string> }
 ) {
   try {
     const { id: templateId } = context.params;
