@@ -1,17 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { templateStore } from '../../supabase-store';
 
-interface RouteParams {
-  params: { id: string };
-  searchParams: { [key: string]: string | string[] | undefined };
-}
-
 export async function POST(
-  request: NextRequest,
-  context: RouteParams
+  request: Request,
+  { params }: { params: { id: string } }
 ) {
   try {
-    const { id: templateId } = context.params;
+    const { id: templateId } = params;
     console.log(`尝试上传图片到模板 ID: ${templateId}`);
     
     // 获取所有模板ID列表用于调试
