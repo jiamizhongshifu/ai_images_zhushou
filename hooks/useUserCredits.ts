@@ -1,4 +1,4 @@
-import { useUserState } from '@/app/components/providers/user-state-provider';
+import { useUserState } from '../app/components/providers/user-state-provider';
 
 export interface UseUserCreditsResult {
   credits: number | null;
@@ -19,7 +19,11 @@ export default function useUserCredits(): UseUserCreditsResult {
     isLoading,
     error: null, // 错误处理已在全局状态提供器中完成
     isCached: false, // 缓存管理已在全局状态提供器中处理
-    refetch: (showLoading = true, forceRefresh = false) => 
-      refreshUserState({ showLoading, forceRefresh })
+    refetch: async (showLoading = true, forceRefresh = false) => { 
+      // 注意：原始的 refreshUserState 不接受参数，这里的参数暂时未使用
+      // 如果需要根据参数执行不同逻辑，应在 UserStateProvider 中修改 refreshUserState
+      console.log(`[useUserCredits] refetch called with showLoading: ${showLoading}, forceRefresh: ${forceRefresh}`);
+      await refreshUserState(); // 直接调用，不传递参数
+    }
   };
 } 
