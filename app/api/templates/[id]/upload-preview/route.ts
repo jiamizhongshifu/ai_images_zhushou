@@ -10,7 +10,7 @@ type RouteContext = {
 
 export async function POST(
   request: NextRequest,
-  context: RouteContext
+  context: any
 ): Promise<Response> {
   try {
     const { id: templateId } = context.params;
