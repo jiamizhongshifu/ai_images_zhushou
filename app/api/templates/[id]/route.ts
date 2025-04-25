@@ -3,12 +3,18 @@ import { handleError } from '@/utils/error-handler';
 import { v4 as uuidv4 } from 'uuid';
 import { templateStore } from '../supabase-store';
 
+type RouteContext = {
+  params: {
+    id: string;
+  };
+};
+
 /**
  * 获取单个模板详情
  */
 export async function GET(
   request: NextRequest,
-  context: { params: { id: string } }
+  context: RouteContext
 ) {
   try {
     const { id: templateId } = context.params;
@@ -50,7 +56,7 @@ export async function GET(
  */
 export async function PATCH(
   request: NextRequest,
-  context: { params: { id: string } }
+  context: RouteContext
 ) {
   try {
     const { id: templateId } = context.params;
@@ -92,7 +98,7 @@ export async function PATCH(
  */
 export async function PUT(
   request: NextRequest,
-  context: { params: { id: string } }
+  context: RouteContext
 ) {
   try {
     const { id: templateId } = context.params;
@@ -136,7 +142,7 @@ export async function PUT(
  */
 export async function DELETE(
   request: NextRequest,
-  context: { params: { id: string } }
+  context: RouteContext
 ) {
   try {
     const { id: templateId } = context.params;
