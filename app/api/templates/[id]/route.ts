@@ -1,21 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
-import type { NextApiRequest } from 'next';
 import { handleError } from '@/utils/error-handler';
 import { v4 as uuidv4 } from 'uuid';
 import { templateStore } from '../supabase-store';
-
-interface RequestContext {
-  params: {
-    id: string;
-  };
-}
 
 /**
  * 获取单个模板详情
  */
 export async function GET(
-  req: NextRequest,
-  { params }: RequestContext
+  request: NextRequest,
+  { params }: { params: { id: string } }
 ) {
   try {
     const id = params.id;
@@ -55,8 +48,8 @@ export async function GET(
  * 更新模板使用次数
  */
 export async function PATCH(
-  req: NextRequest,
-  { params }: RequestContext
+  request: NextRequest,
+  { params }: { params: { id: string } }
 ) {
   try {
     const { id } = params;
@@ -96,8 +89,8 @@ export async function PATCH(
  * 更新模板
  */
 export async function PUT(
-  req: NextRequest,
-  { params }: RequestContext
+  request: NextRequest,
+  { params }: { params: { id: string } }
 ) {
   try {
     const id = params.id;
@@ -109,7 +102,7 @@ export async function PUT(
       }, { status: 400 });
     }
     
-    const updates = await req.json();
+    const updates = await request.json();
     
     // 更新时添加更新时间
     updates.updated_at = new Date().toISOString();
@@ -141,8 +134,8 @@ export async function PUT(
  * 删除模板
  */
 export async function DELETE(
-  req: NextRequest,
-  { params }: RequestContext
+  request: NextRequest,
+  { params }: { params: { id: string } }
 ) {
   try {
     const id = params.id;
