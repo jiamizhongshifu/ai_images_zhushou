@@ -7,24 +7,25 @@ import { templateStore } from '../supabase-store';
  * 获取单个模板详情
  */
 export async function GET(
-  request: NextRequest,
+  req: NextRequest,
   context: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { id } = await context.params;
+    const { id: templateId } = await context.params;
+    console.log(`获取模板详情，ID: ${templateId}`);
     
-    if (!id) {
+    if (!templateId) {
       return NextResponse.json({
         success: false,
         error: '缺少模板ID'
       }, { status: 400 });
     }
     
-    console.log(`获取模板: ${id}`);
-    const template = await templateStore.getTemplate(id);
+    console.log(`获取模板: ${templateId}`);
+    const template = await templateStore.getTemplate(templateId);
     
     if (!template) {
-      console.log(`未找到模板: ${id}`);
+      console.log(`未找到模板: ${templateId}`);
       return NextResponse.json({
         success: false,
         error: '未找到模板'
@@ -48,13 +49,14 @@ export async function GET(
  * 更新模板使用次数
  */
 export async function PATCH(
-  request: NextRequest,
+  req: NextRequest,
   context: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { id } = await context.params;
+    const { id: templateId } = await context.params;
+    console.log(`更新模板，ID: ${templateId}`);
     
-    if (!id || typeof id !== 'string') {
+    if (!templateId || typeof templateId !== 'string') {
       return NextResponse.json(
         { success: false, error: '无效的模板ID' },
         { status: 400 }
@@ -62,7 +64,7 @@ export async function PATCH(
     }
     
     // 使用新的模板存储类增加使用次数
-    const success = await templateStore.incrementUseCount(id);
+    const success = await templateStore.incrementUseCount(templateId);
     
     if (!success) {
       return NextResponse.json(
@@ -89,12 +91,14 @@ export async function PATCH(
  * 更新模板
  */
 export async function PUT(
-  request: NextRequest,
+  req: NextRequest,
   context: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { id } = await context.params;
-    const template = await templateStore.getTemplate(id);
+    const { id: templateId } = await context.params;
+    console.log(`替换模板，ID: ${templateId}`);
+    
+    const template = await templateStore.getTemplate(templateId);
     
     if (!template) {
       return NextResponse.json(
@@ -106,7 +110,7 @@ export async function PUT(
       );
     }
     
-    const updatedTemplate = await templateStore.updateTemplate(id, {
+    const updatedTemplate = await templateStore.updateTemplate(templateId, {
       use_count: (template.use_count || 0) + 1,
       updated_at: new Date().toISOString()
     });
@@ -131,21 +135,22 @@ export async function PUT(
  * 删除模板
  */
 export async function DELETE(
-  request: NextRequest,
+  req: NextRequest,
   context: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { id } = await context.params;
+    const { id: templateId } = await context.params;
+    console.log(`删除模板，ID: ${templateId}`);
     
-    if (!id) {
+    if (!templateId) {
       return NextResponse.json({
         success: false,
         error: '缺少模板ID'
       }, { status: 400 });
     }
     
-    console.log(`删除模板: ${id}`);
-    const success = await templateStore.deleteTemplate(id);
+    console.log(`删除模板: ${templateId}`);
+    const success = await templateStore.deleteTemplate(templateId);
     
     if (!success) {
       return NextResponse.json({
