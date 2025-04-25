@@ -3,12 +3,18 @@ import { handleError } from '@/utils/error-handler';
 import { v4 as uuidv4 } from 'uuid';
 import { templateStore } from '../supabase-store';
 
+type Props = {
+  params: {
+    id: string;
+  };
+};
+
 /**
  * 获取单个模板详情
  */
 export async function GET(
-  request: NextRequest,
-  { params }: { params: { id: string } }
+  request: Request,
+  { params }: Props
 ) {
   try {
     const id = params.id;
@@ -48,8 +54,8 @@ export async function GET(
  * 更新模板使用次数
  */
 export async function PATCH(
-  request: NextRequest,
-  { params }: { params: { id: string } }
+  request: Request,
+  { params }: Props
 ) {
   try {
     const { id } = params;
@@ -89,8 +95,8 @@ export async function PATCH(
  * 更新模板
  */
 export async function PUT(
-  request: NextRequest,
-  { params }: { params: { id: string } }
+  request: Request,
+  { params }: Props
 ) {
   try {
     const id = params.id;
@@ -134,8 +140,8 @@ export async function PUT(
  * 删除模板
  */
 export async function DELETE(
-  request: NextRequest,
-  { params }: { params: { id: string } }
+  request: Request,
+  { params }: Props
 ) {
   try {
     const id = params.id;
