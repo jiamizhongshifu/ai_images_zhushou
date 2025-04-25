@@ -1,12 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { templateStore } from '../../supabase-store';
 
+type Props = {
+  params: {
+    id: string;
+  };
+};
+
 export async function POST(
-  req: NextRequest,
-  { params }: { params: { id: string } }
+  request: NextRequest,
+  props: Props
 ) {
   try {
-    const { id: templateId } = params;
+    const { id: templateId } = props.params;
     console.log(`尝试上传图片到模板 ID: ${templateId}`);
     
     // 获取所有模板ID列表用于调试
@@ -41,7 +47,7 @@ export async function POST(
     console.log(`找到模板: ${template.name} (ID: ${template.id})`);
     
     // 解析FormData
-    const formData = await req.formData();
+    const formData = await request.formData();
     const file = formData.get("file") as File;
     
     if (!file) {

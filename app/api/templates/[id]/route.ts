@@ -3,15 +3,21 @@ import { handleError } from '@/utils/error-handler';
 import { v4 as uuidv4 } from 'uuid';
 import { templateStore } from '../supabase-store';
 
+type Props = {
+  params: {
+    id: string;
+  };
+};
+
 /**
  * 获取单个模板详情
  */
 export async function GET(
-  req: NextRequest,
-  { params }: { params: { id: string } }
+  request: NextRequest,
+  props: Props
 ) {
   try {
-    const { id: templateId } = params;
+    const { id: templateId } = props.params;
     console.log(`获取模板详情，ID: ${templateId}`);
     
     if (!templateId) {
@@ -49,11 +55,11 @@ export async function GET(
  * 更新模板使用次数
  */
 export async function PATCH(
-  req: NextRequest,
-  { params }: { params: { id: string } }
+  request: NextRequest,
+  props: Props
 ) {
   try {
-    const { id: templateId } = params;
+    const { id: templateId } = props.params;
     console.log(`更新模板，ID: ${templateId}`);
     
     if (!templateId || typeof templateId !== 'string') {
@@ -91,11 +97,11 @@ export async function PATCH(
  * 更新模板
  */
 export async function PUT(
-  req: NextRequest,
-  { params }: { params: { id: string } }
+  request: NextRequest,
+  props: Props
 ) {
   try {
-    const { id: templateId } = params;
+    const { id: templateId } = props.params;
     console.log(`替换模板，ID: ${templateId}`);
     
     const template = await templateStore.getTemplate(templateId);
@@ -135,11 +141,11 @@ export async function PUT(
  * 删除模板
  */
 export async function DELETE(
-  req: NextRequest,
-  { params }: { params: { id: string } }
+  request: NextRequest,
+  props: Props
 ) {
   try {
-    const { id: templateId } = params;
+    const { id: templateId } = props.params;
     console.log(`删除模板，ID: ${templateId}`);
     
     if (!templateId) {
