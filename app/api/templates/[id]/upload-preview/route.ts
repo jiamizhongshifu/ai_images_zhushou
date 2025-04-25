@@ -1,12 +1,18 @@
+import type { NextApiRequest } from 'next';
 import { NextRequest, NextResponse } from 'next/server';
 import { templateStore } from '../../supabase-store';
 
+type RouteSegment = {
+  params: { id: string };
+  searchParams?: { [key: string]: string | string[] | undefined };
+};
+
 export async function POST(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  segment: RouteSegment
 ): Promise<Response> {
   try {
-    const { id: templateId } = params;
+    const { id: templateId } = segment.params;
     console.log(`尝试上传图片到模板 ID: ${templateId}`);
     
     // 获取所有模板ID列表用于调试
