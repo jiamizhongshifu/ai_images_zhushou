@@ -1,22 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/utils/supabase/server';
 import { createAdminClient } from '@/utils/supabase/admin';
+import { createLogger } from '@/utils/logger';
 
-// 日志工具函数
-const logger = {
-  error: (message: string) => {
-    console.error(`[UpdateProgress API] ${message}`);
-  },
-  warn: (message: string) => {
-    console.warn(`[UpdateProgress API] ${message}`);
-  },
-  info: (message: string) => {
-    console.log(`[UpdateProgress API] ${message}`);
-  },
-  debug: (message: string) => {
-    console.log(`[UpdateProgress API] ${message}`);
-  }
-};
+// 创建API专用日志记录器
+const logger = createLogger('UpdateProgress API');
+
+// 接口类型定义
+interface LockResult {
+  version: number;
+}
 
 /**
  * 检查列是否存在
@@ -42,20 +35,33 @@ async function checkColumnExists(supabase: any, tableName: string, columnName: s
       logger.warn(`检查列存在的自定义函数调用失败: ${e instanceof Error ? e.message : String(e)}`);
     }
     
-    // 后备方法：直接查询系统表
-    const { data, error } = await supabase.from('information_schema.columns')
-      .select('column_name')
-      .eq('table_schema', 'public')
-      .eq('table_name', tableName)
-      .eq('column_name', columnName);
+    // 后备方法：直接查询系统表 - 修正查询
+    try {
+      // 使用原始SQL查询替代ORM查询，避免schema引用问题
+      const { data, error } = await supabase.rpc(
+        'execute_sql', 
+        { 
+          sql_query: `
+            SELECT COUNT(*) > 0 AS column_exists 
+            FROM information_schema.columns 
+            WHERE table_schema = 'public' 
+            AND table_name = '${tableName}' 
+            AND column_name = '${columnName}'
+          `
+        }
+      );
       
-    if (error) {
-      logger.warn(`检查列存在失败: ${error.message}`);
-      // 为避免阻塞正常流程，如果查询失败，假设列存在
-      return true;
+      if (error) {
+        logger.warn(`检查列存在SQL失败: ${error.message}`);
+        // 为避免阻塞正常流程，如果查询失败，假设列存在
+        return true;
+      }
+      
+      return data && data.length > 0 && data[0].column_exists === true;
+    } catch (sqlError) {
+      logger.warn(`执行SQL查询失败: ${sqlError instanceof Error ? sqlError.message : String(sqlError)}`);
+      return true; // 查询失败时假设存在
     }
-    
-    return data && data.length > 0;
   } catch (error) {
     logger.error(`检查列存在时出错: ${error instanceof Error ? error.message : String(error)}`);
     // 为避免阻塞正常流程，如果出错，假设列存在
@@ -99,7 +105,7 @@ export async function POST(request: NextRequest) {
       isAuthorized = validKeys.some(key => key === token);
       
       if (isAuthorized) {
-        logger.info(`[${requestId}] 使用Bearer认证成功`);
+        logger.debug(`[${requestId}] 使用Bearer认证成功`);
       }
     }
     
@@ -108,7 +114,7 @@ export async function POST(request: NextRequest) {
       isAuthorized = validKeys.some(key => key === xApiKey);
       
       if (isAuthorized) {
-        logger.info(`[${requestId}] 使用X-API-Key认证成功`);
+        logger.debug(`[${requestId}] 使用X-API-Key认证成功`);
       }
     }
     
@@ -127,7 +133,8 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { taskId, progress, stage } = body;
     
-    logger.info(`[${requestId}] 更新任务进度: ${taskId}, 进度: ${progress}, 阶段: ${stage}`);
+    // 使用简洁的日志
+    logger.info(`[${requestId}] 更新任务: ${taskId}, 进度: ${progress}, 阶段: ${stage}`);
     
     if (!taskId) {
       logger.warn(`[${requestId}] 缺少任务ID`);
@@ -153,7 +160,7 @@ export async function POST(request: NextRequest) {
     const progressExists = await checkColumnExists(supabaseAdmin, 'image_tasks', 'progress');
     const stageExists = await checkColumnExists(supabaseAdmin, 'image_tasks', 'stage');
     
-    logger.info(`[${requestId}] 列检查结果: progress列${progressExists ? '存在' : '不存在'}, stage列${stageExists ? '存在' : '不存在'}`);
+    logger.debug(`[${requestId}] 列检查结果: progress列${progressExists ? '存在' : '不存在'}, stage列${stageExists ? '存在' : '不存在'}`);
     
     // 根据列的存在情况构建更新数据
     const updateData: Record<string, any> = {
@@ -173,16 +180,49 @@ export async function POST(request: NextRequest) {
     let retryCount = 0;
     const maxRetries = 2;
     
+    // 记录开始时间，用于性能监控
+    const startTime = Date.now();
+    
     while (retryCount <= maxRetries) {
       try {
+        // 开始事务
+        const { data: lockResultData, error: lockError } = await supabase
+          .rpc('acquire_task_lock', { p_task_id: taskId })
+          .single();
+
+        if (lockError) {
+          logger.warn(`[${requestId}] 获取任务锁失败: ${lockError.message}`);
+          // 锁定失败是一种常见的并发冲突，应该重试
+          throw new Error(`获取任务锁失败: ${lockError.message}`);
+        }
+
+        // 确保lockResult有效
+        if (!lockResultData) {
+          logger.warn(`[${requestId}] 获取到的锁结果为空`);
+          throw new Error('锁结果为空');
+        }
+
+        const lockResult = lockResultData as LockResult;
+        if (typeof lockResult.version !== 'number') {
+          logger.warn(`[${requestId}] 获取到的锁版本无效: ${JSON.stringify(lockResult)}`);
+          throw new Error('锁版本无效');
+        }
+
+        const lockVersion = lockResult.version;
+        logger.debug(`[${requestId}] 成功获取任务锁，版本: ${lockVersion}`);
+
         // 如果两个列都不存在，仅更新时间戳
         if (!progressExists && !stageExists) {
           logger.warn(`[${requestId}] progress和stage列都不存在，仅更新时间戳`);
           const { data, error } = await supabase
             .from('image_tasks')
-            .update({ updated_at: new Date().toISOString() })
+            .update({ 
+              updated_at: new Date().toISOString(),
+              lock_version: lockVersion + 1
+            })
             .eq('task_id', taskId)
-            .select('task_id, status')
+            .eq('lock_version', lockVersion)
+            .select('task_id, status, lock_version')
             .single();
             
           if (error) {
@@ -196,9 +236,13 @@ export async function POST(request: NextRequest) {
         // 正常更新包含存在的列
         const { data, error } = await supabase
           .from('image_tasks')
-          .update(updateData)
+          .update({
+            ...updateData,
+            lock_version: lockVersion + 1
+          })
           .eq('task_id', taskId)
-          .select('task_id, status')
+          .eq('lock_version', lockVersion)
+          .select('task_id, status, lock_version')
           .single();
           
         if (error) {
@@ -218,41 +262,11 @@ export async function POST(request: NextRequest) {
             }
             
             // 如果仍有列可更新，重试
-            if (Object.keys(updateData).length > 1) { // 至少还有一个列+updated_at
-              retryCount++;
-              continue;
-            } else {
-              // 只剩下updated_at，仅更新它
-              const { data: timestampData, error: timestampError } = await supabase
-                .from('image_tasks')
-                .update({ updated_at: new Date().toISOString() })
-                .eq('task_id', taskId)
-                .select('task_id, status')
-                .single();
-                
-              if (timestampError) {
-                throw timestampError;
-              }
-              
-              updateResult = timestampData;
-              break;
-            }
-          }
-          
-          // 特定错误情况可以重试
-          if (error.code === 'PGRST116' || error.code === '23505') {
-            logger.warn(`[${requestId}] 更新任务进度遇到可恢复错误 (尝试 ${retryCount + 1}/${maxRetries + 1}): ${error.message}`);
             retryCount++;
-            // 等待短暂时间后重试
-            await new Promise(resolve => setTimeout(resolve, 500));
             continue;
           }
           
-          logger.error(`[${requestId}] 更新任务进度失败: ${error.message}`);
-          return NextResponse.json(
-            { error: '更新任务进度失败', details: error.message, code: 'update_error' },
-            { status: 500 }
-          );
+          throw error;
         }
         
         updateResult = data;
@@ -261,31 +275,22 @@ export async function POST(request: NextRequest) {
         const errorMsg = err instanceof Error ? err.message : String(err);
         logger.error(`[${requestId}] 更新任务进度时发生异常: ${errorMsg}`);
         
-        // 如果错误消息表明列不存在，提供更详细的日志
-        if (errorMsg.includes('column') && errorMsg.includes('does not exist')) {
-          logger.warn(`[${requestId}] 列不存在错误，可能需要运行迁移脚本添加progress和stage列`);
-        }
-        
         retryCount++;
         
         if (retryCount > maxRetries) {
-          return NextResponse.json(
-            { 
-              error: '更新任务进度失败', 
-              details: errorMsg, 
-              code: 'server_error',
-              suggestion: '请确保数据库中存在progress和stage列，或运行迁移脚本'
-            },
-            { status: 500 }
-          );
+          throw err;
         }
         
-        // 等待短暂时间后重试
-        await new Promise(resolve => setTimeout(resolve, 500));
+        // 等待短暂时间后重试，使用指数退避
+        const backoffTime = 500 * Math.pow(2, retryCount);
+        logger.debug(`[${requestId}] 将在${backoffTime}ms后重试(${retryCount}/${maxRetries})`);
+        await new Promise(resolve => setTimeout(resolve, backoffTime));
       }
     }
     
-    logger.info(`[${requestId}] 任务进度更新成功: ${taskId}, 进度: ${progress}, 阶段: ${stage}`);
+    // 记录操作耗时
+    const operationTime = Date.now() - startTime;
+    logger.debug(`[${requestId}] 任务进度更新完成，耗时${operationTime}ms`);
     
     return NextResponse.json({
       success: true,

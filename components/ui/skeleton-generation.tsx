@@ -176,6 +176,9 @@ export function ImageGenerationSkeleton({
       return;
     }
     
+    // 获取当前阶段
+    const currentStage = GENERATION_STAGES[currentStageIndex];
+    
     const timer = setInterval(() => {
       // 计算已消耗时间
       const elapsed = Math.floor((Date.now() - startTimeRef.current) / 1000);
@@ -183,6 +186,17 @@ export function ImageGenerationSkeleton({
       
       // 基于当前进度计算预计剩余时间
       const currentPercentage = progress.percentage || 0;
+      
+      // 如果进度达到100%或状态为completed，清除定时器
+      if (currentPercentage >= 100 || currentStage.id === 'completed') {
+        clearInterval(timer);
+        setProgress(prev => ({
+          ...prev,
+          estimatedTime: '已完成'
+        }));
+        return;
+      }
+      
       if (currentPercentage > 0 && currentPercentage < 100) {
         // 根据已用时间和当前进度预测剩余时间
         const estimatedRemaining = Math.max(
@@ -208,7 +222,7 @@ export function ImageGenerationSkeleton({
     }, 1000);
     
     return () => clearInterval(timer);
-  }, [isGenerating, progress.percentage]);
+  }, [isGenerating, progress.percentage, currentStageIndex]);
   
   // 模拟阶段进度 - 仅当没有外部控制时使用
   useEffect(() => {

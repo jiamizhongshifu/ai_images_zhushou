@@ -8,7 +8,8 @@ import dns from 'dns';
 import https from 'https';
 import http from 'http';
 import fs from 'fs';
-import { uploadImageToStorage, cleanupTemporaryImage } from '@/utils/image/uploadImageToStorage';
+import { uploadImageToStorage, cleanupTemporaryImage } from '../../../utils/image/uploadImageToStorage';
+import { createLogger, createSafeSummary } from '../../../utils/logger';
 
 // 定义TuziConfig类型
 interface TuziConfig {
@@ -38,27 +39,8 @@ const currentLogLevel = (() => {
   }
 })();
 
-// 日志工具函数
-const logger = {
-  error: (message: string) => {
-    console.error(`[图片生成错误] ${message}`);
-  },
-  warn: (message: string) => {
-    if (currentLogLevel >= LOG_LEVELS.WARN) {
-      console.warn(`[图片生成警告] ${message}`);
-    }
-  },
-  info: (message: string) => {
-    if (currentLogLevel >= LOG_LEVELS.INFO) {
-      console.log(`[图片生成] ${message}`);
-    }
-  },
-  debug: (message: string) => {
-    if (currentLogLevel >= LOG_LEVELS.DEBUG) {
-      console.log(`[图片生成调试] ${message}`);
-    }
-  }
-};
+// 创建专用日志记录器
+const logger = createLogger('图片生成');
 
 // 防止并发请求的锁
 let isProcessing = false;
@@ -306,21 +288,21 @@ export async function POST(request: NextRequest) {
   let temporaryImageUrl: string | null = null; // 标记临时上传的图片URL，以便任务完成后清理
 
   try {
-    // 防止并发请求
-    if (isProcessing) {
+  // 防止并发请求
+  if (isProcessing) {
       logger.warn('并发请求被阻止');
-      return new Response(JSON.stringify({ 
-        success: false, 
+    return new Response(JSON.stringify({ 
+      success: false, 
         error: '系统正在处理其他请求，请稍后再试' 
-      }), {
-        status: 429,
-        headers: { 'Content-Type': 'application/json' },
-      });
-    }
-    
+    }), {
+      status: 429,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+  
     // 设置并发锁
-    isProcessing = true;
-    
+  isProcessing = true;
+  
     // 设置超时监控
     timeoutChecker = setInterval(() => {
       const elapsedTime = Date.now() - startTime;
@@ -510,161 +492,210 @@ export async function POST(request: NextRequest) {
         // 将base64图片上传到存储服务，获取URL进行传递
         if (base64Image) {
           try {
-            logger.info('开始将base64图片上传到存储服务');
-            // 记录base64字符串长度，用于诊断
-            logger.debug(`base64图片字符串长度: ${base64Image.length}`);
+            logger.info('开始将用户图片上传到存储服务');
+            // 记录base64字符串的安全摘要，而不是完整长度
+            logger.debug(`图片数据: ${createSafeSummary(base64Image)}`);
             
             imageUrl = await uploadImageToStorage(base64Image, user.id);
             temporaryImageUrl = imageUrl; // 标记为临时URL
-            logger.info(`成功将图片上传到存储服务，获取URL: ${imageUrl}`);
+            logger.info(`图片上传成功，获取到URL`);
           } catch (uploadError) {
-            logger.warn(`上传图片到存储服务失败: ${uploadError instanceof Error ? uploadError.message : String(uploadError)}`);
-            // 记录更多诊断信息
-            logger.debug(`上传失败详细信息: ${JSON.stringify({
+            logger.warn(`上传图片失败: ${uploadError instanceof Error ? uploadError.message : String(uploadError)}`);
+            // 使用安全摘要记录诊断信息，避免完整记录base64前缀
+            logger.debug(`上传失败详情:`, {
               errorName: uploadError instanceof Error ? uploadError.name : 'Unknown',
-              errorStack: uploadError instanceof Error ? uploadError.stack : 'No stack trace',
+              errorStack: uploadError instanceof Error ? (uploadError.stack ? uploadError.stack.split('\n')[0] : 'No stack') : 'No stack trace',
               hasBase64Data: !!base64Image,
-              base64DataLength: base64Image ? base64Image.length : 0,
-              base64Preview: base64Image ? base64Image.substring(0, 100) + '...' : 'None',
-              userId: user.id
-            })}`);
-            logger.info('将继续使用base64方式传递图片');
-            // 上传失败时继续使用base64，保证功能正常
+              dataSize: base64Image ? Math.ceil(base64Image.length / 1024) + 'KB' : '0KB'
+            });
+            logger.info('将使用原始图片数据继续处理');
           }
         }
       }
       
-      // 准备消息内容 - 严格按照tuzi-openai.md的格式
-      const messages: any[] = [
-        {
-          role: 'system',
-          content: [
-            {
-              type: 'text',
-              text: '你是一个先进的图像生成系统，能够处理图片和文字提示。当收到请求时，你必须生成图像并返回图像URL。生成的图像应尽可能保持参考图片中的主要元素和主题，同时根据提示词添加创意。不要改变参考图片的基本内容和场景。'
-            }
-          ]
-        },
+      // 两阶段图像处理实现
+      // 阶段1: 获取初始响应和gen_id
+      // 阶段2: 使用gen_id处理用户图片
+
+      logger.info('启动两阶段图像处理流程');
+      
+      // 阶段1: 获取gen_id
+      // 构建初始消息
+      const initialMessages: any[] = [
         {
           role: 'user',
-          content: []
+          content: prompt
         }
       ];
       
-      // 如果有图片，添加图片内容 - 优先使用URL，没有则使用base64
-      if (base64Image) {
-        messages[1].content.push({
-          type: "image_url",
-          image_url: {
-            url: imageUrl || base64Image // 优先使用URL，没有则使用base64
-          }
-        });
-      }
+      // 记录初始请求信息
+      logger.info('阶段1: 发送初始请求获取gen_id');
+      logger.debug(`初始提示词: ${prompt.substring(0, 100)}`);
       
-      // 添加文本提示
-      let finalPrompt = prompt;
-      
-      // 处理风格和比例
-      const selectedStyle = style || "无风格";
-      
-      // 优先使用标准化的比例，如果有的话
-      if (base64Image) {
-        // 记录比例信息
-        if (useStandardRatio) {
-          logger.info(`使用标准化比例: ${useStandardRatio}`);
-        } else if (originalAspectRatio) {
-          logger.info(`使用原始比例: ${originalAspectRatio}`);
-        }
-        
-        // 确定要使用的比例
-        const ratioToUse = useStandardRatio || originalAspectRatio;
-        
-        if (ratioToUse) {
-          // 从比例中提取宽高
-          const [width, height] = ratioToUse.split(':').map(Number);
-          
-          if (selectedStyle === "皮克斯") {
-            // 皮克斯风格特别处理
-            finalPrompt = `${prompt}。请务必使用 ${ratioToUse} 的标准宽高比，生成宽 ${width} 高 ${height} 比例的图片。使用皮克斯风格。`;
-            logger.info(`为皮克斯风格添加了标准比例要求: ${ratioToUse}`);
-          } else {
-            // 其他风格也添加比例信息，但用更柔和的方式
-            finalPrompt = `${prompt}。请使用 ${ratioToUse} 的标准宽高比。`;
-            logger.info(`为风格 ${selectedStyle} 添加了标准比例提示: ${ratioToUse}`);
-          }
-        }
-      }
-      
-      messages[1].content.push({
-        type: "text",
-        text: finalPrompt
+      // 发送初始请求
+      const initialResponse = await tuziClient.chat.completions.create({
+        model: 'gpt-4o-image-vip',
+        messages: initialMessages,
+        stream: false,
+        user: `${user.id}_init`
       });
       
-      logger.info(`开始向图资API发送请求，最终提示词: ${finalPrompt.substring(0, 50)}...`);
-      
-      logger.info(`发送API请求前，已用时间: ${(Date.now() - startTime)/1000}秒`);
-      
-      // 调用图资API生成图像
-      let response: any; // 使用any类型暂时避开类型检查问题
-      if (base64Image) {
-        // 如果有上传图片，使用聊天完成API
-        logger.info(`检测到有用户上传图片，使用聊天API进行图像生成 ${imageUrl ? '(通过URL)' : '(通过base64)'}`);
-        
-        // 使用带有图片的消息调用API
-        const chatResponse = await tuziClient.chat.completions.create({
-          model: useBackupStrategy ? 'gpt-4o-image-vip' : (process.env.OPENAI_MODEL || 'gpt-4o-image-vip'),
-          messages: messages,
-          stream: false,
-          user: user.id
-        });
-        
-        // 从聊天完成响应中提取图片URL
-        if (chatResponse && chatResponse.choices && chatResponse.choices[0] && chatResponse.choices[0].message) {
-          const assistantContent = chatResponse.choices[0].message.content || "";
-          
-          // 从响应中提取URL
-          const urlRegex = /(https?:\/\/[^\s"'<>]+\.(png|jpg|jpeg|gif|webp))/i;
-          const urlMatch = assistantContent.match(urlRegex);
-          
-          if (urlMatch && urlMatch[1]) {
-            logger.info(`成功从聊天响应中提取图片URL`);
-            response = {
-              data: [{ url: urlMatch[1] }]
-            };
-          } else {
-            logger.error(`无法从聊天响应中提取图片URL: ${assistantContent.substring(0, 200)}...`);
-            throw new Error('API返回的响应中不包含有效的图片URL');
-          }
+      // 从响应中提取gen_id
+      let genId: string | null = null;
+      if (initialResponse?.choices?.[0]?.message?.content) {
+        const content = initialResponse.choices[0].message.content;
+        // 匹配gen_id格式
+        const genIdMatch = content.match(/gen_id: `([^`]+)`/);
+        if (genIdMatch && genIdMatch[1]) {
+          genId = genIdMatch[1];
+          logger.info(`成功获取gen_id: ${genId}`);
         } else {
-          logger.error(`聊天API响应不包含有效的消息内容`);
-          throw new Error('API返回的响应格式不正确');
+          logger.warn('无法从初始响应中提取gen_id，将尝试继续但可能不成功');
+          logger.debug(`响应内容前200字符: ${content.substring(0, 200)}`);
         }
       } else {
-        // 没有上传图片，使用普通的图像生成API
-        response = await tuziClient.images.generate({
-          model: useBackupStrategy ? 'gpt-4o-image-vip' : (process.env.OPENAI_MODEL || 'gpt-4o-image-vip'), // 如果接近超时，使用更快的模型
-          prompt: finalPrompt,
-          n: 1,
-          quality: useBackupStrategy ? "standard" : "hd", // 降级使用标准质量
-          size: getImageSize(useStandardRatio || originalAspectRatio),
-          response_format: "url",
-          user: user.id
+        logger.error('初始响应不包含有效内容');
+        throw new Error('无法获取初始响应，请稍后重试');
+      }
+      
+      // 确保图片已上传到存储服务获取URL
+      if (base64Image && !imageUrl) {
+        logger.info('上传用户图片到存储服务');
+        try {
+          imageUrl = await uploadImageToStorage(base64Image, user.id);
+          temporaryImageUrl = imageUrl; // 标记为临时，以便后续清理
+          logger.info('图片上传成功');
+        } catch (uploadError) {
+          logger.warn(`图片上传失败: ${uploadError instanceof Error ? uploadError.message : String(uploadError)}`);
+          logger.info('将使用原始base64数据继续');
+        }
+      }
+      
+      // 阶段2: 使用gen_id处理用户图片
+      // 构建编辑消息，包含完整的对话历史
+      const editMessages: any[] = [
+        // 包含第一阶段的完整对话
+        ...initialMessages,
+        {
+          role: 'assistant',
+          content: initialResponse.choices[0].message.content
+        }
+      ];
+      
+      // 创建编辑请求JSON结构
+      const editRequestData: any = {
+        prompt: prompt
+      };
+      
+      // 检测提示词中是否包含比例相关指令
+      const hasPortraitKeywords = prompt.match(/竖向|纵向|人像|垂直|长图|高图/i);
+      const hasLandscapeKeywords = prompt.match(/横向|风景|宽屏|宽图/i);
+      const hasSquareKeywords = prompt.match(/方形|正方形|1:1|等边/i);
+      
+      // 根据提示词中的关键词设置比例
+      let detectedRatio: string | null = null;
+      if (hasPortraitKeywords) {
+        detectedRatio = "9:16";
+        logger.info(`从提示词中检测到竖向指令，设置比例为: ${detectedRatio}`);
+      } else if (hasLandscapeKeywords) {
+        detectedRatio = "16:9";
+        logger.info(`从提示词中检测到横向指令，设置比例为: ${detectedRatio}`);
+      } else if (hasSquareKeywords) {
+        detectedRatio = "1:1";
+        logger.info(`从提示词中检测到方形指令，设置比例为: ${detectedRatio}`);
+      }
+      
+      // 添加风格信息
+      if (style && style !== "无风格") {
+        editRequestData.prompt = `${style}风格: ${editRequestData.prompt}`;
+      }
+      
+      // 优先级顺序: 
+      // 1. 用户明确上传时指定的比例 (useStandardRatio/originalAspectRatio)
+      // 2. 从提示词检测到的比例 (detectedRatio)
+      // 3. 不设置比例参数，让API自行决定
+      if (useStandardRatio || originalAspectRatio) {
+        editRequestData.ratio = useStandardRatio || originalAspectRatio;
+        logger.info(`使用显式指定的比例: ${editRequestData.ratio}`);
+      } else if (detectedRatio) {
+        editRequestData.ratio = detectedRatio;
+        logger.info(`使用从提示词检测到的比例: ${editRequestData.ratio}`);
+      }
+      // 不再添加默认比例，让API自行决定
+      
+      // 添加gen_id
+      if (genId) {
+        editRequestData.gen_id = genId;
+      }
+      
+      // 将editRequestData转换为代码块
+      const formattedRequestData = "```\n" + JSON.stringify(editRequestData, null, 2) + "\n```";
+      
+      // 构建用户编辑消息
+      const userEditContent: any[] = [];
+      
+      // 添加格式化的JSON请求
+      userEditContent.push({
+        type: "text",
+        text: formattedRequestData
+      });
+      
+      // 添加图片内容
+      if (imageUrl || base64Image) {
+        userEditContent.push({
+          type: "image_url",
+          image_url: {
+            url: imageUrl || base64Image
+          }
         });
       }
       
-      logger.info(`API响应接收完成，总用时: ${(Date.now() - startTime)/1000}秒`);
+      // 添加用户编辑消息到对话历史
+      editMessages.push({
+        role: 'user',
+        content: userEditContent
+      });
       
-      // 处理API响应
+      // 记录编辑请求信息
+      logger.info('阶段2: 发送编辑请求');
+      logger.debug(`编辑请求数据: ${JSON.stringify(editRequestData)}`);
+      logger.debug(`对话历史消息数: ${editMessages.length}`);
+      
+      // 发送编辑请求
+      const editResponse = await tuziClient.chat.completions.create({
+        model: 'gpt-4o-image-vip',
+        messages: editMessages,
+        stream: false,
+        user: `${user.id}_edit`,
+        temperature: 0.1
+      });
+      
+      // 从编辑响应中提取图片URL
       let resultImageUrl = '';
-      
-      // 从响应中提取图片URL
-      if (response.data && response.data.length > 0 && response.data[0].url) {
-        resultImageUrl = response.data[0].url;
-        logger.info(`从API响应获取到图片URL: ${resultImageUrl}, 总用时: ${(Date.now() - startTime)/1000}秒`);
+      if (editResponse?.choices?.[0]?.message?.content) {
+        const content = editResponse.choices[0].message.content;
+        
+        // 尝试多种模式提取URL
+        let urlMatch = content.match(/!\[.*?\]\((https:\/\/[^)]+)\)/); // Markdown格式
+        
+        if (!urlMatch) {
+          // 尝试直接URL提取
+          urlMatch = content.match(/(https?:\/\/[^\s"'<>]+\.(png|jpg|jpeg|gif|webp))/i);
+        }
+        
+        if (urlMatch && urlMatch[1]) {
+          resultImageUrl = urlMatch[1];
+          logger.info(`成功从编辑响应中提取图片URL`);
+        } else {
+          logger.error(`无法从编辑响应中提取图片URL: ${content.substring(0, 200)}...`);
+          throw new Error('API返回的响应中不包含有效的图片URL');
+        }
       } else {
-        logger.error(`API响应中不包含有效的图片URL，响应内容: ${JSON.stringify(response).substring(0, 200)}...`);
-        throw new Error('API返回的响应中不包含有效的图片URL');
+        logger.error(`编辑响应不包含有效的消息内容`);
+        throw new Error('API返回的响应格式不正确');
       }
+
+      logger.info(`图像处理完成，总用时: ${(Date.now() - startTime)/1000}秒`);
       
       // 保存历史记录
       await saveGenerationHistory(user.id, prompt, resultImageUrl, style || null, originalAspectRatio || null, useStandardRatio || null);
@@ -796,13 +827,13 @@ export async function POST(request: NextRequest) {
           // 没有上传图片，使用普通的备用模型
           retryResponse = await tuziClient.images.generate({
             model: 'gpt-4o-image-vip', // 使用备用图像生成模型
-            prompt: shortenedPrompt, // 使用简化版提示词
-            n: 1,
-            quality: "standard", // 使用标准质量提高速度
-            size: "1024x1024", // 使用标准尺寸
-            response_format: "url",
-            user: `${user.id}_retry`
-          });
+          prompt: shortenedPrompt, // 使用简化版提示词
+          n: 1,
+          quality: "standard", // 使用标准质量提高速度
+          size: "1024x1024", // 使用标准尺寸
+          response_format: "url",
+          user: `${user.id}_retry`
+        });
         }
         
         logger.info(`备用策略API响应接收完成，总用时: ${(Date.now() - startTime)/1000}秒`);

@@ -16,6 +16,7 @@ export interface ImageTask {
   request_id?: string | null;
   progress?: number | null;
   stage?: string | null;
+  lock_version: number;
 }
 
 export interface ImageTasksTable {

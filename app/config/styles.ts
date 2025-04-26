@@ -104,6 +104,11 @@ export function generatePromptWithStyle(styleId: string, userPrompt: string): st
   // 如果用户没有输入提示词，使用默认提示词
   const basePrompt = userPrompt.trim() || "生成图像";
   
-  // 将用户提示词插入模板
-  return style.promptTemplate.replace('{prompt}', basePrompt);
+  // 如果是自定义风格，直接返回用户提示词
+  if (style.id === "自定义") {
+    return basePrompt;
+  }
+  
+  // 使用简洁的格式：生成图像 + 风格
+  return `${basePrompt}，风格：${style.name}`;
 } 

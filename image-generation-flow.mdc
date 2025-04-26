@@ -1,0 +1,246 @@
+---
+description:
+globs:
+alwaysApply: false
+---
+# 图像生成流程
+
+## 核心组件
+
+图像生成系统由以下主要部分组成：
+
+- 客户端生成请求：通过 `useImageGeneration` hook 发起
+- 服务器端任务创建：将请求转换为异步任务
+- 任务状态监听器：实时更新任务状态和进度
+- 结果处理和展示：完成后加载图像和相关操作
+- 图像直接生成API：处理用户上传图片的两阶段生成流程
+
+## 关键文件
+
+- [hooks/useImageGeneration.ts](mdc:hooks/useImageGeneration.ts) - 图像生成核心 hook
+- [app/api/generate-image-task/route.ts](mdc:app/api/generate-image-task/route.ts) - 图像任务创建 API
+- [app/api/image-task-status/route.ts](mdc:app/api/image-task-status/route.ts) - 任务状态查询 API
+- [app/components/TaskStatusListener.tsx](mdc:app/components/TaskStatusListener.tsx) - 任务状态监听组件
+- [app/api/generate-image-direct/route.ts](mdc:app/api/generate-image-direct/route.ts) - 直接图像生成 API，处理用户上传图片
+- [utils/image/uploadImageToStorage.ts](mdc:utils/image/uploadImageToStorage.ts) - 图片上传处理工具
+
+## 图像生成流程
+
+### 标准异步任务流程
+
+1. 用户在前端填写提示词和上传图片，选择风格
+2. 点击生成按钮，调用 `useImageGeneration.generateImage()`
+3. 前端发送 POST 请求到 `/api/generate-image-task`
+4. 后端创建任务记录，返回 `taskId`
+5. 前端使用 `TaskStatusListener` 组件监听任务状态变化
+6. 后端异步处理任务，更新任务状态和进度
+7. 任务完成后，前端加载生成的图像并更新 UI
+
+### 直接生成流程（带用户上传图片）
+
+1. 用户上传参考图片，填写提示词，选择风格
+2. 前端发送 POST 请求到 `/api/generate-image-direct`
+3. 后端执行两阶段生成流程：
+   - **阶段1**: 发送初始提示词请求获取 `gen_id`
+   - **阶段2**: 使用 `gen_id` 和上传的图片执行图像生成
+4. 后端处理完成后直接返回生成的图像URL
+5. 前端显示生成结果
+
+## 直接生成API技术细节
+
+### 两阶段图像生成流程
+
+直接生成API (`generate-image-direct`) 实现了严格符合 tuzi API 规范的两阶段处理：
+
+1. **阶段1 - 获取gen_id**:
+   ```typescript
+   // 发送初始提示词获取gen_id
+   const initialResponse = await tuziClient.chat.completions.create({
+     model: 'gpt-4o-image-vip',
+     messages: initialMessages,
+     stream: false,
+     user: `${user.id}_init`
+   });
+   
+   // 从响应中提取gen_id
+   const genIdMatch = content.match(/gen_id: `([^`]+)`/);
+   ```
+
+2. **阶段2 - 图像处理**:
+   ```typescript
+   // 创建编辑请求JSON结构
+   const editRequestData = {
+     prompt: prompt,
+     ratio: detectedRatio || userProvidedRatio,
+     gen_id: genId
+   };
+   
+   // 构建请求消息，包含图片和JSON结构
+   editMessages.push({
+     role: 'user',
+     content: [
+       { type: "text", text: formattedRequestData },
+       { 
+         type: "image_url", 
+         image_url: { url: imageUrl || base64Image }
+       }
+     ]
+   });
+   
+   // 发送编辑请求
+   const editResponse = await tuziClient.chat.completions.create({...});
+   ```
+
+### 提示词和比例处理
+
+系统会智能处理提示词中的比例指令：
+
+```typescript
+// 检测提示词中是否包含比例相关指令
+const hasPortraitKeywords = prompt.match(/竖向|纵向|人像|垂直|长图|高图/i);
+const hasLandscapeKeywords = prompt.match(/横向|风景|宽屏|宽图/i);
+
+// 根据关键词设置比例
+if (hasPortraitKeywords) {
+  detectedRatio = "9:16";
+} else if (hasLandscapeKeywords) {
+  detectedRatio = "16:9";
+}
+```
+
+比例设置优先级：
+1. 用户明确上传时指定的比例
+2. 从提示词检测到的比例
+3. 不设置比例参数，让API自行决定
+
+### 图片存储处理
+
+上传图片流程：
+1. 将base64图片上传到存储服务
+2. 获取公共URL用于API调用
+3. 任务完成后清理临时图片
+
+```typescript
+// 上传图片到存储
+imageUrl = await uploadImageToStorage(base64Image, user.id);
+temporaryImageUrl = imageUrl; // 标记为临时，以便后续清理
+
+// 任务结束后清理
+if (temporaryImageUrl) {
+  await cleanupTemporaryImage(temporaryImageUrl);
+}
+```
+
+## 任务状态流转
+
+任务状态遵循以下流转：
+```
+pending -> processing -> completed
+      \-> failed
+```
+
+- `pending`: 任务已创建，等待处理
+- `processing`: 任务正在处理中，有进度更新
+- `completed`: 任务成功完成，有图像 URL
+- `failed`: 任务失败，有错误信息
+
+## 故障排查与恢复指南
+
+### 常见问题与解决方案
+
+1. **图片分析而非处理问题**
+   - 症状：API分析图片内容而不是直接处理图片
+   - 解决：确保严格按照两阶段流程，正确传递gen_id和遵循文档格式
+
+2. **比例指令不生效**
+   - 症状：提示词中的比例指令（如"竖向图片"）被忽略
+   - 解决：检查比例检测逻辑，确保关键词匹配正确，不要设置强制默认比例
+
+3. **图片上传失败**
+   - 症状：无法上传图片或获取URL
+   - 解决：检查存储配置，确保权限正确，可以尝试使用原始base64作为回退
+
+4. **gen_id提取失败**
+   - 症状：无法从初始响应中提取gen_id
+   - 解决：检查正则表达式，确保与API响应格式匹配，增强日志记录
+
+### 恢复步骤
+
+当系统出现问题时的恢复流程：
+
+1. 查看服务器日志，确定失败阶段（初始请求、gen_id提取、编辑请求等）
+2. 检查相关参数格式，尤其是JSON结构和消息格式
+3. 确认API模型参数正确（应使用'gpt-4o-image-vip'）
+4. 验证用户权限和积分扣除逻辑
+5. 如果是临时问题，可以尝试重新提交请求
+
+## 性能优化和最佳实践
+
+1. **前端优化**
+   - 压缩图片后再上传
+   - 实现渐进式加载和预览
+   - 缓存生成结果避免重复请求
+
+2. **后端优化**
+   - 使用临时URL处理上传图片，减少base64传输
+   - 实现超时监控和降级策略
+   - 异步清理临时资源
+
+3. **图像生成最佳实践**
+   - 总是处理任务的所有可能状态
+   - 提供清晰的进度和错误反馈
+   - 实现适当的重试和恢复机制
+   - 确保任务失败时正确释放资源（例如退还积分）
+   - 检查和处理API的模型容量和限制
+
+## API调用参考
+
+### 图片直接生成API
+
+```typescript
+// POST /api/generate-image-direct
+{
+  "prompt": "用户提示词", 
+  "image": "base64编码图片数据",  // 或使用imagePath
+  "style": "选择的风格",  // 可选
+  "aspectRatio": "宽高比"  // 可选，如"16:9"
+}
+
+// 响应
+{
+  "success": true,
+  "imageUrl": "生成图片URL",
+  "message": "图片生成成功",
+  "duration": 12345  // 毫秒
+}
+```
+
+### tuzi API格式参考
+
+```
+// 第一阶段用户请求
+{
+  role: 'user',
+  content: "用户提示词"
+}
+
+// 第一阶段助手响应（包含gen_id）
+{
+  role: 'assistant',
+  content: "...gen_id: `gen_01abcdef12345`..."
+}
+
+// 第二阶段用户请求（包含图片和JSON）
+{
+  role: 'user',
+  content: [
+    {
+      type: "text",
+      text: "```\n{\"prompt\":\"提示词\",\"ratio\":\"9:16\",\"gen_id\":\"gen_01abcdef12345\"}\n```"
+    },
+    {
+      type: "image_url",
+      image_url: { url: "图片URL" }
+    }
+  ]
+}

@@ -177,12 +177,45 @@ const GeneratedImageGallery = React.forwardRef<HTMLDivElement, GeneratedImageGal
     };
   }, [displayImages, loadedImages, activeImagesSet]);
   
+  // 监听图片生成状态变化
+  useEffect(() => {
+    if (!isGenerating && images.length > 0) {
+      const latestImage = images[0];
+      if (latestImage !== lastGeneratedImage) {
+        setLastGeneratedImage(latestImage);
+        setIsTransitioning(true);
+        
+        // 确保新图片被加载
+        const img = new Image();
+        img.src = resolveImageUrl(latestImage);
+        img.onload = () => {
+          setLoadedImages(prev => ({...prev, [latestImage]: true}));
+          // 300ms后重置过渡状态，配合CSS动画
+          setTimeout(() => {
+            setIsTransitioning(false);
+          }, 300);
+        };
+      }
+    }
+  }, [isGenerating, images, lastGeneratedImage, resolveImageUrl]);
+  
   // 图片列表变更时重置可见图片数量
   useEffect(() => {
     if (images.length === 0) return;
+    
+    // 重置状态
     setVisibleCount(MAX_VISIBLE_IMAGES);
     setActiveImagesSet(new Set()); // 清空活动图片集合
-  }, [images]);
+    
+    // 预加载第一张图片
+    if (images[0]) {
+      const img = new Image();
+      img.src = resolveImageUrl(images[0]);
+      img.onload = () => {
+        setLoadedImages(prev => ({...prev, [images[0]]: true}));
+      };
+    }
+  }, [images, resolveImageUrl]);
   
   // 查看更多，跳转到历史页
   const handleViewMore = () => {
@@ -274,22 +307,6 @@ const GeneratedImageGallery = React.forwardRef<HTMLDivElement, GeneratedImageGal
       imageRefs.current.delete(imageUrl);
     }
   }, []);
-
-  // 监听图片生成状态变化
-  useEffect(() => {
-    if (!isGenerating && images.length > 0) {
-      const latestImage = images[0];
-      if (latestImage !== lastGeneratedImage) {
-        setLastGeneratedImage(latestImage);
-        setIsTransitioning(true);
-        // 300ms后重置过渡状态，配合CSS动画
-        const timer = setTimeout(() => {
-          setIsTransitioning(false);
-        }, 300);
-        return () => clearTimeout(timer);
-      }
-    }
-  }, [isGenerating, images, lastGeneratedImage]);
 
   // 准备网格项，骨架屏优先，然后是图片
   const prepareGridItems = () => {
