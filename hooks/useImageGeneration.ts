@@ -27,7 +27,7 @@ import { useTranslation } from '@/i18n/client';
 import { notify } from '@/utils/notification';
 import { trackPromptUsage } from '@/utils/tracking';
 import { authService, refreshSession } from '@/utils/auth-service';
-import logger from '@/utils/logger';
+import { logger } from '@/utils/logger';
 import { v4 as uuidv4 } from 'uuid';
 import { showNotification } from '@/utils/notification';
 import { setTaskActive } from '@/utils/auth-resilience';
