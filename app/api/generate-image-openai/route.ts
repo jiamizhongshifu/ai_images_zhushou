@@ -73,7 +73,7 @@ async function saveImageHistory(
   userId: string, 
   imageUrl: string, 
   prompt: string,
-  modelUsed: string = 'gpt-image-1-vip',
+  modelUsed: string = 'gpt-4o-image-vip',
   generationSettings: any = {},
   status: string = 'completed'
 ): Promise<boolean> {
@@ -245,7 +245,7 @@ export async function POST(request: NextRequest) {
       console.log('成功获取图片URL:', imageUrl);
       
       // 保存历史记录
-      await saveImageHistory(userId, imageUrl, prompt, 'gpt-image-1-vip', { size, style });
+      await saveImageHistory(userId, imageUrl, prompt, 'gpt-4o-image-vip', { size, style });
       
       console.log('API请求完成，结束时间:', new Date().toISOString());
       

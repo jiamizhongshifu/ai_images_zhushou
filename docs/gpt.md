@@ -56,7 +56,7 @@ const openai = new OpenAI({
 async function generateImage() {
   try {
     const response = await openai.images.generate({
-      model: "gpt-image-1-vip",
+      model: "gpt-4o-image-vip",
       prompt: '一只穿着太空服的柴犬在火星上行走，数字艺术风格',
       n: 1,
       size: '1024x1024',
@@ -78,7 +78,7 @@ generateImage();
 
 ### 🧾 参数说明
 
-- `model`（string）：使用的模型，应为 `"gpt-image-1-vip"` 或其他支持的图像生成模型。
+- `model`（string）：使用的模型，应为 `"gpt-4o-image-vip"` 或其他支持的图像生成模型。
 - `prompt`（string）：生成图像的文本描述，最多1000个字符。
 - `n`（integer）：要生成的图像数量，默认为1。
 - `size`（string）：图像的尺寸，可选 `"256x256"`, `"512x512"`, 或 `"1024x1024"`。

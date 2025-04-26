@@ -254,7 +254,7 @@ async function testDallE(apiKey, fetchOptions) {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          model: "gpt-image-1-vip",
+          model: "gpt-4o-image-vip",
           prompt: "可爱的卡通动物，简单风格",
           n: 1,
           size: "1024x1024",

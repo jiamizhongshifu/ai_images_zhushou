@@ -8,6 +8,7 @@ import dns from 'dns';
 import https from 'https';
 import http from 'http';
 import fs from 'fs';
+import { uploadImageToStorage, cleanupTemporaryImage } from '@/utils/image/uploadImageToStorage';
 
 // 定义TuziConfig类型
 interface TuziConfig {
@@ -301,6 +302,8 @@ export async function POST(request: NextRequest) {
   
   // 用于处理图片内容的变量
   let base64Image: string | null = null;
+  let imageUrl: string | null = null; // 新增变量，用于存储上传到存储服务的图片URL
+  let temporaryImageUrl: string | null = null; // 标记临时上传的图片URL，以便任务完成后清理
 
   try {
     // 防止并发请求
@@ -503,6 +506,32 @@ export async function POST(request: NextRequest) {
             }
           }
         }
+        
+        // 将base64图片上传到存储服务，获取URL进行传递
+        if (base64Image) {
+          try {
+            logger.info('开始将base64图片上传到存储服务');
+            // 记录base64字符串长度，用于诊断
+            logger.debug(`base64图片字符串长度: ${base64Image.length}`);
+            
+            imageUrl = await uploadImageToStorage(base64Image, user.id);
+            temporaryImageUrl = imageUrl; // 标记为临时URL
+            logger.info(`成功将图片上传到存储服务，获取URL: ${imageUrl}`);
+          } catch (uploadError) {
+            logger.warn(`上传图片到存储服务失败: ${uploadError instanceof Error ? uploadError.message : String(uploadError)}`);
+            // 记录更多诊断信息
+            logger.debug(`上传失败详细信息: ${JSON.stringify({
+              errorName: uploadError instanceof Error ? uploadError.name : 'Unknown',
+              errorStack: uploadError instanceof Error ? uploadError.stack : 'No stack trace',
+              hasBase64Data: !!base64Image,
+              base64DataLength: base64Image ? base64Image.length : 0,
+              base64Preview: base64Image ? base64Image.substring(0, 100) + '...' : 'None',
+              userId: user.id
+            })}`);
+            logger.info('将继续使用base64方式传递图片');
+            // 上传失败时继续使用base64，保证功能正常
+          }
+        }
       }
       
       // 准备消息内容 - 严格按照tuzi-openai.md的格式
@@ -512,7 +541,7 @@ export async function POST(request: NextRequest) {
           content: [
             {
               type: 'text',
-              text: '你是一个先进的图像生成系统，能够处理图片和文字提示。当收到请求时，你必须生成图像并返回图像URL，不要回复任何文字说明或解释。你可以生成多样化的高质量图像，请务必返回图像URL。'
+              text: '你是一个先进的图像生成系统，能够处理图片和文字提示。当收到请求时，你必须生成图像并返回图像URL。生成的图像应尽可能保持参考图片中的主要元素和主题，同时根据提示词添加创意。不要改变参考图片的基本内容和场景。'
             }
           ]
         },
@@ -522,12 +551,12 @@ export async function POST(request: NextRequest) {
         }
       ];
       
-      // 如果有图片，添加图片内容
+      // 如果有图片，添加图片内容 - 优先使用URL，没有则使用base64
       if (base64Image) {
         messages[1].content.push({
           type: "image_url",
           image_url: {
-            url: base64Image
+            url: imageUrl || base64Image // 优先使用URL，没有则使用base64
           }
         });
       }
@@ -579,11 +608,11 @@ export async function POST(request: NextRequest) {
       let response: any; // 使用any类型暂时避开类型检查问题
       if (base64Image) {
         // 如果有上传图片，使用聊天完成API
-        logger.info(`检测到有用户上传图片，使用聊天API进行图像生成`);
+        logger.info(`检测到有用户上传图片，使用聊天API进行图像生成 ${imageUrl ? '(通过URL)' : '(通过base64)'}`);
         
         // 使用带有图片的消息调用API
         const chatResponse = await tuziClient.chat.completions.create({
-          model: useBackupStrategy ? 'gpt-image-1-vip' : (process.env.OPENAI_MODEL || 'gpt-4o-image-vip'),
+          model: useBackupStrategy ? 'gpt-4o-image-vip' : (process.env.OPENAI_MODEL || 'gpt-4o-image-vip'),
           messages: messages,
           stream: false,
           user: user.id
@@ -613,7 +642,7 @@ export async function POST(request: NextRequest) {
       } else {
         // 没有上传图片，使用普通的图像生成API
         response = await tuziClient.images.generate({
-          model: useBackupStrategy ? 'gpt-image-1-vip' : (process.env.OPENAI_MODEL || 'gpt-4o-image-vip'), // 如果接近超时，使用更快的模型
+          model: useBackupStrategy ? 'gpt-4o-image-vip' : (process.env.OPENAI_MODEL || 'gpt-4o-image-vip'), // 如果接近超时，使用更快的模型
           prompt: finalPrompt,
           n: 1,
           quality: useBackupStrategy ? "standard" : "hd", // 降级使用标准质量
@@ -626,29 +655,38 @@ export async function POST(request: NextRequest) {
       logger.info(`API响应接收完成，总用时: ${(Date.now() - startTime)/1000}秒`);
       
       // 处理API响应
-      let imageUrl = '';
+      let resultImageUrl = '';
       
       // 从响应中提取图片URL
       if (response.data && response.data.length > 0 && response.data[0].url) {
-        imageUrl = response.data[0].url;
-        logger.info(`从API响应获取到图片URL: ${imageUrl}, 总用时: ${(Date.now() - startTime)/1000}秒`);
+        resultImageUrl = response.data[0].url;
+        logger.info(`从API响应获取到图片URL: ${resultImageUrl}, 总用时: ${(Date.now() - startTime)/1000}秒`);
       } else {
         logger.error(`API响应中不包含有效的图片URL，响应内容: ${JSON.stringify(response).substring(0, 200)}...`);
         throw new Error('API返回的响应中不包含有效的图片URL');
       }
       
       // 保存历史记录
-      await saveGenerationHistory(user.id, prompt, imageUrl, style || null, originalAspectRatio || null, useStandardRatio || null);
+      await saveGenerationHistory(user.id, prompt, resultImageUrl, style || null, originalAspectRatio || null, useStandardRatio || null);
       
       const endTime = Date.now();
       const duration = endTime - startTime;
       
       logger.info(`图片生成请求完成，总耗时: ${duration}ms (${duration/1000}秒)`);
       
+      // 清理临时上传的图片
+      if (temporaryImageUrl) {
+        try {
+          await cleanupTemporaryImage(temporaryImageUrl);
+        } catch (cleanupError) {
+          logger.warn(`清理临时上传图片失败: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`);
+        }
+      }
+      
       // 返回结果
       return new Response(JSON.stringify({ 
         success: true,
-        imageUrl: imageUrl,
+        imageUrl: resultImageUrl,
         message: '图片生成成功',
         duration: duration,
         usedBackupStrategy: useBackupStrategy
@@ -678,7 +716,7 @@ export async function POST(request: NextRequest) {
         
         if (base64Image) {
           // 如果有上传图片，还是需要使用聊天API，但使用简化的提示词
-          logger.info(`使用备用策略重试，包含上传图片`);
+          logger.info(`使用备用策略重试，包含上传图片 ${imageUrl ? '(通过URL)' : '(通过base64)'}`);
           
           // 重新构建消息但使用简化的提示词
           const backupMessages: any[] = [
@@ -687,7 +725,7 @@ export async function POST(request: NextRequest) {
               content: [
                 {
                   type: 'text',
-                  text: '你是一个先进的图像生成系统，能够根据图片和文字提示生成图像。请尽可能保持与参考图片相似的构图和风格。'
+                  text: '你是一个先进的图像生成系统，能够根据图片和文字提示生成图像。请精确保持参考图片中的主要内容、人物和场景，尽量不要改变背景或添加额外元素，除非提示词明确要求。'
                 }
               ]
             },
@@ -701,7 +739,7 @@ export async function POST(request: NextRequest) {
           backupMessages[1].content.push({
             type: "image_url",
             image_url: {
-              url: base64Image
+              url: imageUrl || base64Image // 优先使用URL，没有则使用base64
             }
           });
           
@@ -741,11 +779,11 @@ export async function POST(request: NextRequest) {
               throw new Error('备用API返回的响应格式不正确');
             }
           } catch (backupError) {
-            // 如果带图片的备用调用失败，退回到不带图片的gpt-image-1-vip
+            // 如果带图片的备用调用失败，退回到不带图片的gpt-4o-image-vip
             logger.warn(`带图片的备用策略失败，尝试使用备用模型: ${backupError instanceof Error ? backupError.message : String(backupError)}`);
             
             retryResponse = await tuziClient.images.generate({
-              model: 'gpt-image-1-vip', // 使用备用图像生成模型
+              model: 'gpt-4o-image-vip', // 使用备用图像生成模型
               prompt: `${shortenedPrompt}`,
               n: 1,
               quality: "standard", // 使用标准质量提高速度
@@ -757,7 +795,7 @@ export async function POST(request: NextRequest) {
         } else {
           // 没有上传图片，使用普通的备用模型
           retryResponse = await tuziClient.images.generate({
-            model: 'gpt-image-1-vip', // 使用备用图像生成模型
+            model: 'gpt-4o-image-vip', // 使用备用图像生成模型
             prompt: shortenedPrompt, // 使用简化版提示词
             n: 1,
             quality: "standard", // 使用标准质量提高速度
@@ -770,18 +808,27 @@ export async function POST(request: NextRequest) {
         logger.info(`备用策略API响应接收完成，总用时: ${(Date.now() - startTime)/1000}秒`);
         
         if (retryResponse.data && retryResponse.data.length > 0 && retryResponse.data[0].url) {
-          const imageUrl = retryResponse.data[0].url;
-          logger.info(`使用备用策略成功生成图片: ${imageUrl}`);
+          const resultImageUrl = retryResponse.data[0].url;
+          logger.info(`使用备用策略成功生成图片: ${resultImageUrl}`);
           
           // 保存历史记录
-          await saveGenerationHistory(user.id, prompt, imageUrl, style || null, originalAspectRatio || null, useStandardRatio || null);
+          await saveGenerationHistory(user.id, prompt, resultImageUrl, style || null, originalAspectRatio || null, useStandardRatio || null);
           
           const endTime = Date.now();
           const duration = endTime - startTime;
           
+          // 清理临时上传的图片
+          if (temporaryImageUrl) {
+            try {
+              await cleanupTemporaryImage(temporaryImageUrl);
+            } catch (cleanupError) {
+              logger.warn(`清理临时上传图片失败: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`);
+            }
+          }
+          
           return new Response(JSON.stringify({ 
             success: true,
-            imageUrl: imageUrl,
+            imageUrl: resultImageUrl,
             message: '使用备用策略生成图片成功',
             duration: duration,
             usedBackupStrategy: true
@@ -816,6 +863,15 @@ export async function POST(request: NextRequest) {
         logger.error(`尝试退还用户点数失败: ${refundError instanceof Error ? refundError.message : String(refundError)}`);
       }
       
+      // 清理临时上传的图片
+      if (temporaryImageUrl) {
+        try {
+          await cleanupTemporaryImage(temporaryImageUrl);
+        } catch (cleanupError) {
+          logger.warn(`清理临时上传图片失败: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`);
+        }
+      }
+      
       throw generationError;
     }
     
@@ -845,6 +901,15 @@ export async function POST(request: NextRequest) {
       // 尝试从URL查询参数获取prompt和style
       const { prompt = '', style = null } = (request as any).query || {}; 
       suggestion = getSuggestionForPrompt(prompt, style);
+    }
+    
+    // 清理临时上传的图片
+    if (temporaryImageUrl) {
+      try {
+        await cleanupTemporaryImage(temporaryImageUrl);
+      } catch (cleanupError) {
+        logger.warn(`清理临时上传图片失败: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`);
+      }
     }
     
     return new Response(JSON.stringify({ 

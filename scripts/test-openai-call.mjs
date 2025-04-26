@@ -111,7 +111,7 @@ async function testImageGeneration() {
     
     // 调用图像生成API
     const response = await openai.images.generate({
-      model: "gpt-image-1-vip",
+      model: "gpt-4o-image-vip",
       prompt: "一只可爱的卡通猫，简单的白色背景，测试图像",
       n: 1,
       size: "1024x1024",

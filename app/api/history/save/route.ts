@@ -29,7 +29,7 @@ export async function POST(request: NextRequest) {
   try {
     // 解析请求体
     const body = await request.json();
-    const { userId, imageUrl, prompt, modelUsed = 'gpt-image-1-vip', generationSettings = {}, status = 'completed' } = body;
+    const { userId, imageUrl, prompt, modelUsed = 'gpt-4o-image-vip', generationSettings = {}, status = 'completed' } = body;
     
     console.log('保存历史记录:', { userId, prompt, status });
     

@@ -132,7 +132,7 @@ function createTuziClient() {
   const baseURL = apiConfig.apiUrl || process.env.OPENAI_BASE_URL || "https://api.tu-zi.com/v1";
   
   // 使用环境变量中的模型
-  const imageModel = process.env.OPENAI_MODEL || "gpt-image-1-vip"; 
+  const imageModel = process.env.OPENAI_MODEL || "gpt-4o-image-vip"; 
   
   logger.info(`创建图资API客户端，使用BASE URL: ${baseURL}`);
   logger.debug(`API密钥状态: ${apiKey ? '已配置' : '未配置'} (长度: ${apiKey?.length || 0})`);
@@ -188,7 +188,7 @@ async function saveGenerationHistory(
     }
     
     // 使用环境变量中的模型名称
-    const modelUsed = process.env.OPENAI_MODEL || 'gpt-image-1-vip';
+    const modelUsed = process.env.OPENAI_MODEL || 'gpt-4o-image-vip';
     
     // 构建基本数据对象
     const historyData: any = {
@@ -1619,7 +1619,7 @@ export async function POST(request: NextRequest) {
             
             // 创建API请求选项
             const apiOptions = {
-              model: process.env.OPENAI_MODEL || 'gpt-image-1-vip',
+              model: process.env.OPENAI_MODEL || 'gpt-4o-image-vip',
                 stream: true,
               messages: apiMessages,
               // 禁用默认超时，我们使用自己的超时机制
@@ -1639,7 +1639,7 @@ export async function POST(request: NextRequest) {
             const ratio = aspectRatio ? getStandardRatio(aspectRatio) : "1:1";
             
               logger.info(`详细API调用参数：
-- 模型: ${process.env.OPENAI_MODEL || 'gpt-image-1-vip'}
+- 模型: ${process.env.OPENAI_MODEL || 'gpt-4o-image-vip'}
 - 提示词: "${finalPrompt}"
 - 比例: "${ratio}"
 - 流式响应: true

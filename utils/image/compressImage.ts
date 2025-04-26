@@ -240,4 +240,76 @@ export function getImageDimensions(base64String: string): Promise<{width: number
     };
     img.src = base64String;
   });
+}
+
+/**
+ * 智能压缩图片
+ * 根据图片大小和目标大小自动调整压缩参数
+ * @param base64Image - 原始base64图片
+ * @param targetSizeKB - 目标大小(KB)
+ * @param options - 压缩选项
+ * @returns Promise<string> - 压缩后的base64字符串
+ */
+export async function smartCompressImage(
+    base64Image: string,
+    targetSizeKB: number = 800,
+    options: {
+        maxWidth?: number;
+        maxHeight?: number;
+        minQuality?: number;
+        maxQuality?: number;
+        maxAttempts?: number;
+    } = {}
+): Promise<string> {
+    const {
+        maxWidth = 1920,
+        maxHeight = 1920,
+        minQuality = 0.5,
+        maxQuality = 0.9,
+        maxAttempts = 3
+    } = options;
+
+    let currentQuality = maxQuality;
+    let attempt = 0;
+    let compressedImage = base64Image;
+    let currentSize = estimateBase64Size(base64Image);
+
+    console.log(`原始图片大小: ${currentSize}KB, 目标大小: ${targetSizeKB}KB`);
+
+    while (currentSize > targetSizeKB && attempt < maxAttempts) {
+        attempt++;
+        
+        // 计算新的压缩质量
+        if (attempt > 1) {
+            const ratio = targetSizeKB / currentSize;
+            currentQuality = Math.max(minQuality, currentQuality * ratio);
+        }
+
+        try {
+            // 压缩图片
+            compressedImage = await compressImage(
+                compressedImage,
+                {
+                    maxWidth,
+                    maxHeight,
+                    quality: currentQuality,
+                    mimeType: 'image/jpeg'
+                }
+            );
+
+            currentSize = estimateBase64Size(compressedImage);
+            console.log(`压缩尝试 ${attempt}: 质量=${currentQuality.toFixed(2)}, 大小=${currentSize}KB`);
+
+            // 如果已经接近目标大小，提前退出
+            if (currentSize <= targetSizeKB * 1.1) {
+                break;
+            }
+        } catch (error) {
+            console.error(`压缩尝试 ${attempt} 失败:`, error);
+            // 如果压缩失败，返回最后一次成功的结果
+            break;
+        }
+    }
+
+    return compressedImage;
 } 

@@ -215,7 +215,7 @@ async function testDallE() {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          model: "gpt-image-1-vip",
+          model: "gpt-4o-image-vip",
           prompt: "可爱的卡通猫，简单白色背景",
           n: 1,
           size: "1024x1024",

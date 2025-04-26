@@ -17,7 +17,7 @@ dotenv.config({ path: path.resolve(__dirname, '../.env') });
 // 使用环境变量中的配置
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const OPENAI_BASE_URL = process.env.OPENAI_BASE_URL || "https://api.openai.com/v1";
-const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-image-1-vip';
+const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4o-image-vip';
 
 if (!OPENAI_API_KEY) {
   console.error('错误: 环境变量缺失。请确保设置了OPENAI_API_KEY');

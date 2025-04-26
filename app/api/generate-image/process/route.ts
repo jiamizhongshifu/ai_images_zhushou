@@ -8,6 +8,8 @@ import dns from 'dns';
 import https from 'https';
 import http from 'http';
 import fs from 'fs';
+import { persistImageUrl } from '@/utils/image/persistImage';
+import { uploadImageToStorage, cleanupTemporaryImage } from '@/utils/image/uploadImageToStorage';
 
 // 设置日志级别常量
 const LOG_LEVELS = {
@@ -135,6 +137,27 @@ async function generateImage({
   let currentPrompt = prompt;
   let lastError: Error | null = null;
   let genId: string | null = null; // 保存图片生成ID
+  let imageUrl: string | null = null; // 上传后的图片URL
+  let temporaryImageUrl: string | null = null; // 标记临时图片URL，用于后续清理
+
+  // 如果有base64图片，尝试上传到存储服务获取URL
+  if (base64Image) {
+    try {
+      // 使用一个通用ID作为用户ID，因为这里不需要特定的用户
+      const userId = 'system';
+      logger.info('开始将base64图片上传到存储服务');
+      imageUrl = await uploadImageToStorage(base64Image, userId);
+      temporaryImageUrl = imageUrl; // 标记为临时URL，便于后续清理
+      logger.info(`成功将图片上传到存储服务，获取URL: ${imageUrl}`);
+      
+      // 上传成功后，使用URL替代base64
+      base64Image = null; // 清空base64数据，减少内存占用
+    } catch (uploadError) {
+      logger.warn(`上传图片到存储服务失败: ${uploadError instanceof Error ? uploadError.message : String(uploadError)}`);
+      logger.info('将继续使用base64方式传递图片');
+      // 上传失败继续使用原始base64，确保功能正常
+    }
+  }
 
   while (retryCount <= MAX_RETRIES) {
     try {
@@ -181,16 +204,30 @@ async function generateImage({
         const promptData = {
           prompt: formattedPrompt,
           ratio: aspectRatio || "1:1",
-          gen_id: genId
+          gen_id: genId,
+          // 添加保持图片内容的标志
+          preserve_content: true
         };
         messageContent = JSON.stringify(promptData);
         logger.info(`使用现有gen_id: ${genId}继续请求进度`);
-      } else if (base64Image) {
-        // 如果只有图片但没有genId
+      } else if (base64Image || imageUrl) {
+        // 如果有图片但没有genId
         const promptData: any = {
           prompt: formattedPrompt,
-          ratio: aspectRatio || "1:1"
+          ratio: aspectRatio || "1:1",
+          // 添加保持图片内容的标志
+          preserve_content: true,
+          keep_subject: true
         };
+        
+        // 添加图片引用 (如果上传成功则使用URL，否则继续使用base64)
+        if (imageUrl) {
+          promptData.image_url = imageUrl;
+          logger.info('使用上传后的图片URL进行请求');
+        } else if (base64Image) {
+          promptData.image = base64Image;
+          logger.info('使用base64数据进行请求');
+        }
         
         // 将对象转为字符串作为消息内容
         messageContent = JSON.stringify(promptData);
@@ -202,7 +239,7 @@ async function generateImage({
       let response;
       try {
         response = await tuziClient.chat.completions.create({
-          model: process.env.OPENAI_MODEL || "gpt-image-1-vip",
+          model: process.env.OPENAI_MODEL || "gpt-4o-image-vip",
           messages: [
             {
               role: "user",
@@ -285,6 +322,17 @@ async function generateImage({
         const urlMatch = assistantContent.match(/!\[.*?\]\((.*?)\)/);
         if (urlMatch && urlMatch[1]) {
           logger.info(`成功从Markdown中提取图片URL`);
+          
+          // 清理临时上传的图片
+          if (temporaryImageUrl) {
+            try {
+              await cleanupTemporaryImage(temporaryImageUrl);
+              logger.info('已清理临时上传的图片');
+            } catch (cleanupError) {
+              logger.warn(`清理临时上传图片失败: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`);
+            }
+          }
+          
           return { imageUrl: urlMatch[1], genId };
         }
         
@@ -331,7 +379,21 @@ async function generateImage({
     }
   }
   
-  throw lastError || new Error("超过最大重试次数，图像生成失败");
+  // 所有重试都失败，清理临时上传的图片
+  if (temporaryImageUrl) {
+    try {
+      await cleanupTemporaryImage(temporaryImageUrl);
+      logger.info('已清理临时上传的图片');
+    } catch (cleanupError) {
+      logger.warn(`清理临时上传图片失败: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`);
+    }
+  }
+  
+  if (lastError) {
+    throw lastError;
+  } else {
+    throw new Error('图像生成失败，达到最大重试次数');
+  }
 }
 
 // 检查API连接性

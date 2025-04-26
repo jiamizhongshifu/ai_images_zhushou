@@ -65,7 +65,7 @@ async function testCreateTaskRecord() {
         task_id: taskId,
         status: 'pending',
         prompt: '测试任务 - ' + new Date().toISOString(),
-        provider: 'gpt-image-1-vip',
+        provider: 'gpt-4o-image-vip',
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
       })

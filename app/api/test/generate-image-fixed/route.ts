@@ -20,7 +20,7 @@ function createApiClient() {
   
   console.log(`[测试生成] 创建API客户端，使用BASE URL: ${baseURL}`);
   console.log(`[测试生成] API密钥状态: ${apiKey ? '已配置' : '未配置'} (长度: ${apiKey?.length || 0})`);
-  console.log(`[测试生成] 图像生成使用固定模型: gpt-image-1-vip (忽略环境变量)`);
+  console.log(`[测试生成] 图像生成使用固定模型: gpt-4o-image-vip (忽略环境变量)`);
   
   if (!apiKey) {
     console.error('[测试生成] API密钥未配置，请检查环境变量OPENAI_API_KEY');
@@ -49,9 +49,9 @@ export async function POST(request: NextRequest) {
     console.log('[测试生成] 开始调用OpenAI API...');
     console.time('image-generation');
     
-    // 使用固定的gpt-image-1-vip模型，忽略环境变量中的模型
+    // 使用固定的gpt-4o-image-vip模型，忽略环境变量中的模型
     const response = await apiClient.images.generate({
-      model: "gpt-image-1-vip", // 固定使用gpt-image-1-vip
+      model: "gpt-4o-image-vip", // 固定使用gpt-4o-image-vip
       prompt: finalPrompt,
       n: 1,
       size: "1024x1024",
@@ -67,7 +67,7 @@ export async function POST(request: NextRequest) {
       status: 'success',
       message: '图像生成成功',
       imageUrl: response.data[0].url,
-      model: "gpt-image-1-vip"
+      model: "gpt-4o-image-vip"
     });
   } catch (error) {
     console.error('[测试生成] 图像生成失败:', error);
@@ -96,7 +96,7 @@ export async function POST(request: NextRequest) {
       status: 'failed',
       error: errorMessage,
       details: errorDetails,
-      model: "gpt-image-1-vip"
+      model: "gpt-4o-image-vip"
     }, { status: 500 });
   }
 } 
