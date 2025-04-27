@@ -1,0 +1,1 @@
+ALTER TABLE public.image_tasks ADD COLUMN IF NOT EXISTS input_image_url TEXT;

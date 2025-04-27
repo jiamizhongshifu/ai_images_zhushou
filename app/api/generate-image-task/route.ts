@@ -1312,7 +1312,7 @@ export async function POST(request: NextRequest) {
         if (aspectRatio) {
           logger.info(`图片比例参数: aspectRatio=${aspectRatio}, standardAspectRatio=${standardAspectRatio || '未指定'}`);
         }
-
+        
         // 构建提示词
         let finalPrompt = '';
         if (style) {
@@ -1368,11 +1368,11 @@ export async function POST(request: NextRequest) {
             } else {
               logger.info('无法将图片转换为URL，将使用base64格式');
               // 仍然使用原始的base64格式
-              if (image.startsWith('data:image/')) {
-                imageData = image;
-              } else {
-                const mimeType = 'image/jpeg';
-                imageData = `data:${mimeType};base64,${image}`;
+          if (image.startsWith('data:image/')) {
+            imageData = image;
+          } else {
+            const mimeType = 'image/jpeg';
+            imageData = `data:${mimeType};base64,${image}`;
               }
             }
           } catch (uploadError) {
@@ -1607,10 +1607,17 @@ export async function POST(request: NextRequest) {
             // 当使用参考图片时，需要特殊处理消息内容
             let apiMessages: {role: 'user' | 'system' | 'assistant'; content: any}[] = [];
 
+            // 添加system message指导模型行为
+            const systemMessage: {role: 'system'; content: string} = {
+              role: 'system',
+              content: '请严格按照用户的原始提示词生成图像，不要扩展、重写或修改提示词。保持用户意图的原始性。'
+            };
+
             if (additionalData.gen_id) {
               // 如果有参考图片ID，使用JSON格式传递
               const jsonContent = JSON.stringify(requestPayload);
               apiMessages = [
+                systemMessage,
                 {
                   role: 'user',
                   content: jsonContent
@@ -1620,6 +1627,7 @@ export async function POST(request: NextRequest) {
             } else if ((inputImageUrl || imageData)) {
               // 用户上传了图片但没有gen_id，使用数组格式传递图片数据
               apiMessages = [
+                systemMessage,
                 {
                   role: 'user',
                   content: [
@@ -1640,15 +1648,16 @@ export async function POST(request: NextRequest) {
               if (inputImageUrl) {
                 logger.info(`使用多模态格式传递图片URL和提示词: URL=${inputImageUrl.substring(0, 60)}..., 提示词="${finalPrompt}"`);
               } else {
-                logger.info(`使用多模态格式传递图片数据和提示词: ${formatImageDataForLog(imageData)}, 提示词="${finalPrompt}"`);
+              logger.info(`使用多模态格式传递图片数据和提示词: ${formatImageDataForLog(imageData)}, 提示词="${finalPrompt}"`);
               }
             } else {
               // 没有参考图片，只使用文本提示词
               apiMessages = [
+                  systemMessage,
                   {
                     role: 'user',
-                  content: finalPrompt // 直接使用原始提示词，不添加前缀
-                }
+                    content: finalPrompt // 直接使用原始提示词，不添加前缀
+                  }
               ];
               logger.info(`使用标准文本格式传递提示词: ${finalPrompt}`);
             }
