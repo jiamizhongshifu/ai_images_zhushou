@@ -9,7 +9,7 @@ import https from 'https';
 import http from 'http';
 import fs from 'fs';
 import { persistImageUrl } from '@/utils/image/persistImage';
-import { uploadImageToStorage, cleanupTemporaryImage } from '@/utils/image/uploadImageToStorage';
+import { uploadImageToStorage, cleanupTemporaryImage, ensureImageUrl } from '@/utils/image/uploadImageToStorage';
 
 // 设置日志级别常量
 const LOG_LEVELS = {
@@ -140,20 +140,25 @@ async function generateImage({
   let imageUrl: string | null = null; // 上传后的图片URL
   let temporaryImageUrl: string | null = null; // 标记临时图片URL，用于后续清理
 
-  // 如果有base64图片，尝试上传到存储服务获取URL
+  // 如果有base64图片，始终上传到存储服务获取URL
   if (base64Image) {
     try {
       // 使用一个通用ID作为用户ID，因为这里不需要特定的用户
       const userId = 'system';
-      logger.info('开始将base64图片上传到存储服务');
-      imageUrl = await uploadImageToStorage(base64Image, userId);
-      temporaryImageUrl = imageUrl; // 标记为临时URL，便于后续清理
-      logger.info(`成功将图片上传到存储服务，获取URL: ${imageUrl}`);
+      logger.info('将用户图片转换为URL格式');
+      // 使用优化后的函数确保图片以URL形式提供
+      imageUrl = await ensureImageUrl(base64Image, userId);
       
-      // 上传成功后，使用URL替代base64
-      base64Image = null; // 清空base64数据，减少内存占用
+      if (imageUrl) {
+        temporaryImageUrl = imageUrl; // 标记为临时URL，便于后续清理
+        logger.info('图片成功转换为URL格式');
+        // 上传成功后，使用URL替代base64
+        base64Image = null; // 清空base64数据，减少内存占用和日志干扰
+      } else {
+        logger.warn('无法将图片转换为URL，将继续使用base64格式');
+      }
     } catch (uploadError) {
-      logger.warn(`上传图片到存储服务失败: ${uploadError instanceof Error ? uploadError.message : String(uploadError)}`);
+      logger.warn(`上传图片失败: ${uploadError instanceof Error ? uploadError.message : String(uploadError)}`);
       logger.info('将继续使用base64方式传递图片');
       // 上传失败继续使用原始base64，确保功能正常
     }
@@ -210,7 +215,7 @@ async function generateImage({
         };
         messageContent = JSON.stringify(promptData);
         logger.info(`使用现有gen_id: ${genId}继续请求进度`);
-      } else if (base64Image || imageUrl) {
+      } else if (imageUrl || base64Image) {
         // 如果有图片但没有genId
         const promptData: any = {
           prompt: formattedPrompt,
@@ -220,20 +225,27 @@ async function generateImage({
           keep_subject: true
         };
         
-        // 添加图片引用 (如果上传成功则使用URL，否则继续使用base64)
+        // 优先使用URL格式，仅在无法获取URL时才使用base64
         if (imageUrl) {
           promptData.image_url = imageUrl;
-          logger.info('使用上传后的图片URL进行请求');
+          logger.info('使用图片URL进行请求');
         } else if (base64Image) {
           promptData.image = base64Image;
           logger.info('使用base64数据进行请求');
+          // 记录base64长度但不记录内容，避免日志污染
+          logger.debug(`base64数据长度: ${base64Image.length}字符`);
         }
         
         // 将对象转为字符串作为消息内容
         messageContent = JSON.stringify(promptData);
       }
       
-      logger.debug(`API请求消息内容: ${messageContent}`);
+      // 避免记录完整消息内容（可能包含大量base64），仅记录非图片数据部分
+      if (messageContent.length > 1000) {
+        logger.debug(`API请求消息内容: ${messageContent.substring(0, 100)}... (已截断)`);
+      } else {
+        logger.debug(`API请求消息内容: ${messageContent}`);
+      }
       
       // 使用聊天完成API接口
       let response;

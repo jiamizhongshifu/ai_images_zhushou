@@ -13,6 +13,7 @@ import { ChatCompletionUserMessageParam, ChatCompletionSystemMessageParam } from
 import crypto from 'crypto';
 import { reportProgress, TaskStages } from '@/utils/updateTaskProgress';
 import sharp from 'sharp';
+import { uploadImageToStorage, ensureImageUrl } from '@/utils/image/uploadImageToStorage';
 
 // 图片大小限制
 const MAX_REQUEST_SIZE_MB = 12; // 12MB
@@ -1312,11 +1313,8 @@ export async function POST(request: NextRequest) {
           logger.info(`图片比例参数: aspectRatio=${aspectRatio}, standardAspectRatio=${standardAspectRatio || '未指定'}`);
         }
 
-        // 构建单条消息内容 - 合并模式
-        let userContent = '';
-        let finalPrompt = '';
-        
         // 构建提示词
+        let finalPrompt = '';
         if (style) {
           const { generatePromptWithStyle } = await import('@/app/config/styles');
           finalPrompt = generatePromptWithStyle(style, prompt || "生成图像");
@@ -1341,16 +1339,55 @@ export async function POST(request: NextRequest) {
 
         // 处理图片数据
         let imageData = null;
+        let inputImageUrl = null; // 改名为inputImageUrl避免与后续的imageUrl冲突
+
         if (image) {
-          if (image.startsWith('data:image/')) {
-            imageData = image;
-          } else {
-            const mimeType = 'image/jpeg';
-            imageData = `data:${mimeType};base64,${image}`;
+          // 首先尝试将图片转换为URL格式
+          try {
+            logger.info('尝试将图片转换为URL格式以优化传输');
+            inputImageUrl = await ensureImageUrl(image, currentUser.id);
+            
+            if (inputImageUrl) {
+              logger.info(`图片成功转换为URL: ${inputImageUrl.substring(0, 60)}...`);
+              // 转换成功后，不再使用base64
+              imageData = null;
+              
+              // 记录到数据库
+              try {
+                await supabaseAdmin
+                  .from('image_tasks')
+                  .update({
+                    input_image_url: inputImageUrl,
+                    updated_at: new Date().toISOString()
+                  })
+                  .eq('task_id', taskId);
+                logger.info('图片URL已记录到数据库');
+              } catch (dbError) {
+                logger.warn(`记录图片URL到数据库失败: ${dbError instanceof Error ? dbError.message : String(dbError)}`);
+              }
+            } else {
+              logger.info('无法将图片转换为URL，将使用base64格式');
+              // 仍然使用原始的base64格式
+              if (image.startsWith('data:image/')) {
+                imageData = image;
+              } else {
+                const mimeType = 'image/jpeg';
+                imageData = `data:${mimeType};base64,${image}`;
+              }
+            }
+          } catch (uploadError) {
+            logger.warn(`图片URL转换失败: ${uploadError instanceof Error ? uploadError.message : String(uploadError)}`);
+            // 转换失败，使用原始base64
+            if (image.startsWith('data:image/')) {
+              imageData = image;
+            } else {
+              const mimeType = 'image/jpeg';
+              imageData = `data:${mimeType};base64,${image}`;
+            }
           }
           
           // 验证图片数据
-          if (!imageData || imageData.length < 100) {
+          if (!inputImageUrl && (!imageData || imageData.length < 100)) {
             throw new Error('图片数据无效');
           }
         }
@@ -1567,12 +1604,6 @@ export async function POST(request: NextRequest) {
             
             logger.info(`构建兔子API请求参数: ${JSON.stringify(requestPayload)}`);
             
-            // 如果有参考图片但没有gen_id，需要在提示词中说明
-            if (image && !additionalData.gen_id) {
-              // 移除不必要的前缀，直接使用原始提示词
-              logger.info(`使用原始提示词: ${finalPrompt}`);
-            }
-            
             // 当使用参考图片时，需要特殊处理消息内容
             let apiMessages: {role: 'user' | 'system' | 'assistant'; content: any}[] = [];
 
@@ -1586,7 +1617,7 @@ export async function POST(request: NextRequest) {
                 }
               ];
               logger.info(`使用JSON格式传递参考图片gen_id: ${jsonContent}`);
-            } else if (image && imageData) {
+            } else if ((inputImageUrl || imageData)) {
               // 用户上传了图片但没有gen_id，使用数组格式传递图片数据
               apiMessages = [
                 {
@@ -1599,13 +1630,18 @@ export async function POST(request: NextRequest) {
                     {
                       type: 'image_url',
                       image_url: {
-                        url: imageData
+                        url: inputImageUrl || imageData // 优先使用URL格式
                       }
                     }
                   ]
                 }
               ];
-              logger.info(`使用多模态格式传递图片数据和提示词: ${formatImageDataForLog(imageData)}, 提示词="${finalPrompt}"`);
+              // 根据使用的格式记录不同的日志
+              if (inputImageUrl) {
+                logger.info(`使用多模态格式传递图片URL和提示词: URL=${inputImageUrl.substring(0, 60)}..., 提示词="${finalPrompt}"`);
+              } else {
+                logger.info(`使用多模态格式传递图片数据和提示词: ${formatImageDataForLog(imageData)}, 提示词="${finalPrompt}"`);
+              }
             } else {
               // 没有参考图片，只使用文本提示词
               apiMessages = [
@@ -1644,8 +1680,9 @@ export async function POST(request: NextRequest) {
 - 比例: "${ratio}"
 - 流式响应: true
 ${additionalData.gen_id ? `- 参考图片ID: ${additionalData.gen_id}` : ''}
-${image ? `- 上传图片信息: ${formatImageDataForLog(image)}` : ''}
-- 消息格式: ${additionalData.gen_id ? 'JSON' : (image ? '多模态' : '文本')}
+${inputImageUrl ? `- 上传图片URL: ${inputImageUrl.substring(0, 60)}...` : ''}
+${image && !inputImageUrl ? `- 上传图片信息: ${formatImageDataForLog(image)}` : ''}
+- 消息格式: ${additionalData.gen_id ? 'JSON' : ((inputImageUrl || imageData) ? '多模态' : '文本')}
             `);
             
             // 创建响应分析对象用于跟踪处理进度和结果
@@ -1674,7 +1711,7 @@ ${image ? `- 上传图片信息: ${formatImageDataForLog(image)}` : ''}
             reportProgress(taskId, 20, TaskStages.PROCESSING);
             
             // 处理流式响应
-            let imageUrl: string | null = null;
+            let resultImageUrl: string | null = null; // 重命名为resultImageUrl，避免与之前的imageUrl冲突
             
             // 详细记录响应对象信息以便调试
             logger.debug(`响应对象类型: ${typeof response}, 属性: ${Object.keys(response).join(', ')}`);
@@ -1714,8 +1751,8 @@ ${image ? `- 上传图片信息: ${formatImageDataForLog(image)}` : ''}
                       // 尝试从响应片段中提取图片URL (Markdown格式)
                       const markdownImageMatch = responseAnalysis.fullContent.match(/!\[.*?\]\((https:\/\/.*?)\)/);
                       if (markdownImageMatch && markdownImageMatch[1]) {
-                        imageUrl = markdownImageMatch[1].trim();
-                        logger.info(`从Markdown格式中提取到图片URL: ${imageUrl}`);
+                        resultImageUrl = markdownImageMatch[1].trim();
+                        logger.info(`从Markdown格式中提取到图片URL: ${resultImageUrl}`);
                         break; // 找到URL后退出循环
                       }
                       
@@ -1738,26 +1775,26 @@ ${image ? `- 上传图片信息: ${formatImageDataForLog(image)}` : ''}
                 logger.info('流式响应处理完成');
                 
                 // 如果流式处理中没有找到URL，尝试从完整内容中提取
-                if (!imageUrl && responseAnalysis.fullContent) {
+                if (!resultImageUrl && responseAnalysis.fullContent) {
                   // 先尝试Markdown格式
                   const markdownImageMatch = responseAnalysis.fullContent.match(/!\[.*?\]\((https:\/\/.*?)\)/);
                   if (markdownImageMatch && markdownImageMatch[1]) {
-                    imageUrl = markdownImageMatch[1].trim();
-                    logger.info(`从完整内容的Markdown格式中提取到图片URL: ${imageUrl}`);
+                    resultImageUrl = markdownImageMatch[1].trim();
+                    logger.info(`从完整内容的Markdown格式中提取到图片URL: ${resultImageUrl}`);
                   } else {
                     logger.warn(`未从Markdown格式中找到图片URL，尝试其他提取方法`);
                     
                     // 尝试提取任何URL
                     const urlMatch = responseAnalysis.fullContent.match(/https?:\/\/[^\s")]+/);
                     if (urlMatch && urlMatch[0]) {
-                      imageUrl = urlMatch[0].trim();
-                      logger.info(`从完整内容中提取到URL: ${imageUrl}`);
+                      resultImageUrl = urlMatch[0].trim();
+                      logger.info(`从完整内容中提取到URL: ${resultImageUrl}`);
                     } else {
                       // 最后使用通用方法
                       const extractedUrl = extractImageUrl(responseAnalysis.fullContent);
                       if (extractedUrl) {
-                        imageUrl = extractedUrl;
-                        logger.info(`使用通用方法从完整内容中提取到URL: ${imageUrl}`);
+                        resultImageUrl = extractedUrl;
+                        logger.info(`使用通用方法从完整内容中提取到URL: ${resultImageUrl}`);
                       } else {
                         logger.error(`所有提取方法均未找到有效的图片URL`);
                       }
@@ -1780,13 +1817,13 @@ ${image ? `- 上传图片信息: ${formatImageDataForLog(image)}` : ''}
                   // 从文本响应中提取URL
                   const markdownImageMatch = responseText.match(/!\[.*?\]\((https:\/\/.*?)\)/);
                   if (markdownImageMatch && markdownImageMatch[1]) {
-                    imageUrl = markdownImageMatch[1].trim();
-                    logger.info(`从文本响应中提取到Markdown格式图片URL: ${imageUrl}`);
+                    resultImageUrl = markdownImageMatch[1].trim();
+                    logger.info(`从文本响应中提取到Markdown格式图片URL: ${resultImageUrl}`);
                   } else {
                     const urlMatch = responseText.match(/https?:\/\/[^\s")]+/);
                     if (urlMatch && urlMatch[0]) {
-                      imageUrl = urlMatch[0].trim();
-                      logger.info(`从文本响应中提取到普通URL: ${imageUrl}`);
+                      resultImageUrl = urlMatch[0].trim();
+                      logger.info(`从文本响应中提取到普通URL: ${resultImageUrl}`);
                     }
                   }
                 }
@@ -1796,27 +1833,27 @@ ${image ? `- 上传图片信息: ${formatImageDataForLog(image)}` : ''}
             }
             
             // 清理提取的URL
-                  if (imageUrl) {
+                  if (resultImageUrl) {
               // 移除URL中可能的引号或多余字符
-              imageUrl = imageUrl.replace(/["']/g, '');
+              resultImageUrl = resultImageUrl.replace(/["']/g, '');
               
               // 处理URL中可能的转义字符
-              if (imageUrl.includes('\\')) {
-                imageUrl = imageUrl.replace(/\\/g, '');
+              if (resultImageUrl.includes('\\')) {
+                resultImageUrl = resultImageUrl.replace(/\\/g, '');
                 logger.info(`清理URL中的转义字符`);
               }
               
               // 去除尾部的括号或标点
-              imageUrl = imageUrl.replace(/[).,;}]+$/, '');
+              resultImageUrl = resultImageUrl.replace(/[).,;}]+$/, '');
               
-              logger.info(`清理后的最终URL: ${imageUrl}`);
+              logger.info(`清理后的最终URL: ${resultImageUrl}`);
             } else {
               logger.error(`未能提取到任何URL，原内容: ${responseAnalysis.fullContent.substring(0, 200)}`);
               }
               
               // 如果找到有效的图像URL，更新任务状态并返回
-              if (imageUrl && isValidImageUrl(imageUrl)) {
-                logger.info(`成功提取有效的图片URL: ${imageUrl}`);
+              if (resultImageUrl && isValidImageUrl(resultImageUrl)) {
+                logger.info(`成功提取有效的图片URL: ${resultImageUrl}`);
                 
                 // 更新任务状态为成功
                 try {
@@ -1825,7 +1862,7 @@ ${image ? `- 上传图片信息: ${formatImageDataForLog(image)}` : ''}
                     .update({
                       status: 'completed',
                       provider: 'tuzi',
-                      image_url: imageUrl,
+                      image_url: resultImageUrl,
                       updated_at: new Date().toISOString()
                     })
                     .eq('task_id', taskId);
@@ -1841,14 +1878,14 @@ ${image ? `- 上传图片信息: ${formatImageDataForLog(image)}` : ''}
                 }
                 
                 // 记录生成历史
-              await saveGenerationHistory(createAdminClient(), currentUser.id, imageUrl, currentFinalPrompt, originalParams.style, currentAspectRatio, currentStandardAspectRatio)
+              await saveGenerationHistory(createAdminClient(), currentUser.id, resultImageUrl, currentFinalPrompt, originalParams.style, currentAspectRatio, currentStandardAspectRatio)
                   .catch(historyError => 
                     logger.error(`记录生成历史失败: ${historyError instanceof Error ? historyError.message : String(historyError)}`)
                   );
                 
                 // 记录图像结果与原始参数的对比
                 logger.info(`图像生成结果分析:
-- 生成的图片URL: ${imageUrl.substring(0, 50)}...
+- 生成的图片URL: ${resultImageUrl.substring(0, 50)}...
 - 比例参数: aspectRatio=${currentAspectRatio || '未指定'}, standardAspectRatio=${currentStandardAspectRatio || '未指定'}
 - 目标尺寸: ${currentSize}
 - 使用风格: ${originalParams.style || '未指定'}
@@ -1858,7 +1895,7 @@ ${image ? `- 上传图片信息: ${formatImageDataForLog(image)}` : ''}
                 
                 // 发送任务完成通知
               try {
-                await notifyTaskUpdate(taskId, 'completed', imageUrl)
+                await notifyTaskUpdate(taskId, 'completed', resultImageUrl)
                   .catch(async (notifyError) => {
                     logger.error(`发送任务完成通知失败: ${notifyError instanceof Error ? notifyError.message : String(notifyError)}`);
                     
@@ -1880,7 +1917,7 @@ ${image ? `- 上传图片信息: ${formatImageDataForLog(image)}` : ''}
                         body: JSON.stringify({
                           taskId,
                           status: 'completed',
-                          imageUrl,
+                          imageUrl: resultImageUrl,
                           timestamp: Date.now()
                         })
                       });
@@ -1905,7 +1942,7 @@ ${image ? `- 上传图片信息: ${formatImageDataForLog(image)}` : ''}
                 return NextResponse.json({ 
                   taskId, 
                   status: 'success',
-                  imageUrl: imageUrl,
+                  imageUrl: resultImageUrl,
                   prompt: currentFinalPrompt,
                   style: originalParams.style || null,
                   model: process.env.OPENAI_MODEL || 'gpt-4o-image-vip',

@@ -363,4 +363,55 @@ export async function cleanupTemporaryImage(imageUrl: string): Promise<boolean> 
     logger.error(`清理图片时出错: ${error instanceof Error ? error.message : String(error)}`);
     return false;
   }
+}
+
+/**
+ * 确保图片以URL形式提供而非base64
+ * @param imageInput - 图片输入（可能是base64或URL）
+ * @param userId - 用户ID
+ * @param bucketType - 存储桶类型，默认为临时存储
+ * @returns Promise<string> - 返回图片URL
+ */
+export async function ensureImageUrl(
+  imageInput: string | null | undefined,
+  userId: string,
+  bucketType: BucketType = BucketType.TEMP
+): Promise<string | null> {
+  try {
+    // 检查输入是否有效
+    if (!imageInput) {
+      logger.debug('没有提供图片输入');
+      return null;
+    }
+
+    // 如果已经是URL，直接返回
+    if (imageInput.startsWith('http://') || imageInput.startsWith('https://')) {
+      logger.debug('图片输入已经是URL格式，无需上传');
+      return imageInput;
+    }
+
+    // 如果是base64，上传并返回URL
+    if (imageInput.startsWith('data:image/')) {
+      logger.info('检测到base64图片，将上传转换为URL');
+      // 使用安全的日志记录方式
+      logger.debug(`图片数据: ${createSafeSummary(imageInput)}`);
+      
+      return await uploadImageToStorage(imageInput, userId, bucketType);
+    }
+
+    // 如果是纯base64（没有前缀），添加前缀后上传
+    if (/^[A-Za-z0-9+/=]+$/.test(imageInput.substring(0, 100))) {
+      logger.info('检测到纯base64图片（无前缀），添加前缀后上传');
+      // 尝试添加合适的前缀
+      const imageWithPrefix = `data:image/png;base64,${imageInput}`;
+      return await uploadImageToStorage(imageWithPrefix, userId, bucketType);
+    }
+
+    // 无法识别的格式
+    logger.warn(`无法识别的图片输入格式: ${typeof imageInput}, 前20字符: ${imageInput.substring(0, 20)}...`);
+    return null;
+  } catch (error) {
+    logger.error(`处理图片输入失败: ${error instanceof Error ? error.message : String(error)}`);
+    return null;
+  }
 } 
