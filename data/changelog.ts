@@ -44,6 +44,17 @@ export const changelogData: ChangelogEntry[] = [
   },
   {
     id: "3",
+    version: "v1.2.0",
+    date: "2025-04-25",
+    title: "功能新增",
+    description: "此版本增加了多项用户体验优化和新功能",
+    changes: [
+      { type: "new", content: "创意广场" },
+    ],
+    isPublished: true
+  },
+  {
+    id: "4",
     version: "即将推出",
     date: "",
     title: "功能规划",
@@ -51,7 +62,6 @@ export const changelogData: ChangelogEntry[] = [
     changes: [
       { type: "upcoming", content: "更多实用图像处理工具" },
       { type: "upcoming", content: "批量生成功能" },
-      { type: "upcoming", content: "创意广场" },
       { type: "upcoming", content: "多语言支持" }
     ],
     isPublished: true
