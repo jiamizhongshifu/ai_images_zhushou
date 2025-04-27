@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { v4 as uuidv4 } from 'uuid';
 import { templateStore } from './supabase-store';
-import { Template } from './types';
+import type { Template } from '@/app/api/templates/types';
 
 /**
  * 获取模板列表
@@ -16,7 +16,7 @@ export async function GET(request: NextRequest) {
       const templates = await templateStore.getTemplates();
       // 从所有模板中提取标签并去重
       const tags = Array.from(new Set(
-        templates.flatMap((template: Template) => template.tags || [])
+        templates.flatMap(template => template.tags || [])
       )).filter(Boolean);
       
       return NextResponse.json({
