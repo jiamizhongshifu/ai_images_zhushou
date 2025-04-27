@@ -39,9 +39,35 @@ export default function CreativePlazaPage() {
     limit: 12,
     pages: 0,
   });
-  const [availableTags, setAvailableTags] = useState<string[]>([
-    "人像", "动漫", "风景", "艺术", "宠物", "卡通", "吉卜力", "新海诚", "迪士尼"
-  ]);
+  const [availableTags, setAvailableTags] = useState<string[]>([]);
+
+  // 获取所有标签
+  const fetchTags = async () => {
+    try {
+      const response = await fetch('/api/templates?tags=true');
+      
+      if (!response.ok) {
+        throw new Error('获取标签列表失败');
+      }
+      
+      const data = await response.json();
+      
+      if (data.success) {
+        setAvailableTags(data.data);
+      } else {
+        throw new Error(data.error || '获取标签列表失败');
+      }
+    } catch (err) {
+      console.error('获取标签列表错误:', err);
+      // 不显示错误给用户，使用空数组作为后备
+      setAvailableTags([]);
+    }
+  };
+
+  // 初始加载时获取标签
+  useEffect(() => {
+    fetchTags();
+  }, []);
 
   // 获取模板列表
   const fetchTemplates = async () => {

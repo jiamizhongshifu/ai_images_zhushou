@@ -96,11 +96,16 @@ export async function PUT(
 ) {
   try {
     const { id: templateId } = context.params;
-    console.log(`替换模板，ID: ${templateId}`);
+    console.log(`更新模板，ID: ${templateId}`);
     
-    const template = await templateStore.getTemplate(templateId);
+    // 获取更新数据
+    const updateData = await request.json();
+    console.log('更新数据:', updateData);
     
-    if (!template) {
+    // 更新模板
+    const updatedTemplate = await templateStore.updateTemplate(templateId, updateData);
+    
+    if (!updatedTemplate) {
       return NextResponse.json(
         {
           success: false,
@@ -110,21 +115,16 @@ export async function PUT(
       );
     }
     
-    const updatedTemplate = await templateStore.updateTemplate(templateId, {
-      use_count: (template.use_count || 0) + 1,
-      updated_at: new Date().toISOString()
-    });
-    
     return NextResponse.json({
       success: true,
       data: updatedTemplate
     });
   } catch (error) {
-    console.error('更新模板使用次数失败:', error);
+    console.error('更新模板失败:', error);
     return NextResponse.json(
       {
         success: false,
-        error: "更新模板使用次数失败"
+        error: "更新模板失败"
       },
       { status: 500 }
     );

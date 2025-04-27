@@ -218,6 +218,41 @@ export default function EditTemplatePage() {
     }));
   };
   
+  // 处理删除
+  const handleDelete = async () => {
+    if (!confirm("确定要删除此模板吗？此操作不可撤销。")) {
+      return;
+    }
+    
+    try {
+      setIsSaving(true);
+      setError(null);
+      
+      const response = await fetch(`/api/templates/${templateId}`, {
+        method: "DELETE"
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => null);
+        throw new Error(errorData?.error || `删除失败 (HTTP ${response.status})`);
+      }
+      
+      const data = await response.json();
+      
+      if (!data.success) {
+        throw new Error(data.error || "删除模板失败");
+      }
+      
+      toast.success("模板已成功删除");
+      router.push("/admin/templates");
+    } catch (err) {
+      console.error("删除模板失败:", err);
+      setError(err instanceof Error ? err.message : "删除模板失败");
+    } finally {
+      setIsSaving(false);
+    }
+  };
+  
   // 提交表单
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -240,14 +275,9 @@ export default function EditTemplatePage() {
       return;
     }
     
-    // 修改图片验证逻辑
-    if (!imageFile && !previewUrl) {
+    // 修改图片验证逻辑：如果是编辑模式且已有预览图，则不需要新上传
+    if (!isNewTemplate && !imageFile && !previewUrl && !template.preview_image) {
       setError("请上传预览图片");
-      return;
-    }
-    
-    if (template.requires_image && !template.prompt_required) {
-      setError("当需要上传图片时，不能禁用提示词输入");
       return;
     }
     
@@ -259,7 +289,7 @@ export default function EditTemplatePage() {
       const templateData = {
         ...template,
         // 如果是新建或有新上传的图片，先不发送图片数据
-        preview_image: ''
+        preview_image: imageFile ? '' : (previewUrl || template.preview_image)
       };
       
       // 调用API创建或更新模板
@@ -308,7 +338,6 @@ export default function EditTemplatePage() {
         // 确保使用保存后的模板ID，并等待一段时间确保模板已创建
         if (isNewTemplate) {
           console.log('等待模板创建完成...');
-          // 增加等待时间到3秒
           await new Promise(resolve => setTimeout(resolve, 3000));
         }
         
@@ -319,25 +348,6 @@ export default function EditTemplatePage() {
         
         while (retryCount < maxRetries) {
           try {
-            // 先验证模板是否存在
-            const checkResponse = await fetch(`/api/templates/${savedTemplateId}`);
-            if (!checkResponse.ok) {
-              console.log(`第${retryCount + 1}次检查：模板尚未就绪`);
-              await new Promise(resolve => setTimeout(resolve, retryDelay));
-              retryCount++;
-              continue;
-            }
-            
-            const checkData = await checkResponse.json();
-            if (!checkData.success) {
-              console.log(`第${retryCount + 1}次检查：模板数据无效`);
-              await new Promise(resolve => setTimeout(resolve, retryDelay));
-              retryCount++;
-              continue;
-            }
-            
-            console.log('模板验证成功，开始上传图片');
-            
             const uploadResponse = await fetch(`/api/templates/${savedTemplateId}/upload-preview`, {
               method: 'POST',
               body: formData
@@ -345,25 +355,13 @@ export default function EditTemplatePage() {
             
             if (!uploadResponse.ok) {
               const errorData = await uploadResponse.json().catch(() => null);
-              console.error('上传失败:', {
-                status: uploadResponse.status,
-                statusText: uploadResponse.statusText,
-                error: errorData
-              });
-              
-              if (uploadResponse.status === 404 && retryCount < maxRetries - 1) {
-                console.log(`第${retryCount + 1}次尝试上传失败，等待后重试...`);
-                await new Promise(resolve => setTimeout(resolve, retryDelay));
-                retryCount++;
-                continue;
-              }
-              
-              throw new Error(errorData?.error || '上传预览图片失败');
+              throw new Error(errorData?.error || `上传失败 (HTTP ${uploadResponse.status})`);
             }
             
             const uploadData = await uploadResponse.json();
+            
             if (!uploadData.success) {
-              throw new Error(uploadData.error || '上传预览图片失败');
+              throw new Error(uploadData.error || "上传预览图片失败");
             }
             
             console.log('图片上传成功');
@@ -387,6 +385,8 @@ export default function EditTemplatePage() {
         router.push(`/admin/templates?t=${Date.now()}`);
       } else {
         toast.success(`模板保存成功! ID: ${savedTemplateId}`);
+        // 刷新页面以显示最新数据
+        fetchTemplateData();
       }
       
     } catch (err) {
@@ -729,15 +729,20 @@ export default function EditTemplatePage() {
                       </Button>
                       <Button
                         variant="destructive"
-                        onClick={() => {
-                          if (confirm("确定要删除此模板吗？此操作不可撤销。")) {
-                            // 删除模板逻辑
-                            alert("删除模板：" + templateId);
-                            router.push("/admin/templates");
-                          }
-                        }}
+                        onClick={handleDelete}
+                        disabled={isSaving}
                       >
-                        <Trash className="h-4 w-4" />
+                        {isSaving ? (
+                          <span className="flex items-center gap-2">
+                            <div className="h-4 w-4 border-2 border-current border-t-transparent animate-spin rounded-full"></div>
+                            删除中...
+                          </span>
+                        ) : (
+                          <span className="flex items-center gap-2">
+                            <Trash className="h-4 w-4" />
+                            删除模板
+                          </span>
+                        )}
                       </Button>
                     </div>
                   )}

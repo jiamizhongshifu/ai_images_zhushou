@@ -1,13 +1,30 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { v4 as uuidv4 } from 'uuid';
 import { templateStore } from './supabase-store';
-import { Template } from './store';
+import { Template } from './types';
 
 /**
  * 获取模板列表
  */
 export async function GET(request: NextRequest) {
   try {
+    const url = new URL(request.url);
+    const getTags = url.searchParams.get('tags') === 'true';
+    
+    // 如果是获取标签列表的请求
+    if (getTags) {
+      const templates = await templateStore.getTemplates();
+      // 从所有模板中提取标签并去重
+      const tags = Array.from(new Set(
+        templates.flatMap((template: Template) => template.tags || [])
+      )).filter(Boolean);
+      
+      return NextResponse.json({
+        success: true,
+        data: tags
+      });
+    }
+    
     const searchParams = request.nextUrl.searchParams;
     
     // 解析查询参数
@@ -59,10 +76,10 @@ export async function GET(request: NextRequest) {
       }
     });
   } catch (error) {
-    console.error('获取模板列表失败:', error);
+    console.error('API错误:', error);
     return NextResponse.json({
       success: false,
-      error: '获取模板列表失败'
+      error: error instanceof Error ? error.message : '操作失败'
     }, { status: 500 });
   }
 }

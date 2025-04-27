@@ -131,7 +131,9 @@ export default function TemplateDetailPage() {
 
       // 合并模板基础提示词和用户输入
       const finalPrompt = template?.base_prompt
-        ? `${template.base_prompt}${prompt.trim() ? "，" + prompt.trim() : ""}`
+        ? template.prompt_required && prompt.trim()
+          ? `${template.base_prompt}，${prompt.trim()}`
+          : template.base_prompt
         : prompt.trim();
 
       // 构建生成参数
