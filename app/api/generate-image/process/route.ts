@@ -74,7 +74,7 @@ function createTuziClient() {
   
   // 优先使用环境变量中的配置
   const apiKey = apiConfig.apiKey || process.env.OPENAI_API_KEY;
-  const baseURL = apiConfig.apiUrl || process.env.OPENAI_BASE_URL || "https://api.tu-zi.com/v1/chat/completions";
+  const baseURL = (apiConfig.apiUrl || process.env.OPENAI_BASE_URL || "https://api.tu-zi.com/v1").replace(/\/chat\/completions\/?$/, '').replace(/\/+$/, '');
   
   logger.info(`创建图资API客户端，使用BASE URL: ${baseURL}，模型: ${process.env.OPENAI_MODEL || 'gpt-4o-image-vip'}`);
   

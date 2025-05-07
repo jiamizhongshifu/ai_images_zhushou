@@ -90,7 +90,7 @@ export function getApiConfig(type: 'security' | 'tuzi' | 'all' = 'security'): Se
   // TUZI API配置
   const tuziConfig: TuziConfig = {
     apiKey: getEnv('OPENAI_API_KEY'),
-    apiUrl: getEnv('OPENAI_BASE_URL') || 'https://api.tu-zi.com/v1/chat/completions',
+    apiUrl: getEnv('OPENAI_BASE_URL') || 'https://api.tu-zi.com/v1',
     model: getEnv('OPENAI_MODEL') || getEnv('OPENAI_MODEL', 'gpt-4o-image-vip'),
     isConfigComplete: !!getEnv('OPENAI_API_KEY') && !!getEnv('OPENAI_BASE_URL')
   };
