@@ -130,8 +130,8 @@ function createTuziClient() {
   
   // 优先使用环境变量中的配置
   const apiKey = apiConfig.apiKey || process.env.OPENAI_API_KEY;
-  // 修正API基础URL，确保使用正确的端点
-  const baseURL = (apiConfig.apiUrl || process.env.OPENAI_BASE_URL || "https://api.tu-zi.com/v1").replace(/\/+$/, '');
+  // 修正API基础URL，直接指向chat/completions端点
+  const baseURL = (apiConfig.apiUrl || process.env.OPENAI_BASE_URL || "https://api.tu-zi.com/v1/chat/completions").replace(/\/+$/, '');
   
   // 使用环境变量中的模型
   const imageModel = process.env.OPENAI_MODEL || "gpt-4o-image-vip"; 
