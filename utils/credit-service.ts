@@ -110,6 +110,28 @@ if (typeof window !== 'undefined') {
   }
 }
 
+// 添加安全的存储访问函数
+const safeStorage = {
+  getItem(key: string): string | null {
+    try {
+      return typeof window !== 'undefined' ? localStorage.getItem(key) : null;
+    } catch (e) {
+      console.warn('[SafeStorage] 无法访问localStorage:', e);
+      return null;
+    }
+  },
+  
+  setItem(key: string, value: string): void {
+    try {
+      if (typeof window !== 'undefined') {
+        localStorage.setItem(key, value);
+      }
+    } catch (e) {
+      console.warn('[SafeStorage] 无法写入localStorage:', e);
+    }
+  }
+};
+
 // 用户点数服务类
 class CreditService {
   private static instance: CreditService;
@@ -209,10 +231,10 @@ class CreditService {
         return;
       }
       
-      // 如果API缓存失败，尝试从本地存储获取
-      try {
-        const localData = localStorage.getItem('user_credits');
-        if (localData) {
+      // 如果API缓存失败，尝试从安全存储获取
+      const localData = safeStorage.getItem('user_credits');
+      if (localData) {
+        try {
           const parsedData = JSON.parse(localData);
           if (parsedData && parsedData.credits !== undefined) {
             this.setCreditState({
@@ -228,9 +250,9 @@ class CreditService {
               timestamp: Date.now()
             };
           }
+        } catch (e) {
+          console.warn('[CreditService] 解析本地存储数据失败:', e);
         }
-      } catch (e) {
-        console.warn('[CreditService] 从本地存储同步点数失败:', e);
       }
     } catch (error) {
       console.error('[CreditService] 从缓存同步点数失败:', error);
@@ -415,7 +437,7 @@ class CreditService {
             
             // 尝试安全地更新localStorage，即使在受限环境也不会抛出错误
             try {
-              localStorage.setItem('user_credits', JSON.stringify({
+              safeStorage.setItem('user_credits', JSON.stringify({
                 credits: data.credits,
                 timestamp: Date.now()
               }));
@@ -566,10 +588,10 @@ class CreditService {
       return this._memoryCache.credits;
     }
     
-    // 尝试从localStorage获取，但忽略错误
-    try {
-      const cachedData = localStorage.getItem('user_credits');
-      if (cachedData) {
+    // 尝试从安全存储获取
+    const cachedData = safeStorage.getItem('user_credits');
+    if (cachedData) {
+      try {
         const parsedData = JSON.parse(cachedData);
         if (parsedData && parsedData.credits !== undefined) {
           const { credits, timestamp } = parsedData;
@@ -577,9 +599,9 @@ class CreditService {
             return credits;
           }
         }
+      } catch (e) {
+        console.warn('[CreditService] 解析缓存数据失败:', e);
       }
-    } catch (e) {
-      console.warn('[CreditService] 无法访问本地存储:', e);
     }
     
     return null;

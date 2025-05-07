@@ -130,7 +130,8 @@ function createTuziClient() {
   
   // 优先使用环境变量中的配置
   const apiKey = apiConfig.apiKey || process.env.OPENAI_API_KEY;
-  const baseURL = apiConfig.apiUrl || process.env.OPENAI_BASE_URL || "https://api.tu-zi.com/v1";
+  // 修正API基础URL，确保使用正确的端点
+  const baseURL = (apiConfig.apiUrl || process.env.OPENAI_BASE_URL || "https://api.tu-zi.com/v1").replace(/\/+$/, '');
   
   // 使用环境变量中的模型
   const imageModel = process.env.OPENAI_MODEL || "gpt-4o-image-vip"; 
@@ -148,8 +149,8 @@ function createTuziClient() {
   const apiTimeout = API_TIMEOUT;
   logger.debug(`API超时设置: ${apiTimeout}ms (${apiTimeout/1000}秒)`);
   
-  // 设置API最大重试次数 - 默认2次
-  const maxRetries = 0; // 修改为0，表示不进行重试
+  // 设置API最大重试次数
+  const maxRetries = 2; // 设置固定的重试次数
   logger.debug(`API最大重试次数: ${maxRetries}次`);
   
   // 返回配置的客户端以及模型配置
@@ -158,7 +159,13 @@ function createTuziClient() {
       apiKey: apiKey,
       baseURL: baseURL,
       timeout: apiTimeout,
-      maxRetries: maxRetries
+      maxRetries: maxRetries,
+      defaultHeaders: {
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+        'Accept': 'application/json',
+        'Content-Type': 'application/json',
+        'Connection': 'keep-alive'
+      }
     }),
     imageModel: imageModel
   };
@@ -1553,8 +1560,6 @@ export async function POST(request: NextRequest) {
                   reject(new Error(`API请求超时，超过${API_TIMEOUT/1000}秒未响应`));
                 }, API_TIMEOUT);
               });
-              
-              logger.info(`设置API请求超时: ${API_TIMEOUT/1000}秒`);
               
             // 定义附加数据，可能包含参考图片ID
             const additionalData = {
