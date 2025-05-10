@@ -1847,65 +1847,88 @@ ${image && !inputImageUrl ? `- 上传图片信息: ${formatImageDataForLog(image
               continue;
             }
             
-            throw attemptError;
+            // 如果所有重试都失败，抛出最后一个错误
+            throw new Error(`图像生成失败: 多次尝试后仍未能成功生成图像 - ${errorMsg}`);
           }
+        }
+        
+        // 如果所有尝试都失败，抛出最后一个错误
+        if (lastError) {
+          throw lastError;
+        }
+        throw new Error('图像生成失败: 多次尝试后仍未能成功生成图像');
+      } catch (finalError) {
+        console.error(`图像生成全局错误:`, finalError);
+        return NextResponse.json(
+          { 
+            status: 'failed',
+            error: '系统错误',
+            details: '图像生成服务临时不可用，请稍后重试'
+          },
+          { status: 500 }
+        );
+      } finally {
+        // 清理超时检查器
+        if (timeoutChecker) {
+          clearInterval(timeoutChecker);
+        }
+        
+        // 记录总处理时间
+        const totalTime = Date.now() - requestStartTime;
+        logger.info(`API请求总处理时间: ${totalTime}ms (${totalTime/1000}秒)`);
+      }
+    } catch (error) {
+      console.error(`处理图像生成请求失败:`, error);
+      
+      // 判断错误类型，提供更友好的错误信息
+      let status = 500;
+      let errorMessage = '创建图像任务失败';
+      let suggestion = '请稍后重试';
+      
+      if (error instanceof Error) {
+        if (error.message.includes('JSON')) {
+          status = 400;
+          errorMessage = '无效的请求格式';
+          suggestion = '请确保发送的是有效的JSON数据';
+        } else if (error.message.includes('点数')) {
+          status = 402;
+          errorMessage = error.message;
+          suggestion = '请充值点数或联系客服';
+        } else if (error.message.includes('大小') || error.message.includes('尺寸')) {
+          status = 413;
+          errorMessage = error.message;
+          suggestion = '请减小图片尺寸或降低质量后重试';
         }
       }
       
-      // 如果所有尝试都失败
-      throw lastError || new Error('图像生成失败: 多次尝试后仍未能成功生成图像');
-    } catch (finalError) {
-      console.error(`图像生成全局错误:`, finalError);
       return NextResponse.json(
         { 
-        status: 'failed',
-          error: '系统错误',
-          details: '图像生成服务临时不可用，请稍后重试'
+          status: 'failed',
+          error: errorMessage, 
+          suggestion,
+          details: error instanceof Error ? error.message : String(error) 
         },
-        { status: 500 }
+        { status }
       );
-    } finally {
-      // 清理超时检查器
-      if (timeoutChecker) {
-        clearInterval(timeoutChecker);
-      }
-      
-      // 记录总处理时间
-      const totalTime = Date.now() - requestStartTime;
-      logger.info(`API请求总处理时间: ${totalTime}ms (${totalTime/1000}秒)`);
     }
-  } catch (error) {
-    console.error(`处理图像生成请求失败:`, error);
-    
-    // 判断错误类型，提供更友好的错误信息
-    let status = 500;
-    let errorMessage = '创建图像任务失败';
-    let suggestion = '请稍后重试';
-    
-    if (error instanceof Error) {
-      if (error.message.includes('JSON')) {
-        status = 400;
-        errorMessage = '无效的请求格式';
-        suggestion = '请确保发送的是有效的JSON数据';
-      } else if (error.message.includes('点数')) {
-        status = 402;
-        errorMessage = error.message;
-        suggestion = '请充值点数或联系客服';
-      } else if (error.message.includes('大小') || error.message.includes('尺寸')) {
-        status = 413;
-        errorMessage = error.message;
-        suggestion = '请减小图片尺寸或降低质量后重试';
-      }
-    }
-    
+  } catch (finalError) {
+    console.error(`图像生成全局错误:`, finalError);
     return NextResponse.json(
       { 
         status: 'failed',
-        error: errorMessage, 
-        suggestion,
-        details: error instanceof Error ? error.message : String(error) 
+        error: '系统错误',
+        details: '图像生成服务临时不可用，请稍后重试'
       },
-      { status }
+      { status: 500 }
     );
+  } finally {
+    // 清理超时检查器
+    if (timeoutChecker) {
+      clearInterval(timeoutChecker);
+    }
+    
+    // 记录总处理时间
+    const totalTime = Date.now() - requestStartTime;
+    logger.info(`API请求总处理时间: ${totalTime}ms (${totalTime/1000}秒)`);
   }
 } 
