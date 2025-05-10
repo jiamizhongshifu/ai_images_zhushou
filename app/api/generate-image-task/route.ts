@@ -1066,6 +1066,19 @@ async function handleRetry(
   return retryFn();
 }
 
+// 添加getStandardSize函数
+function getStandardSize(ratio: string): "1024x1024" | "1792x1024" | "1024x1792" {
+  const [width, height] = ratio.split(':').map(Number);
+  const aspectRatio = width / height;
+  
+  if (aspectRatio > 1.3) {
+    return "1792x1024"; // 横向
+  } else if (aspectRatio < 0.7) {
+    return "1024x1792"; // 竖向
+  }
+  return "1024x1024"; // 正方形
+}
+
 // 主API处理函数，优化为监控执行时间和支持降级策略
 export async function POST(request: NextRequest) {
   const requestStartTime = Date.now();
@@ -1667,36 +1680,34 @@ export async function POST(request: NextRequest) {
               logger.info(`使用标准文本格式传递提示词: ${finalPrompt}`);
             }
             
-            // 创建API请求选项
+            // 修改为使用images.generate接口
             const apiOptions = {
               model: process.env.OPENAI_MODEL || 'gpt-4o-image-vip',
-                stream: true,
-              messages: apiMessages,
-              // 禁用默认超时，我们使用自己的超时机制
-              timeout: undefined,
-              maxRetries: 0
+              prompt: finalPrompt,
+              n: 1,
+              size: aspectRatio ? getStandardSize(aspectRatio) : "1024x1024",
+              quality: "hd" as const,
+              response_format: "url" as const,
+              style: "vivid" as const
             };
 
             logger.info(`API请求选项: ${JSON.stringify(apiOptions, null, 2)}`);
             
-            // 修改为使用chat.completions接口而非图像生成API
-            const apiPromise = tuziClient.client.chat.completions.create(apiOptions);
+            // 使用images.generate接口
+            const apiPromise = tuziClient.client.images.generate(apiOptions);
             
-            // 记录使用聊天API
-            logger.info(`使用兔子API的chat.completions接口，启用stream=true`);
+            logger.info(`使用兔子API的images.generate接口`);
               
-              // 增强API参数日志记录
+            // 增强API参数日志记录
             const ratio = aspectRatio ? getStandardRatio(aspectRatio) : "1:1";
             
-              logger.info(`详细API调用参数：
+            logger.info(`详细API调用参数：
 - 模型: ${process.env.OPENAI_MODEL || 'gpt-4o-image-vip'}
 - 提示词: "${finalPrompt}"
 - 比例: "${ratio}"
-- 流式响应: true
-${additionalData.gen_id ? `- 参考图片ID: ${additionalData.gen_id}` : ''}
+- 质量: "hd"
 ${inputImageUrl ? `- 上传图片URL: ${inputImageUrl.substring(0, 60)}...` : ''}
 ${image && !inputImageUrl ? `- 上传图片信息: ${formatImageDataForLog(image)}` : ''}
-- 消息格式: ${additionalData.gen_id ? 'JSON' : ((inputImageUrl || imageData) ? '多模态' : '文本')}
             `);
             
             // 创建响应分析对象用于跟踪处理进度和结果
